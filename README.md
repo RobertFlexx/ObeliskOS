@@ -30,6 +30,7 @@ TTY/CLI environment with a policy-driven filesystem architecture.
 
 - `kernel/` - kernel source
 - `userland/` - user programs, libc, policy daemon sources
+- `opkg/` - native package manager subsystem scaffold (D)
 - `tools/mkaxiomfs/` - toolchain helper scripts
 - `grub.cfg` - boot menu entries
 - `Makefile` - top-level build and ISO packaging
@@ -101,6 +102,8 @@ for Obelisk currently means:
 See `docs/RELEASE_CHECKLIST.md` and `docs/ROADMAP.md` for planned milestones.
 Installer details are documented in `docs/INSTALLER.md`.
 Current command support/limitations are documented in `docs/USERLAND_COMMANDS.md`.
+Package ecosystem scaffolding is documented under `opkg/docs/`.
+Static D userspace bring-up notes are documented in `docs/STATIC_D_USERLAND.md`.
 
 ## Optional Userland Overlay
 

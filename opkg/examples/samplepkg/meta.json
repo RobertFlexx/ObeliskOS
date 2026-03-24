@@ -1,0 +1,12 @@
+{
+  "name": "hello-sample",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "Sample package for opkg v1 testing",
+  "description": "Installs a small hello text file for install/remove/query validation.",
+  "depends": [],
+  "provides": [],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "core"
+}

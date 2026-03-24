@@ -35,10 +35,11 @@ milestones.
 - Command behavior is predictable: either real work or explicit error/usage
 - Documented supported command set + known limitations
 
-## Next Major Subsystem (single-track)
+## Current Major Subsystem In Progress
 
-- Shell pipeline plumbing (`|`) as the next focused subsystem
-- Defer full login/passwd and `/proc` expansion until after pipe stability
+- Shell pipeline plumbing (`|`) initial bring-up implemented
+- Next step: pipeline hardening and parser interaction cleanup
+- Keep login/passwd and `/proc` expansion sequenced after pipe hardening
 
 ## M4 - Appliance/NAS Features
 

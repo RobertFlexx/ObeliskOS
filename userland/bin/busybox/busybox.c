@@ -14,6 +14,7 @@ typedef long ssize_t;
 #define SYS_CLOSE   3
 #define SYS_STAT    4
 #define SYS_IOCTL   16
+#define SYS_PIPE    22
 #define SYS_DUP     32
 #define SYS_DUP2    33
 #define SYS_FORK    57
@@ -1414,6 +1415,7 @@ static int run_external(char **args);
 static int run_shell(const char *prompt);
 static int try_exec_external(char **args);
 static void report_exec_failure(const char *cmd, int ret);
+static char *trim_ws_inplace(char *s);
 static int applet_main(const char *name, int argc, char **argv);
 
 static int is_builtin_applet_name(const char *name) {
@@ -2594,6 +2596,189 @@ static int run_external(char **args) {
     return (status == 0) ? 0 : 1;
 }
 
+static int find_unquoted_pipe_pos(const char *s) {
+    int in_single = 0, in_double = 0, esc = 0;
+    for (int i = 0; s[i]; i++) {
+        char c = s[i];
+        if (esc) {
+            esc = 0;
+            continue;
+        }
+        if (c == '\\') {
+            esc = 1;
+            continue;
+        }
+        if (!in_double && c == '\'') {
+            in_single = !in_single;
+            continue;
+        }
+        if (!in_single && c == '"') {
+            in_double = !in_double;
+            continue;
+        }
+        if (!in_single && !in_double && c == '|') {
+            if (s[i + 1] == '|') {
+                i++;
+                continue;
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int split_pipeline_segments(char *line, char segs[][256], int max_segs) {
+    int in_single = 0, in_double = 0, esc = 0;
+    int segc = 0;
+    int si = 0;
+    if (max_segs <= 0) return 0;
+    segs[0][0] = '\0';
+    segc = 1;
+    for (int i = 0; line[i]; i++) {
+        char c = line[i];
+        if (esc) {
+            if (si < 255) segs[segc - 1][si++] = c;
+            esc = 0;
+            continue;
+        }
+        if (c == '\\') {
+            if (si < 255) segs[segc - 1][si++] = c;
+            esc = 1;
+            continue;
+        }
+        if (!in_double && c == '\'') {
+            in_single = !in_single;
+            if (si < 255) segs[segc - 1][si++] = c;
+            continue;
+        }
+        if (!in_single && c == '"') {
+            in_double = !in_double;
+            if (si < 255) segs[segc - 1][si++] = c;
+            continue;
+        }
+        if (!in_single && !in_double && c == '|') {
+            if (line[i + 1] == '|') {
+                if (si < 255) segs[segc - 1][si++] = c;
+                continue;
+            }
+            segs[segc - 1][si] = '\0';
+            if (segc >= max_segs) {
+                return -1;
+            }
+            segs[segc][0] = '\0';
+            segc++;
+            si = 0;
+            continue;
+        }
+        if (si < 255) segs[segc - 1][si++] = c;
+    }
+    segs[segc - 1][si] = '\0';
+    return segc;
+}
+
+static int execute_pipeline_line(const char *prompt, char *line) {
+    (void)prompt;
+    char segs[8][256];
+    int segc = split_pipeline_segments(line, segs, 8);
+    if (segc < 2) {
+        return -1;
+    }
+    if (segc < 0) {
+        write_str("shell: pipeline too long\n");
+        return 1;
+    }
+
+    int pipes[7][2];
+    long pids[8];
+    for (int i = 0; i < 7; i++) { pipes[i][0] = -1; pipes[i][1] = -1; }
+    for (int i = 0; i < 8; i++) { pids[i] = -1; }
+
+    for (int i = 0; i < segc - 1; i++) {
+        long prc = syscall1(SYS_PIPE, (long)pipes[i]);
+        if (prc < 0) {
+            print_errno("pipe", prc);
+            return 1;
+        }
+    }
+
+    for (int i = 0; i < segc; i++) {
+        char *trimmed = trim_ws_inplace(segs[i]);
+        if (*trimmed == '\0') {
+            write_str("shell: empty pipeline segment\n");
+            return 1;
+        }
+
+        long pid = syscall0(SYS_FORK);
+        if (pid < 0) {
+            print_errno("fork", pid);
+            return 1;
+        }
+        if (pid == 0) {
+            if (i > 0) {
+                syscall2(SYS_DUP2, pipes[i - 1][0], 0);
+            }
+            if (i + 1 < segc) {
+                syscall2(SYS_DUP2, pipes[i][1], 1);
+            }
+            for (int j = 0; j < segc - 1; j++) {
+                if (pipes[j][0] >= 0) syscall1(SYS_CLOSE, pipes[j][0]);
+                if (pipes[j][1] >= 0) syscall1(SYS_CLOSE, pipes[j][1]);
+            }
+
+            char *args[32];
+            char *expanded[32];
+            static char glob_scratch[32][256];
+            char token_buf[32][256];
+            int argc = parse_words_shell(trimmed, token_buf, args, 32, 1);
+            argc = expand_globs(args, argc, expanded, 32, glob_scratch, 32);
+            for (int k = 0; k < argc; k++) args[k] = expanded[k];
+            if (argc <= 0) {
+                syscall1(SYS_EXIT, 0);
+            }
+            args[argc] = NULL;
+
+            for (int k = 0; k < argc; k++) {
+                if (str_cmp(args[k], "<") == 0 || str_cmp(args[k], ">") == 0 || str_cmp(args[k], ">>") == 0) {
+                    write_str("shell: redirects inside pipeline not supported yet\n");
+                    syscall1(SYS_EXIT, 1);
+                }
+            }
+
+            if (is_builtin_applet_name(args[0])) {
+                int rc = applet_main(args[0], argc, args);
+                syscall1(SYS_EXIT, rc);
+            }
+            int erc = try_exec_external(args);
+            if (erc < 0) {
+                report_exec_failure(args[0], erc);
+                syscall1(SYS_EXIT, (erc == -2) ? 127 : 1);
+            }
+            __builtin_unreachable();
+        }
+        pids[i] = pid;
+    }
+
+    for (int i = 0; i < segc - 1; i++) {
+        if (pipes[i][0] >= 0) syscall1(SYS_CLOSE, pipes[i][0]);
+        if (pipes[i][1] >= 0) syscall1(SYS_CLOSE, pipes[i][1]);
+    }
+
+    int last_status = 0;
+    for (int i = 0; i < segc; i++) {
+        int status = 0;
+        while (1) {
+            long ret = syscall4(SYS_WAIT4, pids[i], (long)&status, 0, 0);
+            if (ret >= 0) break;
+            if (ret == -4) continue;
+            break;
+        }
+        if (i == segc - 1) {
+            last_status = status;
+        }
+    }
+    return (last_status == 0) ? 0 : 1;
+}
+
 static char *trim_ws_inplace(char *s) {
     while (*s == ' ' || *s == '\t') {
         s++;
@@ -2667,6 +2852,10 @@ static enum chain_op parse_next_segment(const char **cursor, char *out, size_t c
 }
 
 static int execute_simple_command(const char *prompt, char *line) {
+    if (find_unquoted_pipe_pos(line) >= 0) {
+        return execute_pipeline_line(prompt, line);
+    }
+
     char *args[32];
     char *cmd[32];
     char *expanded[32];
@@ -2701,8 +2890,8 @@ static int execute_simple_command(const char *prompt, char *line) {
     }
 
     if (str_cmp(args[0], "help") == 0) {
-        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut true false users su sudo whoami id\n");
-        write_str("shell: quotes, $VAR expansion, && || ;, redirects < > >>, Up/Down history, TAB completion\n");
+        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut true false users su sudo whoami id opkg\n");
+        write_str("shell: quotes, $VAR expansion, && || ;, minimal pipes |, redirects < > >>, Up/Down history, TAB completion\n");
         rc = 0;
     } else if (str_cmp(args[0], "echo") == 0) {
         applet_echo(argc, args);

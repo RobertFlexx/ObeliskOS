@@ -8,6 +8,7 @@ userland, and what remains intentionally minimal.
 - Shell/builtins:
   - `help`, `echo`, `cd`, `pwd`, `clear`, `exit`
   - chaining: `&&`, `||`, `;`
+  - minimal pipes: `cmd1 | cmd2` (single-stage pipelines supported)
   - redirects: `<`, `>`, `>>`
   - quoting + `$VAR` expansion
   - history and TAB completion
@@ -34,7 +35,8 @@ userland, and what remains intentionally minimal.
 ## Known Limitations (Intentional for this stage)
 
 - Shell:
-  - no pipes (`|`) yet
+  - pipelines currently do not support inline redirects in pipeline segments
+  - complex multi-feature parser combinations are still intentionally minimal
   - no job control
   - no full POSIX shell scripting support
 - `chmod`:
@@ -46,11 +48,7 @@ userland, and what remains intentionally minimal.
 
 ## Next Major Subsystem (single focus)
 
-After consolidation, the next subsystem priority is:
+After initial pipe bring-up, the next subsystem priority is:
 
-1. shell pipes and I/O plumbing (`|`)
-
-Then:
-
-2. real login/passwd flow
-3. `/proc` process/introspection expansion
+1. real login/passwd flow
+2. `/proc` process/introspection expansion

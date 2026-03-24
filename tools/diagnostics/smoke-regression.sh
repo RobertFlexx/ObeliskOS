@@ -40,6 +40,7 @@ commands = [
     "head /etc/motd",
     "wc /etc/motd",
     "users",
+    "opkg --help",
     "echo __SMOKE_DONE__",
 ]
 
@@ -47,6 +48,7 @@ required = [
     "Obelisk shell ready.",
     "hello smoke",
     "system.kernel.version =",
+    "Usage: opkg <command> [args]",
     "__SMOKE_DONE__",
 ]
 

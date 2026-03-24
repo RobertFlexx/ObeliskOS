@@ -1,0 +1,12 @@
+{
+  "name": "hello",
+  "version": "1.0",
+  "arch": "x86_64",
+  "summary": "Minimal hello package",
+  "description": "Example package layout for .opk v1.",
+  "depends": [],
+  "provides": [],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "core"
+}

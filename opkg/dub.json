@@ -1,0 +1,16 @@
+{
+  "name": "opkg",
+  "description": "Obelisk package manager (v1 scaffold)",
+  "license": "MIT",
+  "authors": [
+    "Obelisk Project"
+  ],
+  "targetType": "executable",
+  "targetName": "opkg",
+  "sourcePaths": [
+    "source"
+  ],
+  "dflags": [
+    "-preview=dip1000"
+  ]
+}

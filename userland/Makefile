@@ -43,8 +43,10 @@ SETUIDCHECK := $(OUTDIR)/setuidcheck
 EXECPROBE := $(OUTDIR)/execprobe
 TRAVERSEPROBE := $(OUTDIR)/traverseprobe
 MKSTATPROBE := $(OUTDIR)/mkstatprobe
+OPKG := $(OUTDIR)/opkg
+DPROBE := $(OUTDIR)/dprobe
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE)
 
 CFLAGS := \
 	-ffreestanding \
@@ -153,6 +155,14 @@ $(TRAVERSEPROBE): $(BUILDDIR)/bin/traverseprobe/traverseprobe.o $(LIBC) | $(OUTD
 $(MKSTATPROBE): $(BUILDDIR)/bin/mkstatprobe/mkstatprobe.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(OPKG): $(BUILDDIR)/bin/opkg/opkg.o $(BUILDDIR)/bin/opkg/opkg_d.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $^
+
+$(DPROBE): $(BUILDDIR)/bin/dprobe/dprobe.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $^
 
 clean:
 	@echo "  CLEAN"

@@ -1,0 +1,12 @@
+{
+  "name": "hello-extra",
+  "version": "1.1.0",
+  "arch": "x86_64",
+  "summary": "Second sample package for repo install tests",
+  "description": "Installs an extra hello text file to validate multi-package repository behavior.",
+  "depends": [],
+  "provides": [],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "extra"
+}

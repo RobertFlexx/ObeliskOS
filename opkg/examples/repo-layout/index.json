@@ -1,0 +1,20 @@
+[
+  {
+    "name": "hello-sample",
+    "version": "1.0.0",
+    "arch": "x86_64",
+    "filename": "hello-sample-1.0.0-x86_64.opk",
+    "checksum": "sha256:REPLACE_ME",
+    "depends": [],
+    "summary": "Sample package for opkg v1 testing"
+  },
+  {
+    "name": "hello-extra",
+    "version": "1.1.0",
+    "arch": "x86_64",
+    "filename": "hello-extra-1.1.0-x86_64.opk",
+    "checksum": "sha256:REPLACE_ME",
+    "depends": [],
+    "summary": "Second sample package for repo install tests"
+  }
+]
