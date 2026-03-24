@@ -66,6 +66,7 @@ void pmm_free_pages(uint64_t pfn, size_t count);
 
 /* Statistics */
 uint64_t pmm_get_total_pages(void);
+uint64_t pmm_get_usable_pages(void);
 uint64_t pmm_get_free_pages(void);
 uint64_t pmm_get_used_pages(void);
 void pmm_dump_stats(void);

@@ -49,7 +49,7 @@ static int sysctl_mem_total_handler(struct sysctl_node *node, void *buf,
         return -EPERM;
     }
     
-    unsigned long total = pmm_get_total_pages() * PAGE_SIZE;
+    unsigned long total = pmm_get_usable_pages() * PAGE_SIZE;
     
     if (*len < sizeof(total)) {
         return -EINVAL;

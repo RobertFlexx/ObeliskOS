@@ -144,6 +144,21 @@ int axiomfs_write_inode(struct inode *inode, bool sync) {
     return 0;
 }
 
+void axiomfs_delete_inode(struct inode *inode) {
+    if (!inode || !inode->i_sb) {
+        return;
+    }
+
+    /* If the last link was removed, free the persistent inode backing now
+     * that the VFS inode is being destroyed (i_count == 0). */
+    if (inode->i_nlink == 0) {
+        axiomfs_free_inode_num(inode->i_sb, inode->i_ino);
+    }
+
+    /* Always free inode-private metadata. */
+    axiomfs_evict_inode(inode);
+}
+
 void axiomfs_evict_inode(struct inode *inode) {
     struct axiomfs_inode_info *info = inode->i_private;
     
@@ -375,11 +390,10 @@ int axiomfs_rmdir(struct inode *dir, struct dentry *dentry) {
     mark_inode_dirty(inode);
     mark_inode_dirty(dir);
     
-    /* Remove from parent */
-    d_delete(dentry);
-    
-    /* Free inode */
-    axiomfs_free_inode_num(dir->i_sb, inode->i_ino);
+    /* Remove directory entry from parent immediately so it disappears from
+     * listings and path lookup, while keeping the inode alive for any open
+     * references (file->f_dentry). */
+    list_del(&dentry->d_child);
     
     return 0;
 }
@@ -408,12 +422,11 @@ int axiomfs_unlink(struct inode *dir, struct dentry *dentry) {
     
     inode->i_nlink--;
     mark_inode_dirty(inode);
-    
-    if (inode->i_nlink == 0) {
-        axiomfs_free_inode_num(dir->i_sb, inode->i_ino);
-    }
-    
-    d_delete(dentry);
+
+    /* Unlink name from parent immediately. Keep dentry->d_inode intact so any
+     * existing open handles remain valid. Persistent inode backing is freed
+     * later from axiomfs_delete_inode() when the VFS inode is destroyed. */
+    list_del(&dentry->d_child);
     
     return 0;
 }
@@ -492,28 +505,19 @@ struct dentry *axiomfs_lookup(struct inode *dir, struct dentry *dentry,
         }
     }
     
-    /* Search in this specific parent dentry's subdirs. Using dir->i_dentry
-     * can pick an unrelated alias and make existing children appear missing.
-     */
     struct dentry *child;
     struct dentry *parent_dentry = dentry->d_parent;
     if (!parent_dentry) {
-        d_add(dentry, NULL);
         return NULL;
     }
-    
-    /* Search subdirs */
+
+    /* If an existing child dentry matches, return it so VFS doesn't create
+     * duplicate alias dentries for the same name. */
     list_for_each_entry(child, &parent_dentry->d_subdirs, d_child) {
-        if (strcmp(child->d_name, dentry->d_name) == 0) {
-            if (child->d_inode) {
-                ihold(child->d_inode);
-                d_add(dentry, child->d_inode);
-                return NULL;
-            }
+        if (strcmp(child->d_name, dentry->d_name) == 0 && child->d_inode) {
+            return dget(child);
         }
     }
-    
-    /* Not found */
-    d_add(dentry, NULL);
+
     return NULL;
 }

@@ -22,6 +22,23 @@ static int num_mounts = 0;
 static struct vfsmount *root_mount = NULL;
 static struct dentry *root_dentry = NULL;
 
+static bool vfs_is_mountpoint(struct dentry *dentry) {
+    if (!dentry) {
+        return false;
+    }
+    /* Root itself. */
+    if (root_mount && root_mount->mnt_root == dentry) {
+        return true;
+    }
+    /* Any mountpoint we recorded during vfs_mount(). */
+    for (int i = 0; i < num_mounts; i++) {
+        if (mount_table[i] && mount_table[i]->mnt_mountpoint == dentry) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Caches */
 struct kmem_cache *inode_cache;
 struct kmem_cache *dentry_cache;
@@ -369,6 +386,12 @@ struct file *vfs_open(const char *pathname, int flags, mode_t mode) {
         dput(dentry);
         return ERR_PTR(-ENOENT);
     }
+
+    /* Enforce O_DIRECTORY semantics. */
+    if ((flags & O_DIRECTORY) && !S_ISDIR(inode->i_mode)) {
+        dput(dentry);
+        return ERR_PTR(-ENOTDIR);
+    }
     
     /* Check permissions */
     {
@@ -703,6 +726,12 @@ int vfs_rmdir(const char *pathname) {
     dentry = vfs_lookup(pathname);
     if (!dentry) {
         return -ENOENT;
+    }
+
+    /* Disallow removing mounted directories (e.g. /dev, /proc if mounted). */
+    if (vfs_is_mountpoint(dentry)) {
+        dput(dentry);
+        return -EBUSY;
     }
     
     if (!dentry->d_inode || !S_ISDIR(dentry->d_inode->i_mode)) {

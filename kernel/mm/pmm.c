@@ -34,6 +34,7 @@ static struct pmm_zone zones[ZONE_COUNT] = {
 /* Global statistics */
 static uint64_t total_pages = 0;
 static uint64_t free_pages = 0;
+static uint64_t usable_pages = 0;
 
 /* Bitmap operations */
 static inline void bitmap_set(uint32_t *bitmap, uint64_t bit) {
@@ -127,6 +128,7 @@ void pmm_init_bitmap(uint64_t num_pages) {
     /* Mark all pages as used initially */
     memset(initial_bitmap, 0xFF, sizeof(initial_bitmap));
     free_pages = 0;
+    usable_pages = 0;
     
     printk(KERN_INFO "PMM: Bitmap initialized for %lu pages (%lu MB)\n",
            total_pages, (total_pages * PAGE_SIZE) / (1024 * 1024));
@@ -145,6 +147,7 @@ void pmm_mark_region_free(uint64_t base, uint64_t size) {
             bitmap_clear(zone->bitmap, pfn);
             zone->free_pages++;
             free_pages++;
+            usable_pages++;
         }
     }
 }
@@ -270,6 +273,10 @@ void pmm_free_pages(uint64_t phys, size_t count) {
 /* Get total pages */
 uint64_t pmm_get_total_pages(void) {
     return total_pages;
+}
+
+uint64_t pmm_get_usable_pages(void) {
+    return usable_pages;
 }
 
 /* Get free pages */

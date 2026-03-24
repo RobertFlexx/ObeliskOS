@@ -113,6 +113,7 @@ void axiomfs_kill_sb(struct super_block *sb);
 /* Inode operations */
 struct inode *axiomfs_iget(struct super_block *sb, ino_t ino);
 int axiomfs_write_inode(struct inode *inode, bool sync);
+void axiomfs_delete_inode(struct inode *inode);
 void axiomfs_evict_inode(struct inode *inode);
 
 /* Directory operations */

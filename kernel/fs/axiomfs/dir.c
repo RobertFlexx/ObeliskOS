@@ -62,21 +62,25 @@ int axiomfs_readdir(struct file *file, struct dir_context *ctx) {
     /* Emit directory entries */
     pos = 2;
     list_for_each_entry(child, &dentry->d_subdirs, d_child) {
+        /* Skip negative/unlinked dentries. We don't use negative dentries for
+         * readdir output, and unlink/rmdir removes entries from the parent list. */
+        if (!child->d_inode) {
+            pos++;
+            continue;
+        }
         if (pos >= ctx->pos) {
             unsigned char type = DT_UNKNOWN;
             
-            if (child->d_inode) {
-                if (S_ISDIR(child->d_inode->i_mode)) {
-                    type = DT_DIR;
-                } else if (S_ISREG(child->d_inode->i_mode)) {
-                    type = DT_REG;
-                } else if (S_ISLNK(child->d_inode->i_mode)) {
-                    type = DT_LNK;
-                }
+            if (S_ISDIR(child->d_inode->i_mode)) {
+                type = DT_DIR;
+            } else if (S_ISREG(child->d_inode->i_mode)) {
+                type = DT_REG;
+            } else if (S_ISLNK(child->d_inode->i_mode)) {
+                type = DT_LNK;
             }
             
             if (ctx->actor(ctx, child->d_name, strlen(child->d_name),
-                          pos, child->d_inode ? child->d_inode->i_ino : 0, type)) {
+                          pos, child->d_inode->i_ino, type)) {
                 return 0;
             }
             ctx->pos = pos + 1;

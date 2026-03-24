@@ -378,8 +378,92 @@ static void print_spaces(int n) {
     }
 }
 
+static void write_u64_dec(uint64_t v);
+
+static void mode_string(uint32_t mode, char out[11]) {
+    /* File type */
+    uint32_t type = mode & 0170000;
+    out[0] = (type == 0040000) ? 'd' :
+             (type == 0120000) ? 'l' :
+             (type == 0100000) ? '-' : '?';
+    /* Permissions */
+    out[1] = (mode & 0400) ? 'r' : '-';
+    out[2] = (mode & 0200) ? 'w' : '-';
+    out[3] = (mode & 0100) ? 'x' : '-';
+    out[4] = (mode & 0040) ? 'r' : '-';
+    out[5] = (mode & 0020) ? 'w' : '-';
+    out[6] = (mode & 0010) ? 'x' : '-';
+    out[7] = (mode & 0004) ? 'r' : '-';
+    out[8] = (mode & 0002) ? 'w' : '-';
+    out[9] = (mode & 0001) ? 'x' : '-';
+    out[10] = '\0';
+}
+
+static void ls_print_long(const char *dirpath, const char *name) {
+    struct ob_stat st;
+    char full[512];
+    size_t plen = str_len(dirpath);
+    size_t nlen = str_len(name);
+
+    /* Build "<dir>/<name>" (handle "." specially). */
+    if (dirpath[0] == '.' && dirpath[1] == '\0') {
+        if (nlen + 1 > sizeof(full)) {
+            return;
+        }
+        str_copy(full, name, sizeof(full));
+    } else {
+        if (plen + 1 + nlen + 1 > sizeof(full)) {
+            return;
+        }
+        str_copy(full, dirpath, sizeof(full));
+        if (plen > 0 && full[plen - 1] != '/') {
+            full[plen++] = '/';
+            full[plen] = '\0';
+        }
+        str_copy(full + plen, name, sizeof(full) - plen);
+    }
+
+    long ret = syscall2(SYS_STAT, (long)full, (long)&st);
+    if (ret < 0) {
+        /* If stat fails, still show the name. */
+        write_str("?????????? ");
+        write_str(name);
+        write_ch('\n');
+        return;
+    }
+
+    char ms[11];
+    mode_string(st.st_mode, ms);
+    write_str(ms);
+    write_ch(' ');
+    write_u64_dec(st.st_uid);
+    write_ch(' ');
+    write_u64_dec((uint64_t)st.st_size);
+    write_ch(' ');
+    write_str(name);
+    write_ch('\n');
+}
+
 static void applet_ls(int argc, char **argv) {
-    const char *path = (argc > 1) ? argv[1] : ".";
+    int show_all = 0;
+    int long_fmt = 0;
+    int first = 1;
+
+    while (first < argc && argv[first][0] == '-' && argv[first][1] != '\0') {
+        if (argv[first][1] == '-' && argv[first][2] == '\0') {
+            first++;
+            break;
+        }
+        const char *o = argv[first] + 1;
+        while (*o) {
+            if (*o == 'a') show_all = 1;
+            else if (*o == 'l') long_fmt = 1;
+            o++;
+        }
+        first++;
+    }
+
+    const char *path = (first < argc) ? argv[first] : ".";
     long fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
     if (fd < 0) {
         print_errno("ls", fd);
@@ -387,6 +471,33 @@ static void applet_ls(int argc, char **argv) {
     }
 
     char buf[1024];
+    if (long_fmt) {
+        while (1) {
+            long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+            if (nread < 0) {
+                print_errno("ls", nread);
+                break;
+            }
+            if (nread == 0) {
+                break;
+            }
+            long bpos = 0;
+            while (bpos < nread) {
+                struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+                int include = show_all ? 1 : (d->d_name[0] != '.');
+                if (include) {
+                    ls_print_long(path, d->d_name);
+                }
+                if (d->d_reclen == 0) {
+                    break;
+                }
+                bpos += d->d_reclen;
+            }
+        }
+        syscall1(SYS_CLOSE, fd);
+        return;
+    }
+
     char names[256][128];
     int namec = 0;
     int maxw = 0;
@@ -403,7 +514,8 @@ static void applet_ls(int argc, char **argv) {
         long bpos = 0;
         while (bpos < nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
-            if (d->d_name[0] != '.') {
+            int include = show_all ? 1 : (d->d_name[0] != '.');
+            if (include) {
                 if (namec < 256) {
                     str_copy(names[namec], d->d_name, sizeof(names[0]));
                     int w = (int)str_len(names[namec]);
@@ -1857,7 +1969,9 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
             line[0] = '\0';
             len = 0;
             cursor = 0;
-            redraw_line(prompt, line, cursor);
+            /* Make Ctrl-C recovery visually clean. */
+            write_ch('\n');
+            write_str(prompt);
             continue;
         }
         if (n <= 0) {
