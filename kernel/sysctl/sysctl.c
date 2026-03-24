@@ -343,14 +343,20 @@ int sysctl_read_string(const char *path, char *buf, size_t buflen) {
         if (ret < 0) {
             return ret;
         }
-        if (len > 0 && len <= sizeof(raw)) {
-            bool printable = true;
-            bool has_nul = false;
-            for (size_t i = 0; i < len; i++) {
-                if (raw[i] == '\0') { has_nul = true; break; }
-                if (raw[i] < 32 || raw[i] > 126) { printable = false; }
+        /*
+         * Detect C-string: NUL terminator must be at exactly len-1, and
+         * every preceding byte must be printable and non-NUL.  This avoids
+         * misinterpreting binary integers whose low byte is printable.
+         */
+        if (len >= 1 && raw[len - 1] == '\0') {
+            bool is_cstr = true;
+            for (size_t i = 0; i + 1 < len; i++) {
+                if (raw[i] == '\0' || raw[i] < 32 || raw[i] > 126) {
+                    is_cstr = false;
+                    break;
+                }
             }
-            if (has_nul && printable) {
+            if (is_cstr) {
                 strncpy(buf, (const char *)raw, buflen - 1);
                 buf[buflen - 1] = '\0';
                 return 0;
