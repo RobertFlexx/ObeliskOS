@@ -1,3 +1,0 @@
-# Minimal sudoers for Obelisk Phase 2
-root ALL=(ALL) ALL
-obelisk ALL=(ALL) ALL

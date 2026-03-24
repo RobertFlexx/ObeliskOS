@@ -901,6 +901,369 @@ static void applet_id(void) {
     write_str("\n");
 }
 
+static int is_ws_char(char c) {
+    return (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f');
+}
+
+static int parse_count_arg(const char *s, int *out) {
+    unsigned v = 0;
+    if (!s || !*s) return -1;
+    if (parse_uint10(s, &v) < 0) return -1;
+    if (v > 1000000U) v = 1000000U;
+    *out = (int)v;
+    return 0;
+}
+
+static int parse_n_option(int argc, char **argv, int *first_file, int *n_out, const char *cmd) {
+    int first = 1;
+    int n = 10;
+
+    if (first < argc && argv[first][0] == '-') {
+        if (argv[first][1] == 'n' && argv[first][2] == '\0') {
+            if (first + 1 >= argc || parse_count_arg(argv[first + 1], &n) < 0) {
+                write_str(cmd);
+                write_str(": invalid -n value\n");
+                return -1;
+            }
+            first += 2;
+        } else if (argv[first][1] == 'n' && argv[first][2] != '\0') {
+            if (parse_count_arg(argv[first] + 2, &n) < 0) {
+                write_str(cmd);
+                write_str(": invalid -n value\n");
+                return -1;
+            }
+            first += 1;
+        } else if (argv[first][1] >= '0' && argv[first][1] <= '9') {
+            if (parse_count_arg(argv[first] + 1, &n) < 0) {
+                write_str(cmd);
+                write_str(": invalid count\n");
+                return -1;
+            }
+            first += 1;
+        }
+    }
+
+    *first_file = first;
+    *n_out = n;
+    return 0;
+}
+
+static void applet_head_stream_fd(long fd, int nlines) {
+    if (nlines <= 0) return;
+    char buf[256];
+    int lines = 0;
+    while (1) {
+        long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
+        if (n < 0) {
+            print_errno("head", n);
+            return;
+        }
+        if (n == 0) {
+            return;
+        }
+        for (long i = 0; i < n; i++) {
+            syscall3(SYS_WRITE, 1, (long)&buf[i], 1);
+            if (buf[i] == '\n') {
+                lines++;
+                if (lines >= nlines) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+static void applet_head(int argc, char **argv) {
+    int first = 1;
+    int nlines = 10;
+    if (parse_n_option(argc, argv, &first, &nlines, "head") < 0) {
+        return;
+    }
+    if (first >= argc) {
+        applet_head_stream_fd(0, nlines);
+        return;
+    }
+    for (int i = first; i < argc; i++) {
+        long fd = syscall3(SYS_OPEN, (long)argv[i], O_RDONLY, 0);
+        if (fd < 0) {
+            print_errno("head", fd);
+            continue;
+        }
+        applet_head_stream_fd(fd, nlines);
+        syscall1(SYS_CLOSE, fd);
+    }
+}
+
+static void applet_tail_from_buffer(const char *data, int len, int nlines) {
+    if (len <= 0 || nlines <= 0) {
+        return;
+    }
+    int start = 0;
+    int lines = 0;
+    for (int i = len - 1; i >= 0; i--) {
+        if (data[i] == '\n') {
+            lines++;
+            if (lines > nlines) {
+                start = i + 1;
+                break;
+            }
+        }
+    }
+    if (start < len) {
+        syscall3(SYS_WRITE, 1, (long)(data + start), (size_t)(len - start));
+    }
+}
+
+static void applet_tail_stream_fd(long fd, int nlines) {
+    char ring[8192];
+    int used = 0;
+    int head = 0;
+    while (1) {
+        char buf[256];
+        long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
+        if (n < 0) {
+            print_errno("tail", n);
+            return;
+        }
+        if (n == 0) {
+            break;
+        }
+        for (long i = 0; i < n; i++) {
+            ring[head] = buf[i];
+            head = (head + 1) % (int)sizeof(ring);
+            if (used < (int)sizeof(ring)) {
+                used++;
+            }
+        }
+    }
+    if (used == 0) return;
+    char flat[8192];
+    int start = (head - used + (int)sizeof(ring)) % (int)sizeof(ring);
+    for (int i = 0; i < used; i++) {
+        flat[i] = ring[(start + i) % (int)sizeof(ring)];
+    }
+    applet_tail_from_buffer(flat, used, nlines);
+}
+
+static void applet_tail(int argc, char **argv) {
+    int first = 1;
+    int nlines = 10;
+    if (parse_n_option(argc, argv, &first, &nlines, "tail") < 0) {
+        return;
+    }
+    if (first >= argc) {
+        applet_tail_stream_fd(0, nlines);
+        return;
+    }
+    for (int i = first; i < argc; i++) {
+        long fd = syscall3(SYS_OPEN, (long)argv[i], O_RDONLY, 0);
+        if (fd < 0) {
+            print_errno("tail", fd);
+            continue;
+        }
+        applet_tail_stream_fd(fd, nlines);
+        syscall1(SYS_CLOSE, fd);
+    }
+}
+
+static void wc_stream_fd(long fd, uint64_t *lines, uint64_t *words, uint64_t *bytes) {
+    char buf[256];
+    int in_word = 0;
+    while (1) {
+        long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
+        if (n < 0) {
+            print_errno("wc", n);
+            return;
+        }
+        if (n == 0) {
+            return;
+        }
+        *bytes += (uint64_t)n;
+        for (long i = 0; i < n; i++) {
+            char c = buf[i];
+            if (c == '\n') (*lines)++;
+            if (is_ws_char(c)) {
+                in_word = 0;
+            } else if (!in_word) {
+                (*words)++;
+                in_word = 1;
+            }
+        }
+    }
+}
+
+static void wc_print_counts(int show_l, int show_w, int show_c,
+                            uint64_t l, uint64_t w, uint64_t c, const char *name) {
+    if (show_l) {
+        write_u64_dec(l);
+        write_ch(' ');
+    }
+    if (show_w) {
+        write_u64_dec(w);
+        write_ch(' ');
+    }
+    if (show_c) {
+        write_u64_dec(c);
+        write_ch(' ');
+    }
+    if (name && *name) {
+        write_str(name);
+    }
+    write_ch('\n');
+}
+
+static void applet_wc(int argc, char **argv) {
+    int show_l = 0, show_w = 0, show_c = 0;
+    int first = 1;
+    while (first < argc && argv[first][0] == '-' && argv[first][1] != '\0') {
+        const char *o = argv[first] + 1;
+        while (*o) {
+            if (*o == 'l') show_l = 1;
+            else if (*o == 'w') show_w = 1;
+            else if (*o == 'c') show_c = 1;
+            else {
+                write_str("wc: usage: wc [-lwc] [file...]\n");
+                return;
+            }
+            o++;
+        }
+        first++;
+    }
+    if (!show_l && !show_w && !show_c) {
+        show_l = show_w = show_c = 1;
+    }
+
+    if (first >= argc) {
+        uint64_t l = 0, w = 0, c = 0;
+        wc_stream_fd(0, &l, &w, &c);
+        wc_print_counts(show_l, show_w, show_c, l, w, c, NULL);
+        return;
+    }
+    for (int i = first; i < argc; i++) {
+        uint64_t l = 0, w = 0, c = 0;
+        long fd = syscall3(SYS_OPEN, (long)argv[i], O_RDONLY, 0);
+        if (fd < 0) {
+            print_errno("wc", fd);
+            continue;
+        }
+        wc_stream_fd(fd, &l, &w, &c);
+        syscall1(SYS_CLOSE, fd);
+        wc_print_counts(show_l, show_w, show_c, l, w, c, argv[i]);
+    }
+}
+
+static void cut_stream_fd(long fd, char delim, int field) {
+    char line[512];
+    int len = 0;
+    while (1) {
+        char c = 0;
+        long n = syscall3(SYS_READ, fd, (long)&c, 1);
+        if (n < 0) {
+            print_errno("cut", n);
+            return;
+        }
+        if (n == 0) {
+            if (len > 0) {
+                line[len] = '\0';
+                int cur_field = 1;
+                int start = 0;
+                int end = len;
+                for (int i = 0; i <= len; i++) {
+                    if (i == len || line[i] == delim) {
+                        if (cur_field == field) {
+                            start = start;
+                            end = i;
+                            break;
+                        }
+                        cur_field++;
+                        start = i + 1;
+                    }
+                }
+                if (field <= cur_field && end >= start) {
+                    syscall3(SYS_WRITE, 1, (long)(line + start), (size_t)(end - start));
+                }
+                write_ch('\n');
+            }
+            return;
+        }
+        if (c == '\n') {
+            line[len] = '\0';
+            int cur_field = 1;
+            int start = 0;
+            int end = len;
+            for (int i = 0; i <= len; i++) {
+                if (i == len || line[i] == delim) {
+                    if (cur_field == field) {
+                        end = i;
+                        break;
+                    }
+                    cur_field++;
+                    start = i + 1;
+                }
+            }
+            if (field <= cur_field && end >= start) {
+                syscall3(SYS_WRITE, 1, (long)(line + start), (size_t)(end - start));
+            }
+            write_ch('\n');
+            len = 0;
+            continue;
+        }
+        if (len + 1 < (int)sizeof(line)) {
+            line[len++] = c;
+        }
+    }
+}
+
+static void applet_cut(int argc, char **argv) {
+    int first = 1;
+    char delim = '\t';
+    int field = 0;
+    while (first < argc && argv[first][0] == '-' && argv[first][1] != '\0') {
+        if (str_cmp(argv[first], "-d") == 0) {
+            if (first + 1 >= argc || argv[first + 1][0] == '\0') {
+                write_str("cut: usage: cut -d <char> -f <field> [file...]\n");
+                return;
+            }
+            delim = argv[first + 1][0];
+            first += 2;
+            continue;
+        }
+        if (str_cmp(argv[first], "-f") == 0) {
+            unsigned fv = 0;
+            if (first + 1 >= argc || parse_uint10(argv[first + 1], &fv) < 0 || fv == 0) {
+                write_str("cut: usage: cut -d <char> -f <field> [file...]\n");
+                return;
+            }
+            field = (int)fv;
+            first += 2;
+            continue;
+        }
+        write_str("cut: usage: cut -d <char> -f <field> [file...]\n");
+        return;
+    }
+    if (field <= 0) {
+        write_str("cut: usage: cut -d <char> -f <field> [file...]\n");
+        return;
+    }
+    if (first >= argc) {
+        cut_stream_fd(0, delim, field);
+        return;
+    }
+    for (int i = first; i < argc; i++) {
+        long fd = syscall3(SYS_OPEN, (long)argv[i], O_RDONLY, 0);
+        if (fd < 0) {
+            print_errno("cut", fd);
+            continue;
+        }
+        cut_stream_fd(fd, delim, field);
+        syscall1(SYS_CLOSE, fd);
+    }
+}
+
+static void applet_users(void) {
+    applet_whoami();
+}
+
 static int parse_uint8(const char *s, unsigned *out) {
     unsigned v = 0;
     int n = 0;
@@ -1023,7 +1386,9 @@ static int is_builtin_applet_name(const char *name) {
     static const char *const names[] = {
         "busybox", "sh", "ash", "zsh", "echo", "uname", "pwd",
         "ls", "cat", "touch", "mkdir", "rm", "rmdir",
-        "chmod", "chown", "stat", "reboot", "shutdown", "poweroff", "halt", "clear",
+        "chmod", "chown", "stat", "head", "tail", "wc", "cut",
+        "true", "false", "users",
+        "reboot", "shutdown", "poweroff", "halt", "clear",
         "su", "sudo", "whoami", "id", NULL
     };
     for (int i = 0; names[i]; i++) {
@@ -2289,7 +2654,7 @@ static int execute_simple_command(const char *prompt, char *line) {
     }
 
     if (str_cmp(args[0], "help") == 0) {
-        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat su sudo whoami id\n");
+        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut true false users su sudo whoami id\n");
         write_str("shell: quotes, $VAR expansion, && || ;, redirects < > >>, Up/Down history, TAB completion\n");
         rc = 0;
     } else if (str_cmp(args[0], "echo") == 0) {
@@ -2334,6 +2699,25 @@ static int execute_simple_command(const char *prompt, char *line) {
     } else if (str_cmp(args[0], "stat") == 0) {
         applet_stat(argc, args);
         rc = 0;
+    } else if (str_cmp(args[0], "head") == 0) {
+        applet_head(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "tail") == 0) {
+        applet_tail(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "wc") == 0) {
+        applet_wc(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "cut") == 0) {
+        applet_cut(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "users") == 0) {
+        applet_users();
+        rc = 0;
+    } else if (str_cmp(args[0], "true") == 0) {
+        rc = 0;
+    } else if (str_cmp(args[0], "false") == 0) {
+        rc = 1;
     } else if (str_cmp(args[0], "su") == 0) {
         rc = applet_su(argc, args);
     } else if (str_cmp(args[0], "sudo") == 0) {
@@ -2485,6 +2869,32 @@ static int applet_main(const char *name, int argc, char **argv) {
     if (str_cmp(name, "stat") == 0) {
         applet_stat(argc, argv);
         return 0;
+    }
+    if (str_cmp(name, "head") == 0) {
+        applet_head(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "tail") == 0) {
+        applet_tail(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "wc") == 0) {
+        applet_wc(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "cut") == 0) {
+        applet_cut(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "users") == 0) {
+        applet_users();
+        return 0;
+    }
+    if (str_cmp(name, "true") == 0) {
+        return 0;
+    }
+    if (str_cmp(name, "false") == 0) {
+        return 1;
     }
     if (str_cmp(name, "reboot") == 0) {
         applet_reboot();

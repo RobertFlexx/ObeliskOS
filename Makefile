@@ -35,7 +35,7 @@ QEMU_SERIAL_FLAGS := -nographic -monitor none -chardev stdio,mux=on,signal=off,i
 IMPORT_HOST_USERLAND ?= 0
 EXPERIMENTAL_DYNAMIC_ELF ?= 0
 HOST_ZSH_BIN ?= /usr/bin/zsh
-HOST_COREUTILS_BINS ?= ls cat cp mv rm mkdir rmdir ln chmod chown pwd uname date head tail wc sort uniq cut tr tee sleep true false env printenv id whoami
+HOST_COREUTILS_BINS ?= ls cat cp mv rm mkdir rmdir ln chmod chown pwd uname date head tail wc sort uniq cut tr tee sleep true false env printenv id whoami users
 HOST_USERLAND_IMPORT_SCRIPT := $(TOOLS_DIR)/import-host-userland.sh
 
 # Debug flags
@@ -98,12 +98,17 @@ rootfs: userland
 		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/sudo"; \
 	fi
 	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ]; then \
-		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id uname date head tail wc sort uniq cut tr tee sleep true false env printenv; do \
+		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc sort uniq cut tr tee sleep true false env printenv; do \
 			if [ ! -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 				cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/$$app"; \
 			fi; \
 		done; \
 	fi
+	@for app in sh zsh busybox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat; do \
+		if [ -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
+			cp "$(ROOTFS_DIR)/bin/$$app" "$(ROOTFS_DIR)/usr/bin/$$app"; \
+		fi; \
+	done
 	@if [ -d "$(ROOTFS_OVERLAY_DIR)" ]; then \
 		echo "Applying rootfs overlay from $(ROOTFS_OVERLAY_DIR)..."; \
 		cp -a "$(ROOTFS_OVERLAY_DIR)/." "$(ROOTFS_DIR)/"; \
