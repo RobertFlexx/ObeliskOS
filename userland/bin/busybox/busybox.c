@@ -25,6 +25,8 @@ typedef long ssize_t;
 #define SYS_MKDIR   83
 #define SYS_RMDIR   84
 #define SYS_UNLINK  87
+#define SYS_CHMOD   90
+#define SYS_CHOWN   92
 #define SYS_GETUID  102
 #define SYS_GETGID  104
 #define SYS_GETEUID 107
@@ -49,6 +51,27 @@ struct linux_dirent64 {
     uint8_t  d_type;
     char     d_name[];
 } __attribute__((packed));
+
+struct ob_stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint32_t st_nlink;
+    uint32_t st_mode;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    int32_t  __pad0;
+    uint64_t st_rdev;
+    int64_t  st_size;
+    int64_t  st_blksize;
+    int64_t  st_blocks;
+    int64_t  st_atime;
+    int64_t  st_atime_nsec;
+    int64_t  st_mtime;
+    int64_t  st_mtime_nsec;
+    int64_t  st_ctime;
+    int64_t  st_ctime_nsec;
+    int64_t  unused_pad[3];
+};
 
 static char env_home[96] = "HOME=/";
 static char env_shell[96] = "SHELL=/bin/sh";
