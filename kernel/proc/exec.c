@@ -474,8 +474,10 @@ static int setup_user_stack(struct process *proc, char *const argv[],
         return -ENOMEM;
     }
     
-    /* Allocate a few pages at the top of stack */
-    for (uint64_t addr = stack_top - PAGE_SIZE * 4; addr < stack_top; addr += PAGE_SIZE) {
+    /* Pre-map full stack range.
+     * We currently rely on eager stack backing (no demand stack growth fault path),
+     * so user buffers placed deeper in stack must be valid for copy_to_user/copy_from_user. */
+    for (uint64_t addr = stack_bottom; addr < stack_top; addr += PAGE_SIZE) {
         uint64_t phys = pmm_alloc_page();
         if (!phys) {
             return -ENOMEM;

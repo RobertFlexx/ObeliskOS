@@ -49,6 +49,15 @@ struct sysctl_node *sysctl_register_node(const char *path) {
     
     component = strtok(pathcopy, ".");
     
+    /* If root exists and first component matches root name, skip it. */
+    if (component && node && strcmp(node->name, component) == 0) {
+        component = strtok(NULL, ".");
+        if (!component) {
+            kfree(pathcopy);
+            return node;
+        }
+    }
+
     while (component) {
         struct sysctl_node *child = NULL;
         
@@ -103,6 +112,15 @@ struct sysctl_node *sysctl_lookup(const char *path) {
     
     component = strtok(pathcopy, ".");
     
+    /* Skip root name if it matches. */
+    if (component && strcmp(node->name, component) == 0) {
+        component = strtok(NULL, ".");
+        if (!component) {
+            kfree(pathcopy);
+            return node;
+        }
+    }
+
     while (component && node) {
         struct sysctl_node *child = NULL;
         
@@ -112,16 +130,11 @@ struct sysctl_node *sysctl_lookup(const char *path) {
             }
         }
         
-        if (!child && strcmp(node->name, component) == 0) {
-            /* Current node matches */
-            component = strtok(NULL, ".");
-            if (!component) {
-                kfree(pathcopy);
-                return node;
-            }
-            continue;
+        if (!child) {
+            kfree(pathcopy);
+            return NULL;
         }
-        
+
         node = child;
         component = strtok(NULL, ".");
     }
@@ -285,37 +298,108 @@ int sysctl_write(const char *path, const void *buf, size_t len) {
     return 0;
 }
 
+static void fmt_ulong(char *buf, size_t cap, unsigned long v) {
+    char tmp[24];
+    int n = 0;
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        while (v > 0 && n < (int)sizeof(tmp)) {
+            tmp[n++] = '0' + (char)(v % 10);
+            v /= 10;
+        }
+    }
+    size_t w = 0;
+    while (n > 0 && w + 1 < cap) {
+        buf[w++] = tmp[--n];
+    }
+    buf[w] = '\0';
+}
+
+static void fmt_long(char *buf, size_t cap, long v) {
+    if (v < 0 && cap > 1) {
+        buf[0] = '-';
+        fmt_ulong(buf + 1, cap - 1, (unsigned long)(-v));
+    } else {
+        fmt_ulong(buf, cap, (unsigned long)v);
+    }
+}
+
 int sysctl_read_string(const char *path, char *buf, size_t buflen) {
     struct sysctl_node *node = sysctl_lookup(path);
-    
-    if (!node || !node->data) {
+
+    if (!node) {
         return -ENOENT;
     }
-    
+
+    if (node->type == SYSCTL_TYPE_PROC) {
+        uint8_t raw[256];
+        size_t len = sizeof(raw);
+        int ret;
+        if (!node->handler) {
+            return -EINVAL;
+        }
+        ret = node->handler(node, raw, &len, NULL, false);
+        if (ret < 0) {
+            return ret;
+        }
+        if (len > 0 && len <= sizeof(raw)) {
+            bool printable = true;
+            bool has_nul = false;
+            for (size_t i = 0; i < len; i++) {
+                if (raw[i] == '\0') { has_nul = true; break; }
+                if (raw[i] < 32 || raw[i] > 126) { printable = false; }
+            }
+            if (has_nul && printable) {
+                strncpy(buf, (const char *)raw, buflen - 1);
+                buf[buflen - 1] = '\0';
+                return 0;
+            }
+        }
+        if (len == sizeof(unsigned long)) {
+            unsigned long v;
+            memcpy(&v, raw, sizeof(v));
+            fmt_ulong(buf, buflen, v);
+        } else if (len == sizeof(unsigned int) && len != sizeof(unsigned long)) {
+            unsigned int v;
+            memcpy(&v, raw, sizeof(v));
+            fmt_ulong(buf, buflen, (unsigned long)v);
+        } else {
+            strncpy(buf, "(raw)", buflen - 1);
+            buf[buflen - 1] = '\0';
+        }
+        return 0;
+    }
+
+    if (!node->data) {
+        return -ENOENT;
+    }
+
     switch (node->type) {
         case SYSCTL_TYPE_INT:
-            snprintf(buf, buflen, "%d", *(int *)node->data);
+            fmt_long(buf, buflen, (long)(*(int *)node->data));
             break;
         case SYSCTL_TYPE_UINT:
-            snprintf(buf, buflen, "%u", *(unsigned int *)node->data);
+            fmt_ulong(buf, buflen, (unsigned long)(*(unsigned int *)node->data));
             break;
         case SYSCTL_TYPE_LONG:
-            snprintf(buf, buflen, "%ld", *(long *)node->data);
+            fmt_long(buf, buflen, *(long *)node->data);
             break;
         case SYSCTL_TYPE_ULONG:
-            snprintf(buf, buflen, "%lu", *(unsigned long *)node->data);
+            fmt_ulong(buf, buflen, *(unsigned long *)node->data);
             break;
         case SYSCTL_TYPE_STRING:
             strncpy(buf, (char *)node->data, buflen - 1);
             buf[buflen - 1] = '\0';
             break;
         case SYSCTL_TYPE_BOOL:
-            snprintf(buf, buflen, "%s", *(bool *)node->data ? "true" : "false");
+            strncpy(buf, *(bool *)node->data ? "true" : "false", buflen - 1);
+            buf[buflen - 1] = '\0';
             break;
         default:
             return -EINVAL;
     }
-    
+
     return 0;
 }
 
@@ -397,6 +481,12 @@ void sysctl_init(void) {
                           sizeof(kernel_ostype), SYSCTL_RO);
     sysctl_register_ulong("system.kernel.boot_time", &boot_time, SYSCTL_RO);
     sysctl_register_int("system.kernel.panic_on_oops", &panic_on_oops, SYSCTL_RW);
+
+    /* Register dynamic/system nodes after base kernel keys are present. */
+    extern void sysctl_init_cpu_info(void);
+    extern void sysctl_register_system_nodes(void);
+    sysctl_init_cpu_info();
+    sysctl_register_system_nodes();
     
     printk(KERN_INFO "sysctl initialized\n");
 }

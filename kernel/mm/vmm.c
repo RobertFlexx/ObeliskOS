@@ -671,6 +671,7 @@ int vmm_copy_from_user(void *dst, const void *src, size_t size) {
     }
     ret = vmm_verify_user_range(src, size, false);
     if (ret < 0) {
+        printk(KERN_ERR "vmm_copy_from_user: src=%p size=%lu ret=%d\n", src, size, ret);
         return ret;
     }
     memcpy(dst, src, size);
@@ -685,6 +686,7 @@ int vmm_copy_to_user(void *dst, const void *src, size_t size) {
     }
     ret = vmm_verify_user_range(dst, size, true);
     if (ret < 0) {
+        printk(KERN_ERR "vmm_copy_to_user: dst=%p size=%lu ret=%d\n", dst, size, ret);
         return ret;
     }
     memcpy(dst, src, size);

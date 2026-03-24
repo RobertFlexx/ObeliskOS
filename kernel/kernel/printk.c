@@ -374,67 +374,112 @@ int snprintf(char *buf, size_t size, const char *fmt, ...) {
 /*
  * vsnprintf - Print to buffer with va_list
  */
+static size_t vsnprintf_num(char *buf, size_t pos, size_t size,
+                            uint64_t num, int base, bool upper) {
+    static const char lo[] = "0123456789abcdef";
+    static const char up[] = "0123456789ABCDEF";
+    const char *d = upper ? up : lo;
+    char tmp[24];
+    int n = 0;
+    if (num == 0) {
+        tmp[n++] = '0';
+    } else {
+        while (num > 0 && n < (int)sizeof(tmp)) {
+            tmp[n++] = d[num % base];
+            num /= base;
+        }
+    }
+    while (n > 0 && pos + 1 < size) {
+        buf[pos++] = tmp[--n];
+    }
+    return pos;
+}
+
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args) {
-    /* Simplified implementation */
     size_t i = 0;
-    
-    while (*fmt && i < size - 1) {
+    if (size == 0) return 0;
+
+    while (*fmt && i + 1 < size) {
         if (*fmt != '%') {
             buf[i++] = *fmt++;
             continue;
         }
-        
         fmt++;
-        
+
+        if (*fmt == '%') { buf[i++] = '%'; fmt++; continue; }
+
+        /* Parse length modifier. */
+        bool is_long = false;
+        bool is_longlong = false;
+        if (*fmt == 'l') {
+            is_long = true; fmt++;
+            if (*fmt == 'l') { is_longlong = true; fmt++; }
+        } else if (*fmt == 'z') {
+            is_longlong = true; fmt++;
+        }
+
         switch (*fmt) {
             case 's': {
                 const char *s = va_arg(args, const char *);
                 if (!s) s = "(null)";
-                while (*s && i < size - 1) {
-                    buf[i++] = *s++;
-                }
+                while (*s && i + 1 < size) buf[i++] = *s++;
                 break;
             }
-            case 'd': {
-                int val = va_arg(args, int);
-                char tmp[32];
-                int j = 0;
-                bool neg = false;
-                
-                if (val < 0) {
-                    neg = true;
-                    val = -val;
-                }
-                
-                if (val == 0) {
-                    tmp[j++] = '0';
-                } else {
-                    while (val > 0) {
-                        tmp[j++] = '0' + (val % 10);
-                        val /= 10;
-                    }
-                }
-                
-                if (neg && i < size - 1) buf[i++] = '-';
-                while (j > 0 && i < size - 1) {
-                    buf[i++] = tmp[--j];
-                }
+            case 'd':
+            case 'i': {
+                int64_t val;
+                if (is_longlong)      val = va_arg(args, int64_t);
+                else if (is_long)     val = va_arg(args, long);
+                else                  val = va_arg(args, int);
+                if (val < 0 && i + 1 < size) { buf[i++] = '-'; val = -val; }
+                i = vsnprintf_num(buf, i, size, (uint64_t)val, 10, false);
                 break;
             }
-            case '%':
-                buf[i++] = '%';
+            case 'u': {
+                uint64_t val;
+                if (is_longlong)      val = va_arg(args, uint64_t);
+                else if (is_long)     val = va_arg(args, unsigned long);
+                else                  val = va_arg(args, unsigned int);
+                i = vsnprintf_num(buf, i, size, val, 10, false);
                 break;
+            }
+            case 'x': {
+                uint64_t val;
+                if (is_longlong)      val = va_arg(args, uint64_t);
+                else if (is_long)     val = va_arg(args, unsigned long);
+                else                  val = va_arg(args, unsigned int);
+                i = vsnprintf_num(buf, i, size, val, 16, false);
+                break;
+            }
+            case 'X': {
+                uint64_t val;
+                if (is_longlong)      val = va_arg(args, uint64_t);
+                else if (is_long)     val = va_arg(args, unsigned long);
+                else                  val = va_arg(args, unsigned int);
+                i = vsnprintf_num(buf, i, size, val, 16, true);
+                break;
+            }
+            case 'p': {
+                uint64_t val = (uint64_t)va_arg(args, void *);
+                if (i + 2 < size) { buf[i++] = '0'; buf[i++] = 'x'; }
+                i = vsnprintf_num(buf, i, size, val, 16, false);
+                break;
+            }
+            case 'c': {
+                char c = (char)va_arg(args, int);
+                buf[i++] = c;
+                break;
+            }
             default:
                 buf[i++] = '%';
-                if (i < size - 1) buf[i++] = *fmt;
+                if (*fmt && i + 1 < size) buf[i++] = *fmt;
                 break;
         }
-        
-        fmt++;
+        if (*fmt) fmt++;
     }
-    
+
     buf[i] = '\0';
-    return i;
+    return (int)i;
 }
 
 /* Get/set log level */

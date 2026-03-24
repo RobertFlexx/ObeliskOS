@@ -12,6 +12,8 @@ typedef long ssize_t;
 #define SYS_WRITE   1
 #define SYS_OPEN    2
 #define SYS_CLOSE   3
+#define SYS_STAT    4
+#define SYS_IOCTL   16
 #define SYS_DUP     32
 #define SYS_DUP2    33
 #define SYS_FORK    57
@@ -36,6 +38,7 @@ typedef long ssize_t;
 #define SYS_REBOOT  169
 #define AT_NULL     0
 #define AT_EXECFN   31
+#define TIOCGWINSZ  0x5413
 
 #define O_RDONLY    0x0000
 #define O_WRONLY    0x0001
@@ -71,6 +74,13 @@ struct ob_stat {
     int64_t  st_ctime;
     int64_t  st_ctime_nsec;
     int64_t  unused_pad[3];
+};
+
+struct winsize {
+    uint16_t ws_row;
+    uint16_t ws_col;
+    uint16_t ws_xpixel;
+    uint16_t ws_ypixel;
 };
 
 static char env_home[96] = "HOME=/";
@@ -219,9 +229,28 @@ static void write_str(const char *s) {
     syscall3(SYS_WRITE, 1, (long)s, (long)str_len(s));
 }
 
-static int split_words_shell(char *line, char **argv, int max_args) {
+static const char *lookup_env_value(const char *key) {
+    size_t klen = str_len(key);
+    for (int i = 0; shell_envp[i]; i++) {
+        const char *kv = shell_envp[i];
+        const char *eq = kv;
+        while (*eq && *eq != '=') {
+            eq++;
+        }
+        if (*eq != '=') {
+            continue;
+        }
+        if ((size_t)(eq - kv) == klen && str_ncmp(kv, key, klen) == 0) {
+            return eq + 1;
+        }
+    }
+    return "";
+}
+
+static int parse_words_shell(const char *line, char out[][256], char **argv,
+                             int max_args, int expand_vars) {
     int argc = 0;
-    char *p = line;
+    const char *p = line;
     while (*p && argc < max_args) {
         while (*p == ' ' || *p == '\t') {
             p++;
@@ -229,13 +258,15 @@ static int split_words_shell(char *line, char **argv, int max_args) {
         if (!*p) {
             break;
         }
-        char *dst = p;
-        argv[argc++] = dst;
+
+        char *dst = out[argc];
+        size_t dcap = 255;
         int in_single = 0;
         int in_double = 0;
+
         while (*p) {
             char c = *p++;
-            if (!in_single && c == '"' ) {
+            if (!in_single && c == '"') {
                 in_double = !in_double;
                 continue;
             }
@@ -244,15 +275,43 @@ static int split_words_shell(char *line, char **argv, int max_args) {
                 continue;
             }
             if (!in_single && c == '\\' && *p) {
-                *dst++ = *p++;
+                c = *p++;
+                if (dcap > 0) {
+                    *dst++ = c;
+                    dcap--;
+                }
                 continue;
+            }
+            if (!in_single && c == '$' && expand_vars) {
+                char key[64];
+                size_t k = 0;
+                if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') || *p == '_') {
+                    while (((*p >= 'A' && *p <= 'Z') ||
+                            (*p >= 'a' && *p <= 'z') ||
+                            (*p >= '0' && *p <= '9') ||
+                            *p == '_') && k + 1 < sizeof(key)) {
+                        key[k++] = *p++;
+                    }
+                    key[k] = '\0';
+                    const char *val = lookup_env_value(key);
+                    while (*val && dcap > 0) {
+                        *dst++ = *val++;
+                        dcap--;
+                    }
+                    continue;
+                }
             }
             if (!in_single && !in_double && (c == ' ' || c == '\t')) {
                 break;
             }
-            *dst++ = c;
+            if (dcap > 0) {
+                *dst++ = c;
+                dcap--;
+            }
         }
         *dst = '\0';
+        argv[argc] = out[argc];
+        argc++;
     }
     return argc;
 }
@@ -302,6 +361,23 @@ static void applet_cd(int argc, char **argv) {
     }
 }
 
+static int get_term_cols(void) {
+    struct winsize ws;
+    long ret;
+    ws.ws_col = 0;
+    ret = syscall3(SYS_IOCTL, 1, TIOCGWINSZ, (long)&ws);
+    if (ret < 0 || ws.ws_col == 0) {
+        return 80;
+    }
+    return (int)ws.ws_col;
+}
+
+static void print_spaces(int n) {
+    while (n-- > 0) {
+        write_ch(' ');
+    }
+}
+
 static void applet_ls(int argc, char **argv) {
     const char *path = (argc > 1) ? argv[1] : ".";
     long fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
@@ -311,6 +387,10 @@ static void applet_ls(int argc, char **argv) {
     }
 
     char buf[1024];
+    char names[256][128];
+    int namec = 0;
+    int maxw = 0;
+    int overflow = 0;
     while (1) {
         long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
         if (nread < 0) {
@@ -324,8 +404,16 @@ static void applet_ls(int argc, char **argv) {
         while (bpos < nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
             if (d->d_name[0] != '.') {
-                write_str(d->d_name);
-                write_ch('\n');
+                if (namec < 256) {
+                    str_copy(names[namec], d->d_name, sizeof(names[0]));
+                    int w = (int)str_len(names[namec]);
+                    if (w > maxw) {
+                        maxw = w;
+                    }
+                    namec++;
+                } else {
+                    overflow = 1;
+                }
             }
             if (d->d_reclen == 0) {
                 break;
@@ -334,6 +422,46 @@ static void applet_ls(int argc, char **argv) {
         }
     }
     syscall1(SYS_CLOSE, fd);
+
+    if (namec == 0) {
+        return;
+    }
+    if (overflow) {
+        for (int i = 0; i < namec; i++) {
+            write_str(names[i]);
+            write_ch('\n');
+        }
+        return;
+    }
+
+    int cols = get_term_cols();
+    int colw = maxw + 2;
+    if (colw < 1) {
+        colw = 1;
+    }
+    int ncols = cols / colw;
+    if (ncols < 1) {
+        ncols = 1;
+    }
+    int rows = (namec + ncols - 1) / ncols;
+
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < ncols; c++) {
+            int idx = c * rows + r;
+            if (idx >= namec) {
+                continue;
+            }
+            write_str(names[idx]);
+            if (c + 1 < ncols) {
+                int pad = colw - (int)str_len(names[idx]);
+                if (pad < 1) {
+                    pad = 1;
+                }
+                print_spaces(pad);
+            }
+        }
+        write_ch('\n');
+    }
 }
 
 static void applet_cat(int argc, char **argv) {
@@ -343,7 +471,7 @@ static void applet_cat(int argc, char **argv) {
             long n = syscall3(SYS_READ, 0, (long)buf, sizeof(buf));
             if (n < 0) {
                 if (n == -4) { /* EINTR */
-                    continue;
+                    return;
                 }
                 print_errno("cat", n);
                 break;
@@ -538,18 +666,62 @@ static void applet_echo(int argc, char **argv) {
     write_str("\n");
 }
 
-static void applet_uname(void) {
+static void applet_uname(int argc, char **argv) {
     struct utsname u;
+    int show_s = 0, show_n = 0, show_r = 0, show_v = 0, show_m = 0, show_a = 0;
+    int first = 1;
     long ret = syscall1(SYS_UNAME, (long)&u);
     if (ret < 0) {
         write_str("uname: syscall failed\n");
         return;
     }
-    write_str(u.sysname);
-    write_str(" ");
-    write_str(u.release);
-    write_str(" ");
-    write_str(u.machine);
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-') continue;
+        for (int j = 1; argv[i][j]; j++) {
+            char o = argv[i][j];
+            if (o == 'a') show_a = 1;
+            else if (o == 's') show_s = 1;
+            else if (o == 'n') show_n = 1;
+            else if (o == 'r') show_r = 1;
+            else if (o == 'v') show_v = 1;
+            else if (o == 'm') show_m = 1;
+            else {
+                write_str("uname: unsupported option\n");
+                return;
+            }
+        }
+    }
+    if (show_a) {
+        show_s = show_n = show_r = show_v = show_m = 1;
+    }
+    if (!show_s && !show_n && !show_r && !show_v && !show_m) {
+        show_s = 1;
+    }
+    if (show_s) {
+        if (!first) write_str(" ");
+        write_str(u.sysname);
+        first = 0;
+    }
+    if (show_n) {
+        if (!first) write_str(" ");
+        write_str(u.nodename);
+        first = 0;
+    }
+    if (show_r) {
+        if (!first) write_str(" ");
+        write_str(u.release);
+        first = 0;
+    }
+    if (show_v) {
+        if (!first) write_str(" ");
+        write_str(u.version);
+        first = 0;
+    }
+    if (show_m) {
+        if (!first) write_str(" ");
+        write_str(u.machine);
+        first = 0;
+    }
     write_str("\n");
 }
 
@@ -568,6 +740,7 @@ static void applet_shutdown(void) {
 }
 
 static int lookup_uid_name(unsigned uid, char *name_out, size_t cap);
+static int parse_uint10(const char *s, unsigned *out);
 
 static void write_u64_dec(uint64_t v) {
     char tmp[24];
@@ -616,6 +789,119 @@ static void applet_id(void) {
     write_str("\n");
 }
 
+static int parse_uint8(const char *s, unsigned *out) {
+    unsigned v = 0;
+    int n = 0;
+    while (s[n] >= '0' && s[n] <= '7') {
+        v = (v << 3) + (unsigned)(s[n] - '0');
+        n++;
+    }
+    if (n == 0 || s[n] != '\0') return -1;
+    *out = v;
+    return 0;
+}
+
+static void applet_chmod(int argc, char **argv) {
+    if (argc < 3) {
+        write_str("chmod: usage: chmod <mode-octal> <path...>\n");
+        return;
+    }
+    unsigned mode = 0;
+    if (parse_uint8(argv[1], &mode) < 0) {
+        write_str("chmod: mode must be octal (e.g. 755)\n");
+        return;
+    }
+    for (int i = 2; i < argc; i++) {
+        long ret = syscall2(SYS_CHMOD, (long)argv[i], (long)(mode & 07777));
+        if (ret < 0) {
+            print_errno("chmod", ret);
+        }
+    }
+}
+
+static int parse_user_or_group(const char *s, unsigned *id_out) {
+    if (parse_uint10(s, id_out) == 0) {
+        return 0;
+    }
+    if (str_cmp(s, "root") == 0) {
+        *id_out = 0;
+        return 0;
+    }
+    if (str_cmp(s, "obelisk") == 0) {
+        *id_out = 1000;
+        return 0;
+    }
+    return -1;
+}
+
+static void applet_chown(int argc, char **argv) {
+    if (argc < 3) {
+        write_str("chown: usage: chown <uid[:gid]|user[:group]> <path...>\n");
+        return;
+    }
+    char spec[64];
+    char *sep;
+    unsigned uid = 0;
+    unsigned gid = 0;
+    str_copy(spec, argv[1], sizeof(spec));
+    sep = spec;
+    while (*sep && *sep != ':') {
+        sep++;
+    }
+    if (*sep == ':') {
+        *sep++ = '\0';
+    } else {
+        sep = NULL;
+    }
+    if (parse_user_or_group(spec, &uid) < 0) {
+        write_str("chown: invalid owner\n");
+        return;
+    }
+    if (sep) {
+        if (parse_user_or_group(sep, &gid) < 0) {
+            write_str("chown: invalid group\n");
+            return;
+        }
+    } else {
+        gid = uid;
+    }
+    for (int i = 2; i < argc; i++) {
+        long ret = syscall3(SYS_CHOWN, (long)argv[i], (long)uid, (long)gid);
+        if (ret < 0) {
+            print_errno("chown", ret);
+        }
+    }
+}
+
+static void applet_stat(int argc, char **argv) {
+    if (argc < 2) {
+        write_str("stat: usage: stat <path...>\n");
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        struct ob_stat st;
+        long ret;
+        st.st_mode = 0;
+        st.st_uid = 0;
+        st.st_gid = 0;
+        ret = syscall2(SYS_STAT, (long)argv[i], (long)&st);
+        if (ret < 0) {
+            print_errno("stat", ret);
+            continue;
+        }
+        write_str(argv[i]);
+        write_str(": uid=");
+        write_u64_dec(st.st_uid);
+        write_str(" gid=");
+        write_u64_dec(st.st_gid);
+        write_str(" mode=");
+        write_u64_dec(st.st_mode & 07777);
+        write_str(" type=");
+        write_u64_dec(st.st_mode & 0170000);
+        write_str("\n");
+    }
+}
+
 static int run_external(char **args);
 static int run_shell(const char *prompt);
 static int try_exec_external(char **args);
@@ -625,7 +911,7 @@ static int is_builtin_applet_name(const char *name) {
     static const char *const names[] = {
         "busybox", "sh", "ash", "zsh", "echo", "uname", "pwd",
         "ls", "cat", "touch", "mkdir", "rm", "rmdir",
-        "reboot", "shutdown", "poweroff", "halt", "clear",
+        "chmod", "chown", "stat", "reboot", "shutdown", "poweroff", "halt", "clear",
         "su", "sudo", "whoami", "id", NULL
     };
     for (int i = 0; names[i]; i++) {
@@ -1251,13 +1537,15 @@ static int applet_su(int argc, char **argv) {
         set_identity_env(&u);
         if (cmd_idx >= 0) {
             char cmdline[256];
+            char token_buf[32][256];
             char *cmd_argv[32];
             int cmd_argc;
             str_copy(cmdline, argv[cmd_idx], sizeof(cmdline));
-            cmd_argc = split_words_shell(cmdline, cmd_argv, 32);
+            cmd_argc = parse_words_shell(cmdline, token_buf, cmd_argv, 32, 1);
             if (cmd_argc <= 0) {
                 syscall1(SYS_EXIT, 0);
             }
+            cmd_argv[cmd_argc] = NULL;
             if (is_builtin_applet_name(cmd_argv[0])) {
                 int rc = applet_main(cmd_argv[0], cmd_argc, cmd_argv);
                 syscall1(SYS_EXIT, rc);
@@ -1327,23 +1615,24 @@ static int applet_sudo(int argc, char **argv) {
 static const char *builtin_names[] = {
     "help", "echo", "uname", "clear", "reboot", "shutdown", "exit",
     "zsh", "sh", "busybox", "cd", "pwd", "ls", "cat", "touch",
-    "mkdir", "rm", "rmdir", "write", "su", "sudo", "whoami", "id",
+    "mkdir", "rm", "rmdir", "write", "chmod", "chown", "stat",
+    "su", "sudo", "whoami", "id",
     "sysctl", "installer", "installer-tui", NULL
 };
 
-static int add_candidate(char out[][64], int count, int max, const char *name) {
+static int add_candidate(char out[][128], int count, int max, const char *name) {
     for (int i = 0; i < count; i++) {
         if (str_cmp(out[i], name) == 0) return count;
     }
     if (count < max) {
-        str_copy(out[count], name, 64);
+        str_copy(out[count], name, 128);
         return count + 1;
     }
     return count;
 }
 
 static int collect_matches_from_dir(const char *dir, const char *prefix,
-                                    char out[][64], int count, int max) {
+                                    char out[][128], int count, int max) {
     long fd = syscall3(SYS_OPEN, (long)dir, O_RDONLY | O_DIRECTORY, 0);
     if (fd < 0) return count;
     size_t plen = str_len(prefix);
@@ -1367,57 +1656,197 @@ static int collect_matches_from_dir(const char *dir, const char *prefix,
     return count;
 }
 
-static int complete_first_token(char *line, size_t cap) {
-    char matches[64][64];
-    int mcount = 0;
-    size_t plen = str_len(line);
-    if (plen == 0) return 0;
-    for (size_t i = 0; line[i]; i++) {
-        if (line[i] == ' ' || line[i] == '\t') {
-            return 0;
-        }
-    }
-    for (int i = 0; builtin_names[i]; i++) {
-        if (str_ncmp(builtin_names[i], line, plen) == 0) {
-            mcount = add_candidate(matches, mcount, 64, builtin_names[i]);
-        }
-    }
-    mcount = collect_matches_from_dir("/bin", line, matches, mcount, 64);
-    mcount = collect_matches_from_dir("/sbin", line, matches, mcount, 64);
-    mcount = collect_matches_from_dir("/usr/bin", line, matches, mcount, 64);
-
-    if (mcount == 1) {
-        str_copy(line, matches[0], cap);
-        size_t n = str_len(line);
-        if (n + 1 < cap) {
-            line[n++] = ' ';
-            line[n] = '\0';
-        }
-        return 1;
-    }
-    if (mcount > 1) {
-        for (int i = 0; i < mcount; i++) {
-            write_str(matches[i]);
-            write_str("  ");
-        }
-        write_ch('\n');
-        return 2;
+static int str_has_char(const char *s, char ch) {
+    while (*s) {
+        if (*s == ch) return 1;
+        s++;
     }
     return 0;
 }
 
-static void redraw_line(const char *prompt, const char *line) {
+static int common_prefix_len(char vals[][128], int n) {
+    if (n <= 0) return 0;
+    int len = (int)str_len(vals[0]);
+    for (int i = 1; i < n; i++) {
+        int j = 0;
+        int ilen = (int)str_len(vals[i]);
+        int lim = (ilen < len) ? ilen : len;
+        while (j < lim && vals[0][j] == vals[i][j]) j++;
+        len = j;
+        if (len == 0) break;
+    }
+    return len;
+}
+
+static int replace_span(char *line, size_t cap, size_t start, size_t end,
+                        const char *repl, size_t *cursor) {
+    size_t len = str_len(line);
+    size_t rlen = str_len(repl);
+    size_t tail = len - end;
+    if (start > end || end > len) {
+        return -1;
+    }
+    if (start + rlen + tail + 1 > cap) {
+        return -1;
+    }
+    for (size_t i = 0; i <= tail; i++) {
+        line[start + rlen + i] = line[end + i];
+    }
+    for (size_t i = 0; i < rlen; i++) {
+        line[start + i] = repl[i];
+    }
+    *cursor = start + rlen;
+    return 0;
+}
+
+static int collect_path_matches(const char *token, char out[][128], int count, int max) {
+    char dir[256];
+    char base[128];
+    char candidate[128];
+    const char *slash = NULL;
+    int has_slash = 0;
+
+    for (const char *p = token; *p; p++) {
+        if (*p == '/') slash = p;
+    }
+    if (slash) {
+        has_slash = 1;
+        size_t dlen = (size_t)(slash - token);
+        if (dlen == 0) {
+            str_copy(dir, "/", sizeof(dir));
+        } else {
+            if (dlen >= sizeof(dir)) dlen = sizeof(dir) - 1;
+            for (size_t i = 0; i < dlen; i++) dir[i] = token[i];
+            dir[dlen] = '\0';
+        }
+        str_copy(base, slash + 1, sizeof(base));
+    } else {
+        str_copy(dir, ".", sizeof(dir));
+        str_copy(base, token, sizeof(base));
+    }
+
+    long fd = syscall3(SYS_OPEN, (long)dir, O_RDONLY | O_DIRECTORY, 0);
+    if (fd < 0) return count;
+    size_t plen = str_len(base);
+    char buf[1024];
+    while (1) {
+        long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+        if (nread <= 0) break;
+        long bpos = 0;
+        while (bpos < nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+            if (d->d_name[0] &&
+                !(d->d_name[0] == '.' && base[0] != '.') &&
+                str_ncmp(d->d_name, base, plen) == 0) {
+                if (has_slash) {
+                    if (str_cmp(dir, "/") == 0) {
+                        str_copy(candidate, "/", sizeof(candidate));
+                        str_append(candidate, d->d_name, sizeof(candidate));
+                    } else {
+                        str_copy(candidate, dir, sizeof(candidate));
+                        str_append(candidate, "/", sizeof(candidate));
+                        str_append(candidate, d->d_name, sizeof(candidate));
+                    }
+                } else {
+                    str_copy(candidate, d->d_name, sizeof(candidate));
+                }
+                count = add_candidate(out, count, max, candidate);
+            }
+            if (d->d_reclen == 0) break;
+            bpos += d->d_reclen;
+        }
+    }
+    syscall1(SYS_CLOSE, fd);
+    return count;
+}
+
+static int complete_at_cursor(char *line, size_t *cursor, size_t cap) {
+    char token[128];
+    char matches[64][128];
+    char repl[128];
+    int mcount = 0;
+    size_t len = str_len(line);
+    size_t cur = *cursor;
+    size_t start;
+    size_t tlen;
+
+    if (cur > len) cur = len;
+    start = cur;
+    while (start > 0 && line[start - 1] != ' ' && line[start - 1] != '\t') {
+        start--;
+    }
+    tlen = cur - start;
+    if (tlen == 0 || tlen >= sizeof(token)) {
+        return 0;
+    }
+    for (size_t i = 0; i < tlen; i++) {
+        token[i] = line[start + i];
+    }
+    token[tlen] = '\0';
+
+    if (start == 0 && !str_has_char(token, '/')) {
+        for (int i = 0; builtin_names[i]; i++) {
+            if (str_ncmp(builtin_names[i], token, tlen) == 0) {
+                mcount = add_candidate(matches, mcount, 64, builtin_names[i]);
+            }
+        }
+        mcount = collect_matches_from_dir("/bin", token, matches, mcount, 64);
+        mcount = collect_matches_from_dir("/sbin", token, matches, mcount, 64);
+        mcount = collect_matches_from_dir("/usr/bin", token, matches, mcount, 64);
+    } else {
+        mcount = collect_path_matches(token, matches, 0, 64);
+    }
+
+    if (mcount == 0) {
+        return 0;
+    }
+
+    if (mcount == 1) {
+        str_copy(repl, matches[0], sizeof(repl));
+        str_append(repl, " ", sizeof(repl));
+        if (replace_span(line, cap, start, cur, repl, cursor) == 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    int cplen = common_prefix_len(matches, mcount);
+    if (cplen > (int)tlen) {
+        char cpbuf[128];
+        for (int i = 0; i < cplen && i < (int)sizeof(cpbuf) - 1; i++) {
+            cpbuf[i] = matches[0][i];
+        }
+        cpbuf[(cplen < (int)sizeof(cpbuf)) ? cplen : (int)sizeof(cpbuf) - 1] = '\0';
+        if (replace_span(line, cap, start, cur, cpbuf, cursor) == 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    for (int i = 0; i < mcount; i++) {
+        write_str(matches[i]);
+        write_str("  ");
+    }
+    write_ch('\n');
+    return 2;
+}
+
+static void redraw_line(const char *prompt, const char *line, size_t cursor) {
+    size_t len = str_len(line);
     write_ch('\r');
     write_str(prompt);
     write_str(line);
-    write_str(" \r");
-    write_str(prompt);
-    write_str(line);
+    write_str("\033[K");
+    while (len > cursor) {
+        write_ch('\b');
+        len--;
+    }
 }
 
 static int read_line_interactive(const char *prompt, char *line, size_t cap,
                                  char history[][256], int hist_count, int *hist_pos) {
     size_t len = 0;
+    size_t cursor = 0;
     line[0] = '\0';
     write_str(prompt);
 
@@ -1427,7 +1856,8 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
         if (n == -4) { /* EINTR */
             line[0] = '\0';
             len = 0;
-            write_str(prompt);
+            cursor = 0;
+            redraw_line(prompt, line, cursor);
             continue;
         }
         if (n <= 0) {
@@ -1441,12 +1871,10 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
         }
 
         if (c == '\t') {
-            int comp = complete_first_token(line, cap);
-            if (comp == 1) {
-                redraw_line(prompt, line);
+            int comp = complete_at_cursor(line, &cursor, cap);
+            if (comp == 1 || comp == 2) {
                 len = str_len(line);
-            } else if (comp == 2) {
-                redraw_line(prompt, line);
+                redraw_line(prompt, line, cursor);
             }
             continue;
         }
@@ -1465,7 +1893,8 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
                         }
                         str_copy(line, history[*hist_pos], cap);
                         len = str_len(line);
-                        redraw_line(prompt, line);
+                        cursor = len;
+                        redraw_line(prompt, line, cursor);
                     }
                     continue;
                 }
@@ -1479,11 +1908,35 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
                         line[0] = '\0';
                         len = 0;
                     }
-                    redraw_line(prompt, line);
+                    cursor = len;
+                    redraw_line(prompt, line, cursor);
                     continue;
                 }
-                /* Left/right currently no-op but consumed cleanly. */
-                if (b == 'C' || b == 'D') {
+                if (b == 'C') { /* Right */
+                    if (cursor < len) {
+                        write_ch(line[cursor]);
+                        cursor++;
+                    }
+                    continue;
+                }
+                if (b == 'D') { /* Left */
+                    if (cursor > 0) {
+                        write_ch('\b');
+                        cursor--;
+                    }
+                    continue;
+                }
+                if (b == '3') { /* Delete key: ESC [ 3 ~ */
+                    char t = 0;
+                    if (syscall3(SYS_READ, 0, (long)&t, 1) > 0 && t == '~') {
+                        if (cursor < len) {
+                            for (size_t i = cursor; i < len; i++) {
+                                line[i] = line[i + 1];
+                            }
+                            len--;
+                            redraw_line(prompt, line, cursor);
+                        }
+                    }
                     continue;
                 }
             }
@@ -1491,19 +1944,32 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
         }
 
         if (c == '\b' || c == 0x7f) {
-            if (len > 0) {
+            if (cursor > 0) {
+                for (size_t i = cursor - 1; i < len; i++) {
+                    line[i] = line[i + 1];
+                }
+                cursor--;
                 len--;
-                line[len] = '\0';
-                write_str("\b \b");
+                redraw_line(prompt, line, cursor);
             }
             continue;
         }
 
         if (c >= 32 && c <= 126) {
             if (len + 1 < cap) {
-                line[len++] = c;
-                line[len] = '\0';
-                write_ch(c);
+                if (cursor == len) {
+                    line[len++] = c;
+                    line[len] = '\0';
+                    cursor = len;
+                    write_ch(c);
+                } else {
+                    for (size_t i = len + 1; i > cursor; i--) {
+                        line[i] = line[i - 1];
+                    }
+                    line[cursor++] = c;
+                    len++;
+                    redraw_line(prompt, line, cursor);
+                }
             }
             continue;
         }
@@ -1599,15 +2065,201 @@ static int run_external(char **args) {
         print_errno("wait4", ret);
         break;
     }
-    return 0;
+    return (status == 0) ? 0 : 1;
+}
+
+static char *trim_ws_inplace(char *s) {
+    while (*s == ' ' || *s == '\t') {
+        s++;
+    }
+    size_t n = str_len(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t')) {
+        s[--n] = '\0';
+    }
+    return s;
+}
+
+enum chain_op {
+    CHAIN_NONE = 0,
+    CHAIN_SEQ,
+    CHAIN_AND,
+    CHAIN_OR
+};
+
+static enum chain_op parse_next_segment(const char **cursor, char *out, size_t cap) {
+    const char *p = *cursor;
+    const char *start = p;
+    size_t n = 0;
+    int in_single = 0;
+    int in_double = 0;
+
+    while (*p && n + 1 < cap) {
+        char c = *p;
+        if (!in_single && c == '"' ) {
+            in_double = !in_double;
+            out[n++] = *p++;
+            continue;
+        }
+        if (!in_double && c == '\'') {
+            in_single = !in_single;
+            out[n++] = *p++;
+            continue;
+        }
+        if (!in_single && c == '\\' && p[1]) {
+            out[n++] = *p++;
+            if (n + 1 < cap) {
+                out[n++] = *p++;
+            }
+            continue;
+        }
+        if (!in_single && !in_double) {
+            if (c == ';') {
+                p++;
+                break;
+            }
+            if (c == '&' && p[1] == '&') {
+                p += 2;
+                out[n] = '\0';
+                *cursor = p;
+                return CHAIN_AND;
+            }
+            if (c == '|' && p[1] == '|') {
+                p += 2;
+                out[n] = '\0';
+                *cursor = p;
+                return CHAIN_OR;
+            }
+        }
+        out[n++] = *p++;
+    }
+    out[n] = '\0';
+    *cursor = p;
+    if (p > start && *(p - 1) == ';') {
+        return CHAIN_SEQ;
+    }
+    return CHAIN_NONE;
+}
+
+static int execute_simple_command(const char *prompt, char *line) {
+    char *args[32];
+    char *cmd[32];
+    char *expanded[32];
+    char token_buf[32][256];
+    static char glob_scratch[32][256];
+    int argc = parse_words_shell(line, token_buf, args, 32, 1);
+    argc = expand_globs(args, argc, expanded, 32, glob_scratch, 32);
+    for (int i = 0; i < argc; i++) args[i] = expanded[i];
+    if (argc == 0) {
+        return 0;
+    }
+    const char *in_path = NULL;
+    const char *out_path = NULL;
+    int append = 0;
+    int cmdc = parse_redirections(args, argc, cmd, 31, &in_path, &out_path, &append);
+    if (cmdc < 0) {
+        return 1;
+    }
+    if (cmdc == 0) {
+        return 0;
+    }
+    cmd[cmdc] = NULL;
+    argc = cmdc;
+    for (int i = 0; i < argc; i++) args[i] = cmd[i];
+    args[argc] = NULL;
+
+    int saved_in = -1, saved_out = -1;
+    int rc = 0;
+    if (apply_redirections(in_path, out_path, append, &saved_in, &saved_out) < 0) {
+        restore_redirections(saved_in, saved_out);
+        return 1;
+    }
+
+    if (str_cmp(args[0], "help") == 0) {
+        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat su sudo whoami id\n");
+        write_str("shell: quotes, $VAR expansion, && || ;, redirects < > >>, Up/Down history, TAB completion\n");
+        rc = 0;
+    } else if (str_cmp(args[0], "echo") == 0) {
+        applet_echo(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "uname") == 0) {
+        applet_uname(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "cd") == 0) {
+        applet_cd(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "pwd") == 0) {
+        applet_pwd();
+        rc = 0;
+    } else if (str_cmp(args[0], "ls") == 0) {
+        applet_ls(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "cat") == 0) {
+        applet_cat(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "touch") == 0) {
+        applet_touch(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "mkdir") == 0) {
+        applet_mkdir(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "rm") == 0) {
+        applet_rm(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "rmdir") == 0) {
+        applet_rmdir(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "write") == 0) {
+        applet_write(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "chmod") == 0) {
+        applet_chmod(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "chown") == 0) {
+        applet_chown(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "stat") == 0) {
+        applet_stat(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "su") == 0) {
+        rc = applet_su(argc, args);
+    } else if (str_cmp(args[0], "sudo") == 0) {
+        rc = applet_sudo(argc, args);
+    } else if (str_cmp(args[0], "whoami") == 0) {
+        applet_whoami();
+        rc = 0;
+    } else if (str_cmp(args[0], "id") == 0) {
+        applet_id();
+        rc = 0;
+    } else if (str_cmp(args[0], "reboot") == 0) {
+        applet_reboot();
+        rc = 0;
+    } else if (str_cmp(args[0], "shutdown") == 0 ||
+               str_cmp(args[0], "poweroff") == 0 ||
+               str_cmp(args[0], "halt") == 0) {
+        applet_shutdown();
+        rc = 0;
+    } else if (str_cmp(args[0], "clear") == 0) {
+        write_str("\033[2J\033[H");
+        rc = 0;
+    } else if (str_cmp(args[0], "zsh") == 0) {
+        rc = run_shell("zsh% ");
+    } else if (str_cmp(args[0], "sh") == 0 || str_cmp(args[0], "busybox") == 0) {
+        rc = run_shell("$ ");
+    } else if (str_cmp(args[0], "exit") == 0) {
+        restore_redirections(saved_in, saved_out);
+        return -1000;
+    } else {
+        rc = run_external(args);
+    }
+    (void)prompt;
+    restore_redirections(saved_in, saved_out);
+    return rc;
 }
 
 static int run_shell(const char *prompt) {
     char line[256];
-    char *args[32];
-    char *cmd[32];
-    char *expanded[32];
-    static char glob_scratch[32][256];
+    char line_orig[256];
+    char seg[256];
     static char history[16][256];
     int hist_count = 0;
     int hist_pos = -1;
@@ -1616,95 +2268,46 @@ static int run_shell(const char *prompt) {
     while (1) {
         hist_pos = -1;
         read_line_interactive(prompt, line, sizeof(line), history, hist_count, &hist_pos);
+        str_copy(line_orig, line, sizeof(line_orig));
+        if (trim_ws_inplace(line_orig)[0] == '\0') {
+            continue;
+        }
 
-        int argc = split_words_shell(line, args, 32);
-        argc = expand_globs(args, argc, expanded, 32, glob_scratch, 32);
-        for (int i = 0; i < argc; i++) args[i] = expanded[i];
-        if (argc == 0) {
-            continue;
-        }
-        const char *in_path = NULL;
-        const char *out_path = NULL;
-        int append = 0;
-        int cmdc = parse_redirections(args, argc, cmd, 31, &in_path, &out_path, &append);
-        if (cmdc < 0) {
-            continue;
-        }
-        if (cmdc == 0) {
-            continue;
-        }
-        cmd[cmdc] = NULL;
-        argc = cmdc;
-        for (int i = 0; i < argc; i++) args[i] = cmd[i];
-
-        if (hist_count == 0 || str_cmp(history[hist_count - 1], line) != 0) {
+        if (hist_count == 0 || str_cmp(history[hist_count - 1], line_orig) != 0) {
             if (hist_count < 16) {
-                str_copy(history[hist_count++], line, sizeof(history[0]));
+                str_copy(history[hist_count++], line_orig, sizeof(history[0]));
             } else {
                 for (int i = 1; i < 16; i++) {
                     str_copy(history[i - 1], history[i], sizeof(history[0]));
                 }
-                str_copy(history[15], line, sizeof(history[0]));
+                str_copy(history[15], line_orig, sizeof(history[0]));
             }
         }
 
-        int saved_in = -1, saved_out = -1;
-        if (apply_redirections(in_path, out_path, append, &saved_in, &saved_out) < 0) {
-            restore_redirections(saved_in, saved_out);
-            continue;
+        const char *cursor = line_orig;
+        enum chain_op prev = CHAIN_SEQ;
+        int last_status = 0;
+        while (1) {
+            enum chain_op next = parse_next_segment(&cursor, seg, sizeof(seg));
+            char *trimmed = trim_ws_inplace(seg);
+            int should_run = 1;
+            if (prev == CHAIN_AND) {
+                should_run = (last_status == 0);
+            } else if (prev == CHAIN_OR) {
+                should_run = (last_status != 0);
+            }
+            if (*trimmed && should_run) {
+                int rc = execute_simple_command(prompt, trimmed);
+                if (rc == -1000) {
+                    return 0;
+                }
+                last_status = rc;
+            }
+            prev = next;
+            if (next == CHAIN_NONE) {
+                break;
+            }
         }
-
-        if (str_cmp(args[0], "help") == 0) {
-            write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write su sudo whoami id\n");
-            write_str("shell: Up/Down=history, TAB=live completion, Backspace, redirects < > >>\n");
-        } else if (str_cmp(args[0], "echo") == 0) {
-            applet_echo(argc, args);
-        } else if (str_cmp(args[0], "uname") == 0) {
-            applet_uname();
-        } else if (str_cmp(args[0], "cd") == 0) {
-            applet_cd(argc, args);
-        } else if (str_cmp(args[0], "pwd") == 0) {
-            applet_pwd();
-        } else if (str_cmp(args[0], "ls") == 0) {
-            applet_ls(argc, args);
-        } else if (str_cmp(args[0], "cat") == 0) {
-            applet_cat(argc, args);
-        } else if (str_cmp(args[0], "touch") == 0) {
-            applet_touch(argc, args);
-        } else if (str_cmp(args[0], "mkdir") == 0) {
-            applet_mkdir(argc, args);
-        } else if (str_cmp(args[0], "rm") == 0) {
-            applet_rm(argc, args);
-        } else if (str_cmp(args[0], "rmdir") == 0) {
-            applet_rmdir(argc, args);
-        } else if (str_cmp(args[0], "write") == 0) {
-            applet_write(argc, args);
-        } else if (str_cmp(args[0], "su") == 0) {
-            applet_su(argc, args);
-        } else if (str_cmp(args[0], "sudo") == 0) {
-            applet_sudo(argc, args);
-        } else if (str_cmp(args[0], "whoami") == 0) {
-            applet_whoami();
-        } else if (str_cmp(args[0], "id") == 0) {
-            applet_id();
-        } else if (str_cmp(args[0], "reboot") == 0) {
-            applet_reboot();
-        } else if (str_cmp(args[0], "shutdown") == 0 ||
-                   str_cmp(args[0], "poweroff") == 0 ||
-                   str_cmp(args[0], "halt") == 0) {
-            applet_shutdown();
-        } else if (str_cmp(args[0], "clear") == 0) {
-            write_str("\033[2J\033[H");
-        } else if (str_cmp(args[0], "zsh") == 0) {
-            run_shell("zsh% ");
-        } else if (str_cmp(args[0], "sh") == 0 || str_cmp(args[0], "busybox") == 0) {
-            run_shell("$ ");
-        } else if (str_cmp(args[0], "exit") == 0) {
-            return 0;
-        } else {
-            run_external(args);
-        }
-        restore_redirections(saved_in, saved_out);
     }
 }
 
@@ -1726,7 +2329,7 @@ static int applet_main(const char *name, int argc, char **argv) {
         return 0;
     }
     if (str_cmp(name, "uname") == 0) {
-        applet_uname();
+        applet_uname(argc, argv);
         return 0;
     }
     if (str_cmp(name, "pwd") == 0) {
@@ -1755,6 +2358,18 @@ static int applet_main(const char *name, int argc, char **argv) {
     }
     if (str_cmp(name, "rmdir") == 0) {
         applet_rmdir(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "chmod") == 0) {
+        applet_chmod(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "chown") == 0) {
+        applet_chown(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "stat") == 0) {
+        applet_stat(argc, argv);
         return 0;
     }
     if (str_cmp(name, "reboot") == 0) {

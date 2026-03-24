@@ -18,6 +18,7 @@
 #include <fs/file.h>
 #include <mm/pmm.h>
 #include <obelisk/limits.h>
+#include <sysctl/sysctl.h>
 
 /* Forward declarations of syscall handlers */
 static int64_t sys_read(int fd, void *buf, size_t count);
@@ -59,6 +60,8 @@ static int64_t sys_getcwd(char *buf, size_t size);
 static int64_t sys_mkdir(const char *pathname, mode_t mode);
 static int64_t sys_rmdir(const char *pathname);
 static int64_t sys_unlink(const char *pathname);
+static int64_t sys_chmod(const char *pathname, mode_t mode);
+static int64_t sys_chown(const char *pathname, uid_t owner, gid_t group);
 static int64_t sys_link(const char *oldpath, const char *newpath);
 static int64_t sys_rename(const char *oldpath, const char *newpath);
 static int64_t sys_openat(int dirfd, const char *pathname, int flags, mode_t mode);
@@ -75,6 +78,8 @@ static int64_t sys_kill(pid_t pid, int sig);
 static int64_t sys_uname(void *buf);
 static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg);
 static int64_t sys_sysctl(void *args);
+static int resolve_user_path(const char *path, char *out, size_t out_size);
+static int resolve_user_at_path(int dirfd, const char *path, char *out, size_t out_size);
 
 struct linux_dirent64 {
     uint64_t d_ino;
@@ -169,6 +174,105 @@ static void tty_flush_input(void) {
 static uint64_t syscall_counts[NR_SYSCALLS];
 static int loader_trace_budget = 4096;
 
+#define EXEC_USER_MAX_ARGC    256
+#define EXEC_USER_MAX_STRLEN  4096
+
+static int copy_user_cstring(const char *user_ptr, char *kernel_buf, size_t cap) {
+    if (!user_ptr || !kernel_buf || cap == 0) {
+        return -EFAULT;
+    }
+    for (size_t i = 0; i < cap; i++) {
+        char c = '\0';
+        if (vmm_copy_from_user(&c, (const void *)((uintptr_t)user_ptr + i), 1) < 0) {
+            return -EFAULT;
+        }
+        kernel_buf[i] = c;
+        if (c == '\0') {
+            return 0;
+        }
+    }
+    kernel_buf[cap - 1] = '\0';
+    return -ENAMETOOLONG;
+}
+
+static void free_exec_string_vector(char **vec) {
+    if (!vec) {
+        return;
+    }
+    for (size_t i = 0; i < EXEC_USER_MAX_ARGC && vec[i]; i++) {
+        kfree(vec[i]);
+    }
+    kfree(vec);
+}
+
+static int copy_user_string_vector(char *const user_vec[], char ***kernel_vec_out) {
+    char **kernel_vec;
+
+    if (!kernel_vec_out) {
+        return -EINVAL;
+    }
+    *kernel_vec_out = NULL;
+
+    if (!user_vec) {
+        return 0;
+    }
+
+    kernel_vec = kmalloc(sizeof(char *) * (EXEC_USER_MAX_ARGC + 1));
+    if (!kernel_vec) {
+        return -ENOMEM;
+    }
+    memset(kernel_vec, 0, sizeof(char *) * (EXEC_USER_MAX_ARGC + 1));
+
+    for (size_t i = 0; i < EXEC_USER_MAX_ARGC; i++) {
+        char *user_str = NULL;
+        int ret = vmm_copy_from_user(&user_str,
+                                     (const void *)((uintptr_t)user_vec + (i * sizeof(char *))),
+                                     sizeof(user_str));
+        if (ret < 0) {
+            free_exec_string_vector(kernel_vec);
+            return -EFAULT;
+        }
+
+        if (!user_str) {
+            kernel_vec[i] = NULL;
+            *kernel_vec_out = kernel_vec;
+            return 0;
+        }
+
+        kernel_vec[i] = kmalloc(EXEC_USER_MAX_STRLEN);
+        if (!kernel_vec[i]) {
+            free_exec_string_vector(kernel_vec);
+            return -ENOMEM;
+        }
+        ret = copy_user_cstring(user_str, kernel_vec[i], EXEC_USER_MAX_STRLEN);
+        if (ret < 0) {
+            free_exec_string_vector(kernel_vec);
+            return ret;
+        }
+    }
+
+    free_exec_string_vector(kernel_vec);
+    return -E2BIG;
+}
+
+static int resolve_user_path_checked(const char *user_path, char *out, size_t out_size) {
+    char kpath[PATH_MAX];
+    int ret = copy_user_cstring(user_path, kpath, sizeof(kpath));
+    if (ret < 0) {
+        return ret;
+    }
+    return resolve_user_path(kpath, out, out_size);
+}
+
+static int resolve_user_at_path_checked(int dirfd, const char *user_path, char *out, size_t out_size) {
+    char kpath[PATH_MAX];
+    int ret = copy_user_cstring(user_path, kpath, sizeof(kpath));
+    if (ret < 0) {
+        return ret;
+    }
+    return resolve_user_at_path(dirfd, kpath, out, out_size);
+}
+
 /* Initialize syscall table */
 static void syscall_table_init(void) {
     /* Clear table */
@@ -217,6 +321,8 @@ static void syscall_table_init(void) {
     syscall_table[SYS_MKDIR] = (syscall_fn_t)sys_mkdir;
     syscall_table[SYS_RMDIR] = (syscall_fn_t)sys_rmdir;
     syscall_table[SYS_UNLINK] = (syscall_fn_t)sys_unlink;
+    syscall_table[SYS_CHMOD] = (syscall_fn_t)sys_chmod;
+    syscall_table[SYS_CHOWN] = (syscall_fn_t)sys_chown;
     syscall_table[SYS_LINK] = (syscall_fn_t)sys_link;
     syscall_table[SYS_RENAME] = (syscall_fn_t)sys_rename;
     syscall_table[SYS_OPENAT] = (syscall_fn_t)sys_openat;
@@ -596,7 +702,7 @@ static int64_t sys_open(const char *pathname, int flags, mode_t mode) {
     if (!proc || !proc->files) {
         return -EBADF;
     }
-    ret = resolve_user_path(pathname, resolved, sizeof(resolved));
+    ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -642,12 +748,13 @@ static int64_t sys_close(int fd) {
 
 static int64_t sys_stat(const char *pathname, struct stat *statbuf) {
     struct kstat kst;
+    struct stat ust;
     char resolved[PATH_MAX];
     int ret;
     if (!statbuf) {
         return -EFAULT;
     }
-    ret = resolve_user_path(pathname, resolved, sizeof(resolved));
+    ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -655,7 +762,10 @@ static int64_t sys_stat(const char *pathname, struct stat *statbuf) {
     if (ret < 0) {
         return ret;
     }
-    kstat_to_uapi_stat(&kst, statbuf);
+    kstat_to_uapi_stat(&kst, &ust);
+    if (vmm_copy_to_user(statbuf, &ust, sizeof(ust)) < 0) {
+        return -EFAULT;
+    }
     return 0;
 }
 
@@ -663,6 +773,7 @@ static int64_t sys_fstat(int fd, struct stat *statbuf) {
     struct process *proc = current;
     struct file *file;
     struct kstat kst;
+    struct stat ust;
     int ret;
     if (!statbuf) {
         return -EFAULT;
@@ -678,14 +789,17 @@ static int64_t sys_fstat(int fd, struct stat *statbuf) {
     if (ret < 0) {
         return ret;
     }
-    kstat_to_uapi_stat(&kst, statbuf);
+    kstat_to_uapi_stat(&kst, &ust);
+    if (vmm_copy_to_user(statbuf, &ust, sizeof(ust)) < 0) {
+        return -EFAULT;
+    }
     return 0;
 }
 
 static int64_t sys_access(const char *pathname, int mode) {
     char resolved[PATH_MAX];
     struct dentry *dentry;
-    int ret = resolve_user_path(pathname, resolved, sizeof(resolved));
+    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -782,10 +896,45 @@ static int64_t sys_sched_yield(void) {
 }
 
 static int64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]) {
+    char *kpath = NULL;
+    char **kargv = NULL;
+    char **kenvp = NULL;
+    int64_t ret;
+
     if (!pathname) {
         return -EFAULT;
     }
-    return do_execve(pathname, argv, envp);
+
+    kpath = kmalloc(PATH_MAX);
+    if (!kpath) {
+        return -ENOMEM;
+    }
+    ret = copy_user_cstring(pathname, kpath, PATH_MAX);
+    if (ret < 0) {
+        kfree(kpath);
+        return ret;
+    }
+
+    ret = copy_user_string_vector(argv, &kargv);
+    if (ret < 0) {
+        kfree(kpath);
+        return ret;
+    }
+
+    ret = copy_user_string_vector(envp, &kenvp);
+    if (ret < 0) {
+        free_exec_string_vector(kargv);
+        kfree(kpath);
+        return ret;
+    }
+
+    ret = do_execve(kpath, kargv, kenvp);
+
+    /* Success path does not return. */
+    free_exec_string_vector(kenvp);
+    free_exec_string_vector(kargv);
+    kfree(kpath);
+    return ret;
 }
 
 static int64_t sys_exit(int status) {
@@ -818,8 +967,17 @@ static int64_t sys_exit_group(int status) {
 }
 
 static int64_t sys_wait4(pid_t pid, int *wstatus, int options, void *rusage) {
+    int kstatus = 0;
+    int64_t ret;
     (void)rusage;
-    return do_wait(pid, wstatus, options);
+    ret = do_wait(pid, wstatus ? &kstatus : NULL, options);
+    if (ret < 0 || !wstatus) {
+        return ret;
+    }
+    if (vmm_copy_to_user(wstatus, &kstatus, sizeof(kstatus)) < 0) {
+        return -EFAULT;
+    }
+    return ret;
 }
 
 static int64_t sys_getpid(void) {
@@ -1017,7 +1175,7 @@ static int64_t sys_chdir(const char *path) {
     if (!proc) {
         return -ESRCH;
     }
-    ret = resolve_user_path(path, resolved, sizeof(resolved));
+    ret = resolve_user_path_checked(path, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -1060,13 +1218,15 @@ static int64_t sys_getcwd(char *buf, size_t size) {
     if ((size_t)(ret + 1) > size) {
         return -ERANGE;
     }
-    memcpy(buf, cwd, ret + 1);
+    if (vmm_copy_to_user(buf, cwd, (size_t)(ret + 1)) < 0) {
+        return -EFAULT;
+    }
     return ret + 1;
 }
 
 static int64_t sys_mkdir(const char *pathname, mode_t mode) {
     char resolved[PATH_MAX];
-    int ret = resolve_user_path(pathname, resolved, sizeof(resolved));
+    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -1075,7 +1235,7 @@ static int64_t sys_mkdir(const char *pathname, mode_t mode) {
 
 static int64_t sys_rmdir(const char *pathname) {
     char resolved[PATH_MAX];
-    int ret = resolve_user_path(pathname, resolved, sizeof(resolved));
+    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -1084,11 +1244,70 @@ static int64_t sys_rmdir(const char *pathname) {
 
 static int64_t sys_unlink(const char *pathname) {
     char resolved[PATH_MAX];
-    int ret = resolve_user_path(pathname, resolved, sizeof(resolved));
+    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
     return vfs_unlink(resolved);
+}
+
+static int64_t sys_chmod(const char *pathname, mode_t mode) {
+    char resolved[PATH_MAX];
+    struct dentry *dentry;
+    struct inode *inode;
+    struct process *proc = current;
+    uid_t fsuid;
+    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
+    if (ret < 0) {
+        return ret;
+    }
+
+    dentry = vfs_lookup(resolved);
+    if (!dentry || !dentry->d_inode) {
+        if (dentry) dput(dentry);
+        return -ENOENT;
+    }
+
+    inode = dentry->d_inode;
+    fsuid = (proc && proc->cred) ? proc->cred->fsuid : 0;
+    if (fsuid != 0 && fsuid != inode->i_uid) {
+        dput(dentry);
+        return -EPERM;
+    }
+
+    inode->i_mode = (inode->i_mode & S_IFMT) | (mode & 07777);
+    mark_inode_dirty(inode);
+    dput(dentry);
+    return 0;
+}
+
+static int64_t sys_chown(const char *pathname, uid_t owner, gid_t group) {
+    char resolved[PATH_MAX];
+    struct dentry *dentry;
+    struct inode *inode;
+    struct process *proc = current;
+    uid_t fsuid = (proc && proc->cred) ? proc->cred->fsuid : 0;
+    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
+    if (ret < 0) {
+        return ret;
+    }
+
+    if (fsuid != 0) {
+        return -EPERM;
+    }
+
+    dentry = vfs_lookup(resolved);
+    if (!dentry || !dentry->d_inode) {
+        if (dentry) dput(dentry);
+        return -ENOENT;
+    }
+
+    inode = dentry->d_inode;
+    inode->i_uid = owner;
+    inode->i_gid = group;
+    mark_inode_dirty(inode);
+    dput(dentry);
+    return 0;
 }
 
 static int64_t sys_link(const char *oldpath, const char *newpath) {
@@ -1110,7 +1329,7 @@ static int64_t sys_openat(int dirfd, const char *pathname, int flags, mode_t mod
     if (!proc || !proc->files) {
         return -EBADF;
     }
-    ret = resolve_user_at_path(dirfd, pathname, resolved, sizeof(resolved));
+    ret = resolve_user_at_path_checked(dirfd, pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -1129,13 +1348,14 @@ static int64_t sys_openat(int dirfd, const char *pathname, int flags, mode_t mod
 
 static int64_t sys_newfstatat(int dirfd, const char *pathname, struct stat *statbuf, int flags) {
     struct kstat kst;
+    struct stat ust;
     char resolved[PATH_MAX];
     int ret;
     (void)flags;
     if (!statbuf) {
         return -EFAULT;
     }
-    ret = resolve_user_at_path(dirfd, pathname, resolved, sizeof(resolved));
+    ret = resolve_user_at_path_checked(dirfd, pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -1143,12 +1363,17 @@ static int64_t sys_newfstatat(int dirfd, const char *pathname, struct stat *stat
     if (ret < 0) {
         return ret;
     }
-    kstat_to_uapi_stat(&kst, statbuf);
+    kstat_to_uapi_stat(&kst, &ust);
+    if (vmm_copy_to_user(statbuf, &ust, sizeof(ust)) < 0) {
+        return -EFAULT;
+    }
     return 0;
 }
 
 static int64_t sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t bufsiz) {
     const char *target = NULL;
+    char kpath[PATH_MAX];
+    const char *path = pathname;
     size_t n;
     (void)dirfd;
 
@@ -1156,15 +1381,21 @@ static int64_t sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t
         return -EINVAL;
     }
 
-    if (!pathname) {
-        pathname = "/proc/self/exe";
+    if (!path) {
+        path = "/proc/self/exe";
+    } else {
+        int ret = copy_user_cstring(pathname, kpath, sizeof(kpath));
+        if (ret < 0) {
+            return ret;
+        }
+        path = kpath;
     }
 
-    if (strcmp(pathname, "/proc/self/exe") == 0 ||
-        strcmp(pathname, "self/exe") == 0 ||
-        strcmp(pathname, "exe") == 0 ||
-        strcmp(pathname, "/proc/thread-self/exe") == 0 ||
-        path_ends_with(pathname, "/self/exe")) {
+    if (strcmp(path, "/proc/self/exe") == 0 ||
+        strcmp(path, "self/exe") == 0 ||
+        strcmp(path, "exe") == 0 ||
+        strcmp(path, "/proc/thread-self/exe") == 0 ||
+        path_ends_with(path, "/self/exe")) {
         struct process *proc = current;
         if (proc && proc->exec_path[0]) {
             target = proc->exec_path;
@@ -1179,7 +1410,9 @@ static int64_t sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t
     if (n > bufsiz) {
         n = bufsiz;
     }
-    memcpy(buf, target, n);
+    if (vmm_copy_to_user(buf, target, n) < 0) {
+        return -EFAULT;
+    }
     return (int64_t)n;
 }
 
@@ -1187,7 +1420,7 @@ static int64_t sys_faccessat(int dirfd, const char *pathname, int mode) {
     char resolved[PATH_MAX];
     struct dentry *dentry;
     int mask = 0;
-    int ret = resolve_user_at_path(dirfd, pathname, resolved, sizeof(resolved));
+    int ret = resolve_user_at_path_checked(dirfd, pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
@@ -1295,7 +1528,9 @@ static int64_t sys_ioctl(int fd, unsigned long request, void *arg) {
             t.c_lflag = 0x00000001U | 0x00000002U | 0x00000008U; /* ISIG|ICANON|ECHO */
             t.c_cc[6] = 1;   /* VMIN */
             t.c_cc[5] = 0;   /* VTIME */
-            memcpy(arg, &t, sizeof(t));
+            if (vmm_copy_to_user(arg, &t, sizeof(t)) < 0) {
+                return -EFAULT;
+            }
             return 0;
         }
         case TCSETS:
@@ -1308,7 +1543,9 @@ static int64_t sys_ioctl(int fd, unsigned long request, void *arg) {
             ws.ws_col = 80;
             ws.ws_xpixel = 0;
             ws.ws_ypixel = 0;
-            memcpy(arg, &ws, sizeof(ws));
+            if (vmm_copy_to_user(arg, &ws, sizeof(ws)) < 0) {
+                return -EFAULT;
+            }
             return 0;
         }
         default:
@@ -1346,6 +1583,8 @@ static int64_t sys_getdents64(int fd, void *dirp, size_t count) {
     struct process *proc = current;
     struct file *file;
     struct getdents64_ctx ctx;
+    char *kbuf = NULL;
+    size_t kcount = count;
     int ret;
 
     if (!dirp || count == 0) {
@@ -1362,18 +1601,36 @@ static int64_t sys_getdents64(int fd, void *dirp, size_t count) {
         return -ENOTDIR;
     }
 
+    if (kcount > 64 * 1024) {
+        kcount = 64 * 1024;
+    }
+    kbuf = kmalloc(kcount);
+    if (!kbuf) {
+        return -ENOMEM;
+    }
+
     memset(&ctx, 0, sizeof(ctx));
-    ctx.buf = (char *)dirp;
-    ctx.count = count;
+    ctx.buf = kbuf;
+    ctx.count = kcount;
     ctx.written = 0;
     ctx.ctx.pos = file->f_pos;
     ctx.ctx.actor = filldir_getdents64;
 
     ret = file->f_op->readdir(file, &ctx.ctx);
     if (ret < 0) {
+        kfree(kbuf);
         return ret;
     }
     file->f_pos = ctx.ctx.pos;
+    if (ctx.written > 0) {
+        if (vmm_copy_to_user(dirp, kbuf, ctx.written) < 0) {
+            printk(KERN_ERR "getdents64: copy_to_user failed dirp=%p written=%lu count=%lu\n",
+                   dirp, ctx.written, count);
+            kfree(kbuf);
+            return -EFAULT;
+        }
+    }
+    kfree(kbuf);
     return (int64_t)ctx.written;
 }
 
@@ -1390,15 +1647,19 @@ static int64_t sys_uname(void *buf) {
         char version[65];
         char machine[65];
         char domainname[65];
-    } *uname = buf;
-    
-    strcpy(uname->sysname, "Obelisk");
-    strcpy(uname->nodename, "obelisk");
-    strcpy(uname->release, OBELISK_VERSION_STRING);
-    strcpy(uname->version, "From Axioms, Order");
-    strcpy(uname->machine, "x86_64");
-    strcpy(uname->domainname, "(none)");
-    
+    } uname;
+
+    memset(&uname, 0, sizeof(uname));
+    strncpy(uname.sysname, "Obelisk", sizeof(uname.sysname) - 1);
+    strncpy(uname.nodename, "obelisk", sizeof(uname.nodename) - 1);
+    strncpy(uname.release, OBELISK_VERSION_STRING, sizeof(uname.release) - 1);
+    strncpy(uname.version, "From Axioms, Order", sizeof(uname.version) - 1);
+    strncpy(uname.machine, "x86_64", sizeof(uname.machine) - 1);
+    strncpy(uname.domainname, "(none)", sizeof(uname.domainname) - 1);
+
+    if (vmm_copy_to_user(buf, &uname, sizeof(uname)) < 0) {
+        return -EFAULT;
+    }
     return 0;
 }
 
@@ -1453,9 +1714,88 @@ static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg) {
 }
 
 static int64_t sys_sysctl(void *args) {
-    /* TODO: Implement sysctl interface */
-    (void)args;
-    return -ENOSYS;
+    struct user_sysctl_args {
+        const char *name;
+        void *oldval;
+        size_t *oldlenp;
+        const void *newval;
+        size_t newlen;
+    };
+    struct user_sysctl_args uargs;
+    char kname[SYSCTL_PATH_MAX];
+    int ret;
+
+    if (!args) {
+        return -EINVAL;
+    }
+    if (vmm_copy_from_user(&uargs, args, sizeof(uargs)) < 0) {
+        return -EFAULT;
+    }
+    if (!uargs.name) {
+        return -EINVAL;
+    }
+    ret = copy_user_cstring(uargs.name, kname, sizeof(kname));
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Write path. */
+    if (uargs.newval && uargs.newlen > 0) {
+        void *kval;
+        size_t newlen = uargs.newlen;
+        if (newlen > 4096) {
+            return -E2BIG;
+        }
+        kval = kmalloc(newlen);
+        if (!kval) {
+            return -ENOMEM;
+        }
+        if (vmm_copy_from_user(kval, uargs.newval, newlen) < 0) {
+            kfree(kval);
+            return -EFAULT;
+        }
+        ret = sysctl_write(kname, kval, newlen);
+        kfree(kval);
+        return ret;
+    }
+
+    /* Read path: return formatted string values for CLI compatibility. */
+    if (!uargs.oldlenp) {
+        return -EINVAL;
+    }
+    size_t out_len = 0;
+    if (vmm_copy_from_user(&out_len, uargs.oldlenp, sizeof(out_len)) < 0) {
+        return -EFAULT;
+    }
+    if (out_len == 0) {
+        return -EINVAL;
+    }
+    if (!uargs.oldval) {
+        return -EFAULT;
+    }
+    if (out_len > 1024) {
+        out_len = 1024;
+    }
+    void *kout = kmalloc(out_len);
+    if (!kout) {
+        return -ENOMEM;
+    }
+    ret = sysctl_read_string(kname, (char *)kout, out_len);
+    if (ret < 0) {
+        kfree(kout);
+        return ret;
+    }
+    out_len = strlen((const char *)kout) + 1;
+    if (vmm_copy_to_user(uargs.oldval, kout, out_len) < 0) {
+        kfree(kout);
+        return -EFAULT;
+    }
+    if (vmm_copy_to_user(uargs.oldlenp, &out_len, sizeof(out_len)) < 0) {
+        kfree(kout);
+        return -EFAULT;
+    }
+    kfree(kout);
+    return 0;
 }
 
 /* ==========================================================================

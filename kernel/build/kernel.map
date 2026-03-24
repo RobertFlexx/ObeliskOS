@@ -1,0 +1,1904 @@
+
+Merging program properties
+
+Updated property 0xc0010001 (0x41) to merge build/arch/x86_64/boot/gdt.o (0x1) and build/arch/x86_64/process/context.o (0x41)
+
+Discarded input sections
+
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/boot/gdt.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/boot/gdt.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/boot/gdt.o
+ .eh_frame      0x0000000000000000       0x80 build/arch/x86_64/boot/gdt.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/boot/idt.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/boot/idt.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/boot/idt.o
+ .eh_frame      0x0000000000000000      0x170 build/arch/x86_64/boot/idt.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/cpu.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/cpu.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/cpu.o
+ .eh_frame      0x0000000000000000       0xc0 build/arch/x86_64/cpu.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/io/port.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/io/port.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/io/port.o
+ .eh_frame      0x0000000000000000      0x120 build/arch/x86_64/io/port.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/io/uart.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/io/uart.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/io/uart.o
+ .eh_frame      0x0000000000000000      0x260 build/arch/x86_64/io/uart.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/mm/paging.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/mm/paging.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/mm/paging.o
+ .eh_frame      0x0000000000000000      0x2b8 build/arch/x86_64/mm/paging.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/mm/physmem.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/mm/physmem.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/mm/physmem.o
+ .eh_frame      0x0000000000000000       0x98 build/arch/x86_64/mm/physmem.o
+ .comment       0x0000000000000000       0x1e build/arch/x86_64/process/syscall.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/process/syscall.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/process/syscall.o
+ .eh_frame      0x0000000000000000      0xda0 build/arch/x86_64/process/syscall.o
+ .comment       0x0000000000000000       0x1e build/mm/pmm.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/mm/pmm.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/mm/pmm.o
+ .eh_frame      0x0000000000000000      0x230 build/mm/pmm.o
+ .comment       0x0000000000000000       0x1e build/mm/vmm.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/mm/vmm.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/mm/vmm.o
+ .eh_frame      0x0000000000000000      0x500 build/mm/vmm.o
+ .comment       0x0000000000000000       0x1e build/mm/kmalloc.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/mm/kmalloc.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/mm/kmalloc.o
+ .eh_frame      0x0000000000000000      0x338 build/mm/kmalloc.o
+ .comment       0x0000000000000000       0x1e build/kernel/main.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/main.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/main.o
+ .eh_frame      0x0000000000000000       0x50 build/kernel/main.o
+ .comment       0x0000000000000000       0x1e build/kernel/bootinfo.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/bootinfo.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/bootinfo.o
+ .eh_frame      0x0000000000000000      0x108 build/kernel/bootinfo.o
+ .comment       0x0000000000000000       0x1e build/kernel/initramfs.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/initramfs.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/initramfs.o
+ .eh_frame      0x0000000000000000      0x1a0 build/kernel/initramfs.o
+ .comment       0x0000000000000000       0x1e build/kernel/time.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/time.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/time.o
+ .eh_frame      0x0000000000000000       0x58 build/kernel/time.o
+ .comment       0x0000000000000000       0x1e build/kernel/panic.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/panic.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/panic.o
+ .eh_frame      0x0000000000000000       0xe0 build/kernel/panic.o
+ .comment       0x0000000000000000       0x1e build/kernel/printk.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/printk.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/printk.o
+ .eh_frame      0x0000000000000000      0x240 build/kernel/printk.o
+ .comment       0x0000000000000000       0x1e build/kernel/kthread.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/kernel/kthread.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/kernel/kthread.o
+ .eh_frame      0x0000000000000000      0x178 build/kernel/kthread.o
+ .comment       0x0000000000000000       0x1e build/proc/process.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/proc/process.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/proc/process.o
+ .eh_frame      0x0000000000000000      0x340 build/proc/process.o
+ .comment       0x0000000000000000       0x1e build/proc/scheduler.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/proc/scheduler.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/proc/scheduler.o
+ .eh_frame      0x0000000000000000      0x310 build/proc/scheduler.o
+ .comment       0x0000000000000000       0x1e build/proc/fork.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/proc/fork.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/proc/fork.o
+ .eh_frame      0x0000000000000000       0xa8 build/proc/fork.o
+ .comment       0x0000000000000000       0x1e build/proc/exec.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/proc/exec.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/proc/exec.o
+ .eh_frame      0x0000000000000000      0x168 build/proc/exec.o
+ .comment       0x0000000000000000       0x1e build/fs/vfs.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/vfs.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/vfs.o
+ .eh_frame      0x0000000000000000      0x428 build/fs/vfs.o
+ .comment       0x0000000000000000       0x1e build/fs/inode.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/inode.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/inode.o
+ .eh_frame      0x0000000000000000      0x248 build/fs/inode.o
+ .comment       0x0000000000000000       0x1e build/fs/dentry.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/dentry.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/dentry.o
+ .eh_frame      0x0000000000000000      0x1b0 build/fs/dentry.o
+ .comment       0x0000000000000000       0x1e build/fs/file.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/file.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/file.o
+ .eh_frame      0x0000000000000000      0x200 build/fs/file.o
+ .comment       0x0000000000000000       0x1e build/fs/axiomfs/super.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/axiomfs/super.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/axiomfs/super.o
+ .eh_frame      0x0000000000000000       0xc8 build/fs/axiomfs/super.o
+ .comment       0x0000000000000000       0x1e build/fs/axiomfs/inode.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/axiomfs/inode.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/axiomfs/inode.o
+ .eh_frame      0x0000000000000000      0x2f0 build/fs/axiomfs/inode.o
+ .comment       0x0000000000000000       0x1e build/fs/axiomfs/dir.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/axiomfs/dir.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/axiomfs/dir.o
+ .eh_frame      0x0000000000000000       0x70 build/fs/axiomfs/dir.o
+ .comment       0x0000000000000000       0x1e build/fs/axiomfs/file.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/axiomfs/file.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/axiomfs/file.o
+ .eh_frame      0x0000000000000000      0x168 build/fs/axiomfs/file.o
+ .comment       0x0000000000000000       0x1e build/fs/axiomfs/policy_ipc.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/axiomfs/policy_ipc.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/axiomfs/policy_ipc.o
+ .eh_frame      0x0000000000000000      0x2d0 build/fs/axiomfs/policy_ipc.o
+ .comment       0x0000000000000000       0x1e build/fs/axiomfs/cache.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/axiomfs/cache.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/axiomfs/cache.o
+ .eh_frame      0x0000000000000000      0x188 build/fs/axiomfs/cache.o
+ .comment       0x0000000000000000       0x1e build/fs/devfs/devfs.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/fs/devfs/devfs.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/fs/devfs/devfs.o
+ .eh_frame      0x0000000000000000      0x298 build/fs/devfs/devfs.o
+ .comment       0x0000000000000000       0x1e build/ipc/msgqueue.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/ipc/msgqueue.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/ipc/msgqueue.o
+ .eh_frame      0x0000000000000000      0x1c0 build/ipc/msgqueue.o
+ .comment       0x0000000000000000       0x1e build/ipc/axiomd_channel.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/ipc/axiomd_channel.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/ipc/axiomd_channel.o
+ .eh_frame      0x0000000000000000      0x1b0 build/ipc/axiomd_channel.o
+ .comment       0x0000000000000000       0x1e build/ipc/shm.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/ipc/shm.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/ipc/shm.o
+ .eh_frame      0x0000000000000000      0x200 build/ipc/shm.o
+ .comment       0x0000000000000000       0x1e build/sysctl/sysctl.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/sysctl/sysctl.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/sysctl/sysctl.o
+ .eh_frame      0x0000000000000000      0x338 build/sysctl/sysctl.o
+ .comment       0x0000000000000000       0x1e build/sysctl/nodes.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/sysctl/nodes.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/sysctl/nodes.o
+ .eh_frame      0x0000000000000000      0x170 build/sysctl/nodes.o
+ .comment       0x0000000000000000       0x1e build/sysctl/handlers.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/sysctl/handlers.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/sysctl/handlers.o
+ .eh_frame      0x0000000000000000       0xc8 build/sysctl/handlers.o
+ .comment       0x0000000000000000       0x1e build/lib/string.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/lib/string.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/lib/string.o
+ .eh_frame      0x0000000000000000      0x240 build/lib/string.o
+ .comment       0x0000000000000000       0x1e build/lib/printf.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/lib/printf.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/lib/printf.o
+ .eh_frame      0x0000000000000000      0x170 build/lib/printf.o
+ .comment       0x0000000000000000       0x1e build/lib/bitmap.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/lib/bitmap.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/lib/bitmap.o
+ .eh_frame      0x0000000000000000      0x180 build/lib/bitmap.o
+ .comment       0x0000000000000000       0x1e build/lib/rbtree.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/lib/rbtree.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/lib/rbtree.o
+ .eh_frame      0x0000000000000000       0xf8 build/lib/rbtree.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/boot/boot.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/boot/boot.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/boot/interrupt.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/boot/interrupt.o
+ .note.GNU-stack
+                0x0000000000000000        0x0 build/arch/x86_64/process/context.o
+ .note.gnu.property
+                0x0000000000000000       0x30 build/arch/x86_64/process/context.o
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+*default*        0x0000000000000000 0xffffffffffffffff
+
+Linker script and memory map
+
+                0xffffffff80000000                KERNEL_VMA = 0xffffffff80000000
+                0x0000000000100000                KERNEL_LMA = 0x100000
+                0x0000000000100000                . = KERNEL_LMA
+
+.multiboot      0x0000000000100000       0x48
+ *(.multiboot)
+ .multiboot     0x0000000000100000       0x48 build/arch/x86_64/boot/boot.o
+
+.text.boot      0x0000000000101000      0x185
+ *(.text.boot)
+ .text.boot     0x0000000000101000      0x185 build/arch/x86_64/boot/boot.o
+                0x0000000000101000                _start
+ *(.text.boot.*)
+
+.rodata.boot    0x0000000000102000       0x8e
+ *(.rodata.boot)
+ .rodata.boot   0x0000000000102000       0x8e build/arch/x86_64/boot/boot.o
+ *(.rodata.boot.*)
+
+.data.boot
+ *(.data.boot)
+ *(.data.boot.*)
+
+.bss.boot       0x0000000000103000     0xc008
+ *(.bss.boot)
+ .bss.boot      0x0000000000103000     0xc008 build/arch/x86_64/boot/boot.o
+ *(.bss.boot.*)
+                0xffffffff8010f008                . = (. + KERNEL_VMA)
+                0xffffffff8010f008                __text_start = .
+
+.text           0xffffffff80110000    0x19bb3 load address 0x0000000000110000
+ *(.text)
+ .text          0xffffffff80110000      0x18b build/arch/x86_64/boot/gdt.o
+                0xffffffff80110000                gdt_init
+                0xffffffff80110170                tss_set_rsp0
+                0xffffffff80110180                tss_get_rsp0
+ *fill*         0xffffffff8011018b       0x35 
+ .text          0xffffffff801101c0      0x8f5 build/arch/x86_64/boot/idt.o
+                0xffffffff80110400                exception_handler
+                0xffffffff80110670                irq_handler
+                0xffffffff801107c0                irq_enable
+                0xffffffff80110820                irq_disable
+                0xffffffff80110890                idt_init
+ *fill*         0xffffffff80110ab5        0xb 
+ .text          0xffffffff80110ac0      0x14b build/arch/x86_64/cpu.o
+                0xffffffff80110ac0                cpu_detect_features
+                0xffffffff80110b30                cpu_has_feature
+                0xffffffff80110b50                cpu_print_info
+                0xffffffff80110b60                cpu_init
+                0xffffffff80110c00                cpu_get_current
+ *fill*         0xffffffff80110c0b        0x5 
+ .text          0xffffffff80110c10       0xc5 build/arch/x86_64/io/port.o
+                0xffffffff80110c10                outb
+                0xffffffff80110c20                inb
+                0xffffffff80110c30                outw
+                0xffffffff80110c40                inw
+                0xffffffff80110c50                outl
+                0xffffffff80110c60                inl
+                0xffffffff80110c70                outsb
+                0xffffffff80110c80                insb
+                0xffffffff80110c90                outsw
+                0xffffffff80110ca0                insw
+                0xffffffff80110cb0                outsl
+                0xffffffff80110cc0                insl
+                0xffffffff80110cd0                io_wait
+ *fill*         0xffffffff80110cd5       0x2b 
+ .text          0xffffffff80110d00      0x5c7 build/arch/x86_64/io/uart.o
+                0xffffffff80110d00                uart_init
+                0xffffffff80110dd0                uart_putc
+                0xffffffff80110e40                uart_getc
+                0xffffffff80110ea0                uart_getc_nonblock
+                0xffffffff80110f00                uart_puts
+                0xffffffff80110fd0                uart_write
+                0xffffffff80111070                uart_read
+                0xffffffff80111100                uart_puthex
+                0xffffffff80111170                uart_putdec
+                0xffffffff80111270                uart_set_port
+ *fill*         0xffffffff801112c7       0x19 
+ .text          0xffffffff801112e0      0x857 build/arch/x86_64/mm/paging.o
+                0xffffffff80111550                mmu_create_page_table
+                0xffffffff80111610                mmu_destroy_page_table
+                0xffffffff80111660                mmu_map
+                0xffffffff801116f0                mmu_unmap
+                0xffffffff80111760                mmu_map_range
+                0xffffffff80111890                mmu_unmap_range
+                0xffffffff80111940                mmu_resolve
+                0xffffffff80111990                mmu_get_flags
+                0xffffffff801119d0                mmu_set_flags
+                0xffffffff80111a40                mmu_switch
+                0xffffffff80111a50                mmu_get_kernel_pt
+                0xffffffff80111a60                mmu_flush_tlb_page
+                0xffffffff80111a70                mmu_flush_tlb_range
+                0xffffffff80111ae0                mmu_flush_tlb_all
+                0xffffffff80111af0                paging_init
+ *fill*         0xffffffff80111b37        0x9 
+ .text          0xffffffff80111b40      0x45b build/arch/x86_64/mm/physmem.o
+                0xffffffff80111b40                physmem_init
+                0xffffffff80111f80                physmem_get_total
+                0xffffffff80111f90                physmem_get_usable
+ *fill*         0xffffffff80111f9b        0x5 
+ .text          0xffffffff80111fa0     0x3c3f build/arch/x86_64/process/syscall.o
+                0xffffffff80115530                syscall_dispatch
+                0xffffffff801157b0                syscall_init
+ *fill*         0xffffffff80115bdf       0x21 
+ .text          0xffffffff80115c00      0x7cd build/mm/pmm.o
+                0xffffffff80115c00                pmm_init_bitmap
+                0xffffffff80115d10                pmm_mark_region_free
+                0xffffffff80115df0                pmm_mark_region_used
+                0xffffffff80115ee0                pmm_alloc_page_zone
+                0xffffffff80115fa0                pmm_alloc_page
+                0xffffffff80115fe0                pmm_alloc_pages_zone
+                0xffffffff801160f0                pmm_alloc_pages
+                0xffffffff80116130                pmm_free_page
+                0xffffffff801161f0                pmm_free_pages
+                0xffffffff80116250                pmm_get_total_pages
+                0xffffffff80116260                pmm_get_free_pages
+                0xffffffff80116270                pmm_get_used_pages
+                0xffffffff80116290                pmm_get_zone
+                0xffffffff801162c0                pmm_dump_stats
+                0xffffffff80116390                pmm_init
+ *fill*         0xffffffff801163cd       0x13 
+ .text          0xffffffff801163e0     0x14a0 build/mm/vmm.o
+                0xffffffff801164f0                vmm_create_address_space
+                0xffffffff80116580                vmm_destroy_address_space
+                0xffffffff80116630                vmm_get_kernel_address_space
+                0xffffffff80116640                vmm_create_vma
+                0xffffffff801166c0                vmm_free_vma
+                0xffffffff80116710                vmm_find_vma
+                0xffffffff80116750                vmm_find_vma_intersection
+                0xffffffff80116790                vmm_insert_vma
+                0xffffffff80116870                vmm_clone_address_space
+                0xffffffff80116a90                vmm_remove_vma
+                0xffffffff80116ad0                vmm_prot_to_pte_flags
+                0xffffffff80116af0                vmm_munmap
+                0xffffffff80116d80                vmm_mmap
+                0xffffffff80117240                vmm_mprotect
+                0xffffffff801172f0                vmm_brk
+                0xffffffff80117460                vmm_handle_page_fault
+                0xffffffff80117630                vmm_alloc_kernel_pages
+                0xffffffff80117660                vmm_free_kernel_pages
+                0xffffffff80117680                vmm_map_physical
+                0xffffffff80117690                vmm_unmap_physical
+                0xffffffff801176a0                vmm_copy_from_user
+                0xffffffff80117730                vmm_copy_to_user
+                0xffffffff801177c0                vmm_verify_user_read
+                0xffffffff801177d0                vmm_verify_user_write
+                0xffffffff801177f0                vmm_init
+ .text          0xffffffff80117880      0xebe build/mm/kmalloc.o
+                0xffffffff80117980                kmem_cache_alloc
+                0xffffffff80117bb0                kmem_cache_zalloc
+                0xffffffff80117c00                kmem_cache_free
+                0xffffffff80117e30                kmem_cache_destroy
+                0xffffffff80117f80                kmem_cache_shrink
+                0xffffffff80118000                kmalloc
+                0xffffffff80118110                kmem_cache_create
+                0xffffffff80118330                kzalloc
+                0xffffffff80118380                kcalloc
+                0xffffffff801183e0                krealloc
+                0xffffffff801184c0                kfree
+                0xffffffff80118500                kmalloc_usable_size
+                0xffffffff80118510                kmalloc_dump_stats
+                0xffffffff801185d0                kmalloc_init
+ *fill*         0xffffffff8011873e        0x2 
+ .text          0xffffffff80118740      0x6cb build/kernel/main.o
+                0xffffffff80118740                kernel_main
+ *fill*         0xffffffff80118e0b       0x15 
+ .text          0xffffffff80118e20      0x2db build/kernel/bootinfo.o
+                0xffffffff80118e20                bootinfo_init
+                0xffffffff80119000                bootinfo_cmdline
+                0xffffffff80119010                bootinfo_module_count
+                0xffffffff80119020                bootinfo_module_at
+                0xffffffff80119050                bootinfo_find_module
+ *fill*         0xffffffff801190fb        0x5 
+ .text          0xffffffff80119100      0xad6 build/kernel/initramfs.o
+                0xffffffff80119470                initramfs_unpack_tar
+ *fill*         0xffffffff80119bd6        0xa 
+ .text          0xffffffff80119be0       0xb4 build/kernel/time.o
+                0xffffffff80119be0                get_ticks
+                0xffffffff80119c10                get_time_ns
+                0xffffffff80119c40                delay_ms
+ *fill*         0xffffffff80119c94        0xc 
+ .text          0xffffffff80119ca0      0x3ed build/kernel/panic.o
+                0xffffffff80119d30                panic
+                0xffffffff80119ef0                oops
+                0xffffffff8011a000                warn_slowpath
+ *fill*         0xffffffff8011a08d       0x33 
+ .text          0xffffffff8011a0c0     0x1001 build/kernel/printk.o
+                0xffffffff8011af30                console_putc
+                0xffffffff8011af40                console_write
+                0xffffffff8011af80                printk
+                0xffffffff8011b020                vprintk
+                0xffffffff8011b030                snprintf
+                0xffffffff8011b080                vsnprintf
+                0xffffffff8011b0a0                printk_get_loglevel
+                0xffffffff8011b0b0                printk_set_loglevel
+ *fill*         0xffffffff8011b0c1        0xf 
+ .text          0xffffffff8011b0d0      0x411 build/kernel/kthread.o
+                0xffffffff8011b0e0                kthread_create
+                0xffffffff8011b2c0                kthread_run
+                0xffffffff8011b340                kthread_stop
+                0xffffffff8011b390                kthread_should_stop
+                0xffffffff8011b3a0                kthread_park
+                0xffffffff8011b3f0                kthread_unpark
+                0xffffffff8011b400                kthread_init
+                0xffffffff8011b450                kthread_destroy
+ *fill*         0xffffffff8011b4e1       0x1f 
+ .text          0xffffffff8011b500      0xfd5 build/proc/process.o
+                0xffffffff8011b660                cred_create
+                0xffffffff8011b6b0                cred_clone
+                0xffffffff8011b700                cred_free
+                0xffffffff8011b720                fd_table_create
+                0xffffffff8011b7a0                fd_table_clone
+                0xffffffff8011b830                fd_table_free
+                0xffffffff8011b8f0                fd_alloc
+                0xffffffff8011b9d0                fd_free
+                0xffffffff8011ba00                fd_get
+                0xffffffff8011ba20                process_create
+                0xffffffff8011bf60                process_destroy
+                0xffffffff8011c0f0                process_find
+                0xffffffff8011c120                process_set_init_path
+                0xffffffff8011c1b0                process_init
+                0xffffffff8011c370                do_exit
+                0xffffffff8011c3a0                do_wait
+ *fill*         0xffffffff8011c4d5        0xb 
+ .text          0xffffffff8011c4e0      0xbda build/proc/scheduler.o
+                0xffffffff8011c770                current_thread_info
+                0xffffffff8011c780                current_process
+                0xffffffff8011c790                scheduler_enqueue
+                0xffffffff8011c860                scheduler_dequeue
+                0xffffffff8011c8e0                schedule
+                0xffffffff8011cb90                scheduler_yield
+                0xffffffff8011cba0                scheduler_tick
+                0xffffffff8011cc00                scheduler_exit
+                0xffffffff8011cc50                scheduler_sleep
+                0xffffffff8011ccb0                scheduler_wake
+                0xffffffff8011cce0                scheduler_sleep_timeout
+                0xffffffff8011cd50                scheduler_set_priority
+                0xffffffff8011cd70                scheduler_set_nice
+                0xffffffff8011cdb0                scheduler_get_priority
+                0xffffffff8011cdc0                scheduler_set_policy
+                0xffffffff8011cdf0                scheduler_get_policy
+                0xffffffff8011ce00                scheduler_register_policy
+                0xffffffff8011cea0                scheduler_get_switches
+                0xffffffff8011ceb0                scheduler_get_runtime
+                0xffffffff8011cec0                timer_init
+                0xffffffff8011cf40                scheduler_init
+                0xffffffff8011d070                scheduler_start
+ *fill*         0xffffffff8011d0ba        0x6 
+ .text          0xffffffff8011d0c0      0x40c build/proc/fork.o
+                0xffffffff8011d0c0                do_fork
+                0xffffffff8011d480                sys_fork
+                0xffffffff8011d4a0                sys_vfork
+                0xffffffff8011d4c0                sys_clone
+ *fill*         0xffffffff8011d4cc       0x34 
+ .text          0xffffffff8011d500     0x1d36 build/proc/exec.o
+                0xffffffff8011d680                do_execve
+ *fill*         0xffffffff8011f236        0xa 
+ .text          0xffffffff8011f240     0x15e6 build/fs/vfs.o
+                0xffffffff8011f240                register_filesystem
+                0xffffffff8011f300                unregister_filesystem
+                0xffffffff8011f350                vfs_umount
+                0xffffffff8011f360                vfs_lookup
+                0xffffffff8011f760                vfs_mount
+                0xffffffff8011f980                vfs_close
+                0xffffffff8011f9f0                vfs_read
+                0xffffffff8011fa80                vfs_write
+                0xffffffff8011fb10                vfs_lseek
+                0xffffffff8011fb90                vfs_fsync
+                0xffffffff8011fbc0                vfs_create
+                0xffffffff8011fe30                vfs_open
+                0xffffffff801200d0                vfs_mkdir
+                0xffffffff80120340                vfs_rmdir
+                0xffffffff80120460                vfs_unlink
+                0xffffffff80120590                vfs_stat
+                0xffffffff80120640                vfs_fstat
+                0xffffffff801206d0                generic_file_llseek
+                0xffffffff80120730                vfs_init
+ *fill*         0xffffffff80120826        0xa 
+ .text          0xffffffff80120830      0x7ba build/fs/inode.o
+                0xffffffff80120830                inode_cache_init
+                0xffffffff80120870                inode_cache_lookup
+                0xffffffff80120920                inode_cache_insert
+                0xffffffff801209b0                inode_cache_remove
+                0xffffffff80120a20                new_inode
+                0xffffffff80120b00                free_inode
+                0xffffffff80120b50                inode_init_once
+                0xffffffff80120bc0                inode_init_owner
+                0xffffffff80120c60                igrab
+                0xffffffff80120c90                ihold
+                0xffffffff80120ca0                iput
+                0xffffffff80120da0                inode_lock
+                0xffffffff80120dc0                inode_unlock
+                0xffffffff80120dd0                inode_trylock
+                0xffffffff80120df0                mark_inode_dirty
+                0xffffffff80120e30                clear_inode
+                0xffffffff80120e40                iget_locked
+                0xffffffff80120ea0                unlock_new_inode
+                0xffffffff80120eb0                generic_permission
+                0xffffffff80120f80                generic_getattr
+ *fill*         0xffffffff80120fea        0x6 
+ .text          0xffffffff80120ff0      0x60a build/fs/dentry.o
+                0xffffffff80120ff0                dentry_alloc
+                0xffffffff80121190                dentry_free
+                0xffffffff80121280                dget
+                0xffffffff801212a0                dput
+                0xffffffff801212c0                d_instantiate
+                0xffffffff80121330                d_add
+                0xffffffff801213a0                d_make_root
+                0xffffffff80121450                d_delete
+                0xffffffff801214a0                d_lookup
+                0xffffffff80121520                d_path
+ *fill*         0xffffffff801215fa        0x6 
+ .text          0xffffffff80121600      0x4da build/fs/file.o
+                0xffffffff80121600                alloc_file
+                0xffffffff80121680                free_file
+                0xffffffff801216e0                get_file
+                0xffffffff80121700                put_file
+                0xffffffff80121750                fput
+                0xffffffff801217a0                fget
+                0xffffffff801217f0                get_unused_fd_flags
+                0xffffffff80121870                put_unused_fd
+                0xffffffff801218c0                fd_install
+                0xffffffff80121910                close_fd
+                0xffffffff801219d0                generic_file_read
+                0xffffffff801219e0                generic_file_write
+                0xffffffff801219f0                generic_file_open
+                0xffffffff80121a00                generic_file_release
+                0xffffffff80121a10                simple_read_from_buffer
+                0xffffffff80121a80                simple_write_to_buffer
+ *fill*         0xffffffff80121ada        0x6 
+ .text          0xffffffff80121ae0      0x32d build/fs/axiomfs/super.o
+                0xffffffff80121ae0                axiomfs_mount
+                0xffffffff80121d50                axiomfs_kill_sb
+                0xffffffff80121dc0                axiomfs_init
+ *fill*         0xffffffff80121e0d       0x13 
+ .text          0xffffffff80121e20      0xd41 build/fs/axiomfs/inode.o
+                0xffffffff80122120                axiomfs_iget
+                0xffffffff80122320                axiomfs_write_inode
+                0xffffffff80122380                axiomfs_evict_inode
+                0xffffffff801223e0                axiomfs_alloc_inode_num
+                0xffffffff80122430                axiomfs_free_inode_num
+                0xffffffff801224a0                axiomfs_create
+                0xffffffff80122570                axiomfs_mkdir
+                0xffffffff80122660                axiomfs_rmdir
+                0xffffffff801227b0                axiomfs_unlink
+                0xffffffff801228e0                axiomfs_link
+                0xffffffff80122940                axiomfs_rename
+                0xffffffff80122a50                axiomfs_lookup
+ *fill*         0xffffffff80122b61        0xf 
+ .text          0xffffffff80122b70      0x255 build/fs/axiomfs/dir.o
+                0xffffffff80122b70                axiomfs_readdir
+ *fill*         0xffffffff80122dc5        0xb 
+ .text          0xffffffff80122dd0      0x52d build/fs/axiomfs/file.o
+                0xffffffff80122dd0                axiomfs_read
+                0xffffffff80122f40                axiomfs_write
+                0xffffffff801231f0                axiomfs_policy_check_access
+                0xffffffff801232e0                axiomfs_policy_inherit_permissions
+ *fill*         0xffffffff801232fd        0x3 
+ .text          0xffffffff80123300      0x986 build/fs/axiomfs/policy_ipc.o
+                0xffffffff801234a0                policy_cache_create
+                0xffffffff80123510                policy_cache_destroy
+                0xffffffff801235a0                policy_cache_lookup
+                0xffffffff801236c0                policy_cache_insert
+                0xffffffff801236e0                policy_cache_invalidate
+                0xffffffff801237a0                policy_cache_flush
+                0xffffffff80123850                policy_daemon_available
+                0xffffffff80123870                policy_daemon_query
+                0xffffffff80123900                policy_check_access
+                0xffffffff80123a50                policy_init
+                0xffffffff80123b40                policy_get_allocation
+                0xffffffff80123ba0                policy_get_inherited_mode
+ *fill*         0xffffffff80123c86       0x1a 
+ .text          0xffffffff80123ca0      0x4cd build/fs/axiomfs/cache.o
+                0xffffffff80123ca0                block_cache_create
+                0xffffffff80123d10                block_cache_destroy
+                0xffffffff80123da0                block_cache_get
+                0xffffffff80123e50                block_cache_put
+                0xffffffff80124000                block_cache_invalidate
+                0xffffffff801240c0                block_cache_sync
+                0xffffffff80124100                axiomfs_read_block
+                0xffffffff80124110                axiomfs_write_block
+                0xffffffff80124120                axiomfs_alloc_block
+                0xffffffff80124160                axiomfs_free_block
+ *fill*         0xffffffff8012416d        0x3 
+ .text          0xffffffff80124170      0x725 build/fs/devfs/devfs.o
+                0xffffffff801245f0                devfs_register
+                0xffffffff801246e0                devfs_unregister
+                0xffffffff801247a0                devfs_init
+ *fill*         0xffffffff80124895        0xb 
+ .text          0xffffffff801248a0      0x58c build/ipc/msgqueue.o
+                0xffffffff801248a0                msgqueue_create
+                0xffffffff80124a50                msgqueue_get
+                0xffffffff80124a90                msgqueue_destroy
+                0xffffffff80124b50                msgqueue_send
+                0xffffffff80124c90                msgqueue_recv
+                0xffffffff80124db0                msgqueue_init
+                0xffffffff80124e20                ipc_init
+ *fill*         0xffffffff80124e2c       0x14 
+ .text          0xffffffff80124e40      0x530 build/ipc/axiomd_channel.o
+                0xffffffff80124f00                axiomd_channel_init
+                0xffffffff80124ff0                axiomd_connect
+                0xffffffff80125030                axiomd_disconnect
+                0xffffffff801250a0                axiomd_is_connected
+                0xffffffff801250c0                axiomd_send_query
+                0xffffffff80125110                axiomd_recv_response
+                0xffffffff80125140                axiomd_query_sync
+                0xffffffff801251f0                axiomd_daemon_register
+                0xffffffff80125250                axiomd_daemon_unregister
+                0xffffffff80125290                axiomd_ping
+ *fill*         0xffffffff80125370       0x10 
+ .text          0xffffffff80125380      0x641 build/ipc/shm.o
+                0xffffffff80125380                shmget
+                0xffffffff80125630                shmat
+                0xffffffff80125810                shmdt
+                0xffffffff80125920                shmctl
+ *fill*         0xffffffff801259c1       0x3f 
+ .text          0xffffffff80125a00      0xef1 build/sysctl/sysctl.o
+                0xffffffff80125cc0                sysctl_register_node
+                0xffffffff80125f00                sysctl_lookup
+                0xffffffff80126000                sysctl_register_int
+                0xffffffff80126060                sysctl_register_uint
+                0xffffffff801260c0                sysctl_register_long
+                0xffffffff80126120                sysctl_register_ulong
+                0xffffffff80126180                sysctl_register_string
+                0xffffffff801261e0                sysctl_register_bool
+                0xffffffff80126240                sysctl_register_handler
+                0xffffffff801262a0                sysctl_read
+                0xffffffff80126340                sysctl_write
+                0xffffffff801263f0                sysctl_read_string
+                0xffffffff801266b0                sysctl_dump_tree
+                0xffffffff80126700                sysctl_init
+ *fill*         0xffffffff801268f1        0xf 
+ .text          0xffffffff80126900      0x5e4 build/sysctl/nodes.o
+                0xffffffff80126b80                sysctl_register_system_nodes
+                0xffffffff80126db0                sysctl_init_cpu_info
+ *fill*         0xffffffff80126ee4        0xc 
+ .text          0xffffffff80126ef0      0x2bc build/sysctl/handlers.o
+                0xffffffff80126ef0                sysctl_handle_int
+                0xffffffff80126f40                sysctl_handle_uint
+                0xffffffff80126f90                sysctl_handle_long
+                0xffffffff80126fe0                sysctl_handle_ulong
+                0xffffffff80127030                sysctl_handle_string
+                0xffffffff801270e0                sysctl_handle_bool
+                0xffffffff80127140                sysctl_handle_int_minmax
+ *fill*         0xffffffff801271ac       0x14 
+ .text          0xffffffff801271c0      0xa49 build/lib/string.o
+                0xffffffff801271c0                strlen
+                0xffffffff801271f0                strnlen
+                0xffffffff80127220                strcpy
+                0xffffffff80127250                strncpy
+                0xffffffff801272b0                strcat
+                0xffffffff801272f0                strncat
+                0xffffffff80127340                strcmp
+                0xffffffff80127380                strncmp
+                0xffffffff801273d0                strcasecmp
+                0xffffffff80127430                strchr
+                0xffffffff80127470                strrchr
+                0xffffffff801274a0                strstr
+                0xffffffff80127520                strtok_r
+                0xffffffff80127620                strtok
+                0xffffffff80127640                memcpy
+                0xffffffff801276f0                strdup
+                0xffffffff80127770                strndup
+                0xffffffff801277e0                memmove
+                0xffffffff80127830                memset
+                0xffffffff801278f0                memcmp
+                0xffffffff80127930                memchr
+                0xffffffff80127960                bzero
+                0xffffffff80127a00                atoi
+                0xffffffff80127a80                atol
+                0xffffffff80127b00                strtoul
+ *fill*         0xffffffff80127c09       0x37 
+ .text          0xffffffff80127c40     0x1003 build/lib/printf.o
+                0xffffffff801289d0                sprintf
+                0xffffffff80128a70                vsprintf
+                0xffffffff80128ad0                snprintf_full
+                0xffffffff80128bb0                vsnprintf_full
+ *fill*         0xffffffff80128c43       0x1d 
+ .text          0xffffffff80128c60      0x49b build/lib/bitmap.o
+                0xffffffff80128c60                set_bit
+                0xffffffff80128c80                clear_bit
+                0xffffffff80128ca0                test_bit
+                0xffffffff80128cc0                test_and_set_bit
+                0xffffffff80128cf0                test_and_clear_bit
+                0xffffffff80128d20                change_bit
+                0xffffffff80128d40                ffs
+                0xffffffff80128d60                fls
+                0xffffffff80128d70                ffz
+                0xffffffff80128d90                find_first_bit
+                0xffffffff80128de0                find_first_zero_bit
+                0xffffffff80128e40                find_next_bit
+                0xffffffff80128ee0                find_next_zero_bit
+                0xffffffff80128f80                bitmap_set
+                0xffffffff80129000                bitmap_clear
+                0xffffffff80129080                bitmap_weight
+                0xffffffff801290c0                bitmap_zero
+                0xffffffff801290e0                bitmap_fill
+ *fill*         0xffffffff801290fb        0x5 
+ .text          0xffffffff80129100      0x6c1 build/lib/rbtree.o
+                0xffffffff80129220                rb_link_node
+                0xffffffff80129240                rb_insert_color
+                0xffffffff80129380                rb_erase
+                0xffffffff801296b0                rb_first
+                0xffffffff801296e0                rb_last
+                0xffffffff80129710                rb_next
+                0xffffffff80129770                rb_prev
+ .text          0xffffffff801297c1        0x0 build/arch/x86_64/boot/boot.o
+ .text          0xffffffff801297c1      0x307 build/arch/x86_64/boot/interrupt.o
+                0xffffffff801297c1                isr_stub_0
+                0xffffffff801297ca                isr_stub_1
+                0xffffffff801297d3                isr_stub_2
+                0xffffffff801297dc                isr_stub_3
+                0xffffffff801297e5                isr_stub_4
+                0xffffffff801297ee                isr_stub_5
+                0xffffffff801297f7                isr_stub_6
+                0xffffffff80129800                isr_stub_7
+                0xffffffff80129809                isr_stub_8
+                0xffffffff80129810                isr_stub_9
+                0xffffffff80129819                isr_stub_10
+                0xffffffff80129820                isr_stub_11
+                0xffffffff80129827                isr_stub_12
+                0xffffffff8012982e                isr_stub_13
+                0xffffffff80129835                isr_stub_14
+                0xffffffff8012983c                isr_stub_15
+                0xffffffff80129845                isr_stub_16
+                0xffffffff8012984e                isr_stub_17
+                0xffffffff80129855                isr_stub_18
+                0xffffffff8012985e                isr_stub_19
+                0xffffffff80129867                isr_stub_20
+                0xffffffff80129870                isr_stub_21
+                0xffffffff80129877                isr_stub_22
+                0xffffffff80129880                isr_stub_23
+                0xffffffff80129889                isr_stub_24
+                0xffffffff80129892                isr_stub_25
+                0xffffffff8012989b                isr_stub_26
+                0xffffffff801298a4                isr_stub_27
+                0xffffffff801298ad                isr_stub_28
+                0xffffffff801298b6                isr_stub_29
+                0xffffffff801298bf                isr_stub_30
+                0xffffffff801298c6                isr_stub_31
+                0xffffffff801298cc                irq_stub_0
+                0xffffffff801298d5                irq_stub_1
+                0xffffffff801298de                irq_stub_2
+                0xffffffff801298e7                irq_stub_3
+                0xffffffff801298f0                irq_stub_4
+                0xffffffff801298f9                irq_stub_5
+                0xffffffff80129902                irq_stub_6
+                0xffffffff8012990b                irq_stub_7
+                0xffffffff80129914                irq_stub_8
+                0xffffffff8012991d                irq_stub_9
+                0xffffffff80129926                irq_stub_10
+                0xffffffff8012992c                irq_stub_11
+                0xffffffff80129932                irq_stub_12
+                0xffffffff80129938                irq_stub_13
+                0xffffffff8012993e                irq_stub_14
+                0xffffffff80129944                irq_stub_15
+                0xffffffff801299f8                syscall_stub
+                0xffffffff80129a57                syscall_entry
+ .text          0xffffffff80129ac8       0xeb build/arch/x86_64/process/context.o
+                0xffffffff80129ac8                context_switch
+                0xffffffff80129b26                context_switch_initial
+                0xffffffff80129b47                fork_return
+                0xffffffff80129b6d                user_mode_enter
+ *(.text.*)
+                0xffffffff80129bb3                __text_end = .
+                0xffffffff80129bb3                __rodata_start = .
+
+.iplt           0xffffffff80129bb3        0x0 load address 0x0000000000129bb3
+ .iplt          0xffffffff80129bb3        0x0 build/arch/x86_64/boot/gdt.o
+
+.rodata         0xffffffff8012a000     0x38a8 load address 0x000000000012a000
+ *(.rodata)
+ .rodata        0xffffffff8012a000      0x280 build/arch/x86_64/boot/idt.o
+ .rodata        0xffffffff8012a280       0x11 build/arch/x86_64/io/uart.o
+ *fill*         0xffffffff8012a291        0x7 
+ .rodata        0xffffffff8012a298       0x30 build/arch/x86_64/mm/physmem.o
+ *fill*         0xffffffff8012a2c8       0x18 
+ .rodata        0xffffffff8012a2e0       0x48 build/arch/x86_64/process/syscall.o
+ *fill*         0xffffffff8012a328       0x18 
+ .rodata        0xffffffff8012a340       0x58 build/mm/kmalloc.o
+ *fill*         0xffffffff8012a398        0x8 
+ .rodata        0xffffffff8012a3a0      0x7b1 build/kernel/printk.o
+ *fill*         0xffffffff8012ab51        0xf 
+ .rodata        0xffffffff8012ab60       0x30 build/proc/process.o
+ .rodata        0xffffffff8012ab90       0x20 build/proc/exec.o
+ *fill*         0xffffffff8012abb0       0x10 
+ .rodata        0xffffffff8012abc0      0x210 build/fs/axiomfs/super.o
+                0xffffffff8012abc0                axiomfs_file_ops
+                0xffffffff8012ac20                axiomfs_dir_ops
+                0xffffffff8012ac80                axiomfs_file_inode_ops
+                0xffffffff8012ad00                axiomfs_dir_inode_ops
+ *fill*         0xffffffff8012add0       0x10 
+ .rodata        0xffffffff8012ade0      0x1e8 build/fs/devfs/devfs.o
+ .rodata        0xffffffff8012afc8       0x70 build/sysctl/sysctl.o
+ *fill*         0xffffffff8012b038        0x8 
+ .rodata        0xffffffff8012b040      0x1c1 build/lib/printf.o
+ *(.rodata.*)
+ .rodata.str1.1
+                0xffffffff8012b201      0xc16 build/arch/x86_64/boot/gdt.o
+                                         0x18 (size before relaxing)
+ *fill*         0xffffffff8012be17        0x1 
+ .rodata.str1.8
+                0xffffffff8012be18     0x1a89 build/arch/x86_64/boot/gdt.o
+                                         0x2b (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a1        0x0 build/arch/x86_64/boot/idt.o
+                                        0x2d8 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a1        0x0 build/arch/x86_64/boot/idt.o
+                                        0x29c (size before relaxing)
+ *fill*         0xffffffff8012d8a1        0x1 
+ .rodata.cst2   0xffffffff8012d8a2        0x6 build/arch/x86_64/boot/idt.o
+                                          0x2 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/cpu.o
+                                         0x25 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/io/uart.o
+                                          0x3 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/mm/paging.o
+                                         0x2d (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/mm/physmem.o
+                                         0x4d (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/mm/physmem.o
+                                        0x14f (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/process/syscall.o
+                                        0x10d (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/process/syscall.o
+                                        0x25b (size before relaxing)
+ .rodata.cst2   0xffffffff8012d8a8        0x0 build/arch/x86_64/process/syscall.o
+                                          0x2 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/mm/pmm.o
+                                        0x164 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/mm/pmm.o
+                                         0x10 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/mm/vmm.o
+                                         0x8b (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/mm/vmm.o
+                                         0x14 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/mm/kmalloc.o
+                                        0x134 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/mm/kmalloc.o
+                                         0xa9 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/kernel/main.o
+                                        0x429 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/kernel/main.o
+                                        0x253 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/kernel/bootinfo.o
+                                         0x22 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/kernel/bootinfo.o
+                                         0x86 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/kernel/initramfs.o
+                                         0x18 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/kernel/initramfs.o
+                                        0x120 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/kernel/panic.o
+                                         0xa9 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/kernel/panic.o
+                                        0x1be (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/kernel/printk.o
+                                          0x7 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/kernel/kthread.o
+                                         0x50 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/kernel/kthread.o
+                                          0xb (size before relaxing)
+ .rodata.cst2   0xffffffff8012d8a8        0x0 build/kernel/kthread.o
+                                          0x2 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/proc/process.o
+                                         0xbc (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/proc/process.o
+                                        0x153 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/proc/scheduler.o
+                                        0x13a (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/proc/scheduler.o
+                                         0x72 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/proc/exec.o
+                                        0x236 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/proc/exec.o
+                                         0x73 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/fs/vfs.o
+                                         0xc1 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/vfs.o
+                                         0x72 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/dentry.o
+                                          0x2 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/axiomfs/super.o
+                                         0x75 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/fs/axiomfs/super.o
+                                         0x5e (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/axiomfs/dir.o
+                                          0x5 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/axiomfs/file.o
+                                          0x1 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/axiomfs/policy_ipc.o
+                                         0x15 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/fs/axiomfs/policy_ipc.o
+                                         0x96 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/fs/devfs/devfs.o
+                                         0x5c (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/fs/devfs/devfs.o
+                                         0x54 (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/ipc/msgqueue.o
+                                         0x47 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/ipc/msgqueue.o
+                                          0xc (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/ipc/axiomd_channel.o
+                                         0xd0 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/sysctl/sysctl.o
+                                         0xee (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/sysctl/nodes.o
+                                        0x11a (size before relaxing)
+ .rodata.str1.8
+                0xffffffff8012d8a8        0x0 build/sysctl/nodes.o
+                                         0x89 (size before relaxing)
+ .rodata.str1.1
+                0xffffffff8012d8a8        0x0 build/lib/printf.o
+                                          0xd (size before relaxing)
+                0xffffffff8012d8a8                __rodata_end = .
+                0xffffffff8012d8a8                __data_start = .
+
+.rela.dyn       0xffffffff8012d8a8        0x0 load address 0x000000000012d8a8
+ .rela.got      0xffffffff8012d8a8        0x0 build/arch/x86_64/boot/gdt.o
+ .rela.iplt     0xffffffff8012d8a8        0x0 build/arch/x86_64/boot/gdt.o
+ .rela.text     0xffffffff8012d8a8        0x0 build/arch/x86_64/boot/gdt.o
+ .rela.text.boot
+                0xffffffff8012d8a8        0x0 build/arch/x86_64/boot/gdt.o
+
+.data           0xffffffff8012e000      0x604 load address 0x000000000012e000
+ *(.data)
+ .data          0xffffffff8012e000        0x0 build/arch/x86_64/boot/gdt.o
+ .data          0xffffffff8012e000        0x0 build/arch/x86_64/boot/idt.o
+ .data          0xffffffff8012e000       0x90 build/arch/x86_64/cpu.o
+ .data          0xffffffff8012e090        0x0 build/arch/x86_64/io/port.o
+ .data          0xffffffff8012e090        0x2 build/arch/x86_64/io/uart.o
+ .data          0xffffffff8012e092        0x0 build/arch/x86_64/mm/paging.o
+ .data          0xffffffff8012e092        0x0 build/arch/x86_64/mm/physmem.o
+ *fill*         0xffffffff8012e092        0x2 
+ .data          0xffffffff8012e094        0x4 build/arch/x86_64/process/syscall.o
+ *fill*         0xffffffff8012e098        0x8 
+ .data          0xffffffff8012e0a0       0xc0 build/mm/pmm.o
+ .data          0xffffffff8012e160        0x0 build/mm/vmm.o
+ .data          0xffffffff8012e160       0x10 build/mm/kmalloc.o
+ .data          0xffffffff8012e170        0x0 build/kernel/main.o
+ .data          0xffffffff8012e170        0x0 build/kernel/bootinfo.o
+ .data          0xffffffff8012e170        0x0 build/kernel/initramfs.o
+ .data          0xffffffff8012e170        0x0 build/kernel/time.o
+ .data          0xffffffff8012e170        0x0 build/kernel/panic.o
+ .data          0xffffffff8012e170        0x4 build/kernel/printk.o
+ *fill*         0xffffffff8012e174        0xc 
+ .data          0xffffffff8012e180       0x20 build/kernel/kthread.o
+ .data          0xffffffff8012e1a0       0x94 build/proc/process.o
+                0xffffffff8012e220                all_processes
+                0xffffffff8012e230                next_pid
+ *fill*         0xffffffff8012e234        0xc 
+ .data          0xffffffff8012e240       0x48 build/proc/scheduler.o
+ .data          0xffffffff8012e288        0x0 build/proc/fork.o
+ .data          0xffffffff8012e288        0x0 build/proc/exec.o
+ *fill*         0xffffffff8012e288        0x8 
+ .data          0xffffffff8012e290       0x10 build/fs/vfs.o
+ .data          0xffffffff8012e2a0        0x0 build/fs/inode.o
+ .data          0xffffffff8012e2a0        0x0 build/fs/dentry.o
+ .data          0xffffffff8012e2a0        0x0 build/fs/file.o
+ .data          0xffffffff8012e2a0       0x30 build/fs/axiomfs/super.o
+ .data          0xffffffff8012e2d0        0x0 build/fs/axiomfs/inode.o
+ .data          0xffffffff8012e2d0        0x0 build/fs/axiomfs/dir.o
+ .data          0xffffffff8012e2d0        0x0 build/fs/axiomfs/file.o
+ .data          0xffffffff8012e2d0        0x4 build/fs/axiomfs/policy_ipc.o
+ *fill*         0xffffffff8012e2d4        0x4 
+ .data          0xffffffff8012e2d8        0x8 build/fs/axiomfs/cache.o
+ .data          0xffffffff8012e2e0       0x40 build/fs/devfs/devfs.o
+ .data          0xffffffff8012e320        0x4 build/ipc/msgqueue.o
+ .data          0xffffffff8012e324        0x8 build/ipc/axiomd_channel.o
+ .data          0xffffffff8012e32c        0x4 build/ipc/shm.o
+ *fill*         0xffffffff8012e330       0x10 
+ .data          0xffffffff8012e340       0xa0 build/sysctl/sysctl.o
+ .data          0xffffffff8012e3e0      0x224 build/sysctl/nodes.o
+ .data          0xffffffff8012e604        0x0 build/sysctl/handlers.o
+ .data          0xffffffff8012e604        0x0 build/lib/string.o
+ .data          0xffffffff8012e604        0x0 build/lib/printf.o
+ .data          0xffffffff8012e604        0x0 build/lib/bitmap.o
+ .data          0xffffffff8012e604        0x0 build/lib/rbtree.o
+ .data          0xffffffff8012e604        0x0 build/arch/x86_64/boot/boot.o
+ .data          0xffffffff8012e604        0x0 build/arch/x86_64/boot/interrupt.o
+ .data          0xffffffff8012e604        0x0 build/arch/x86_64/process/context.o
+ *(.data.*)
+                0xffffffff8012e604                __data_end = .
+                0xffffffff8012e604                __bss_start = .
+
+.got            0xffffffff8012e608        0x0 load address 0x000000000012e608
+ .got           0xffffffff8012e608        0x0 build/arch/x86_64/boot/gdt.o
+
+.got.plt        0xffffffff8012e608        0x0 load address 0x000000000012e608
+ .got.plt       0xffffffff8012e608        0x0 build/arch/x86_64/boot/gdt.o
+
+.igot.plt       0xffffffff8012e608        0x0 load address 0x000000000012e608
+ .igot.plt      0xffffffff8012e608        0x0 build/arch/x86_64/boot/gdt.o
+
+.bss            0xffffffff8012f000    0x18f78 load address 0x000000000012f000
+ *(COMMON)
+ *(.bss)
+ .bss           0xffffffff8012f000     0x40b8 build/arch/x86_64/boot/gdt.o
+ *fill*         0xffffffff801330b8        0x8 
+ .bss           0xffffffff801330c0     0x1020 build/arch/x86_64/boot/idt.o
+ .bss           0xffffffff801340e0        0x0 build/arch/x86_64/cpu.o
+ .bss           0xffffffff801340e0        0x0 build/arch/x86_64/io/port.o
+ .bss           0xffffffff801340e0        0x1 build/arch/x86_64/io/uart.o
+ *fill*         0xffffffff801340e1        0xf 
+ .bss           0xffffffff801340f0       0x18 build/arch/x86_64/mm/paging.o
+ .bss           0xffffffff80134108       0x20 build/arch/x86_64/mm/physmem.o
+ *fill*         0xffffffff80134128       0x18 
+ .bss           0xffffffff80134140     0x1960 build/arch/x86_64/process/syscall.o
+ .bss           0xffffffff80135aa0       0x10 build/mm/pmm.o
+ *fill*         0xffffffff80135ab0       0x10 
+ .bss           0xffffffff80135ac0       0xa8 build/mm/vmm.o
+ *fill*         0xffffffff80135b68       0x18 
+ .bss           0xffffffff80135b80       0x98 build/mm/kmalloc.o
+ *fill*         0xffffffff80135c18        0x8 
+ .bss           0xffffffff80135c20      0x138 build/kernel/main.o
+ *fill*         0xffffffff80135d58        0x8 
+ .bss           0xffffffff80135d60      0x620 build/kernel/bootinfo.o
+ .bss           0xffffffff80136380        0x0 build/kernel/initramfs.o
+ .bss           0xffffffff80136380        0x0 build/kernel/time.o
+ .bss           0xffffffff80136380        0x1 build/kernel/panic.o
+ *fill*         0xffffffff80136381        0x7 
+ .bss           0xffffffff80136388       0x20 build/kernel/printk.o
+ .bss           0xffffffff801363a8        0x8 build/kernel/kthread.o
+ .bss           0xffffffff801363b0       0x18 build/proc/process.o
+                0xffffffff801363b0                idle_process
+                0xffffffff801363b8                init_process
+ *fill*         0xffffffff801363c8       0x18 
+ .bss           0xffffffff801363e0      0x96c build/proc/scheduler.o
+                0xffffffff801363e0                current_policy
+                0xffffffff80136400                runqueue
+ .bss           0xffffffff80136d4c        0x0 build/proc/fork.o
+ .bss           0xffffffff80136d4c        0x0 build/proc/exec.o
+ *fill*         0xffffffff80136d4c        0x4 
+ .bss           0xffffffff80136d50       0x2c build/fs/vfs.o
+                0xffffffff80136d50                file_cache
+                0xffffffff80136d58                dentry_cache
+                0xffffffff80136d60                inode_cache
+ *fill*         0xffffffff80136d7c        0x4 
+ .bss           0xffffffff80136d80    0x10020 build/fs/inode.o
+ .bss           0xffffffff80146da0        0x0 build/fs/dentry.o
+ .bss           0xffffffff80146da0        0x0 build/fs/file.o
+ .bss           0xffffffff80146da0        0x0 build/fs/axiomfs/super.o
+ .bss           0xffffffff80146da0        0x0 build/fs/axiomfs/inode.o
+ .bss           0xffffffff80146da0        0x0 build/fs/axiomfs/dir.o
+ .bss           0xffffffff80146da0        0x0 build/fs/axiomfs/file.o
+ .bss           0xffffffff80146da0       0x10 build/fs/axiomfs/policy_ipc.o
+ .bss           0xffffffff80146db0        0x0 build/fs/axiomfs/cache.o
+ .bss           0xffffffff80146db0        0x0 build/fs/devfs/devfs.o
+ *fill*         0xffffffff80146db0       0x10 
+ .bss           0xffffffff80146dc0      0x800 build/ipc/msgqueue.o
+ .bss           0xffffffff801475c0       0x68 build/ipc/axiomd_channel.o
+ *fill*         0xffffffff80147628       0x18 
+ .bss           0xffffffff80147640      0x800 build/ipc/shm.o
+ .bss           0xffffffff80147e40       0x18 build/sysctl/sysctl.o
+                0xffffffff80147e40                sysctl_root
+ *fill*         0xffffffff80147e58        0x8 
+ .bss           0xffffffff80147e60      0x10c build/sysctl/nodes.o
+ .bss           0xffffffff80147f6c        0x0 build/sysctl/handlers.o
+ *fill*         0xffffffff80147f6c        0x4 
+ .bss           0xffffffff80147f70        0x8 build/lib/string.o
+ .bss           0xffffffff80147f78        0x0 build/lib/printf.o
+ .bss           0xffffffff80147f78        0x0 build/lib/bitmap.o
+ .bss           0xffffffff80147f78        0x0 build/lib/rbtree.o
+ .bss           0xffffffff80147f78        0x0 build/arch/x86_64/boot/boot.o
+ .bss           0xffffffff80147f78        0x0 build/arch/x86_64/boot/interrupt.o
+ .bss           0xffffffff80147f78        0x0 build/arch/x86_64/process/context.o
+ *(.bss.*)
+                0xffffffff80147f78                __bss_end = .
+
+.lbss           0xffffffff80147f80    0xe0000 load address 0x0000000000147f80
+ .lbss          0xffffffff80147f80    0x20000 build/mm/pmm.o
+ .lbss          0xffffffff80167f80    0x40000 build/proc/process.o
+                0xffffffff80167f80                pid_table
+ .lbss          0xffffffff801a7f80    0x80000 build/fs/axiomfs/inode.o
+                0xffffffff80228000                . = ALIGN (0x1000)
+                0xffffffff80228000                __kernel_end = .
+                0xffffffff80100000                __kernel_start = (KERNEL_VMA + KERNEL_LMA)
+                0x0000000000228000                __kernel_phys_end = (__kernel_end - KERNEL_VMA)
+
+/DISCARD/
+ *(.comment)
+ *(.note)
+ *(.note.*)
+ *(.eh_frame)
+ *(.eh_frame_hdr)
+LOAD build/arch/x86_64/boot/gdt.o
+LOAD build/arch/x86_64/boot/idt.o
+LOAD build/arch/x86_64/cpu.o
+LOAD build/arch/x86_64/io/port.o
+LOAD build/arch/x86_64/io/uart.o
+LOAD build/arch/x86_64/mm/paging.o
+LOAD build/arch/x86_64/mm/physmem.o
+LOAD build/arch/x86_64/process/syscall.o
+LOAD build/mm/pmm.o
+LOAD build/mm/vmm.o
+LOAD build/mm/kmalloc.o
+LOAD build/kernel/main.o
+LOAD build/kernel/bootinfo.o
+LOAD build/kernel/initramfs.o
+LOAD build/kernel/time.o
+LOAD build/kernel/panic.o
+LOAD build/kernel/printk.o
+LOAD build/kernel/kthread.o
+LOAD build/proc/process.o
+LOAD build/proc/scheduler.o
+LOAD build/proc/fork.o
+LOAD build/proc/exec.o
+LOAD build/fs/vfs.o
+LOAD build/fs/inode.o
+LOAD build/fs/dentry.o
+LOAD build/fs/file.o
+LOAD build/fs/axiomfs/super.o
+LOAD build/fs/axiomfs/inode.o
+LOAD build/fs/axiomfs/dir.o
+LOAD build/fs/axiomfs/file.o
+LOAD build/fs/axiomfs/policy_ipc.o
+LOAD build/fs/axiomfs/cache.o
+LOAD build/fs/devfs/devfs.o
+LOAD build/ipc/msgqueue.o
+LOAD build/ipc/axiomd_channel.o
+LOAD build/ipc/shm.o
+LOAD build/sysctl/sysctl.o
+LOAD build/sysctl/nodes.o
+LOAD build/sysctl/handlers.o
+LOAD build/lib/string.o
+LOAD build/lib/printf.o
+LOAD build/lib/bitmap.o
+LOAD build/lib/rbtree.o
+LOAD build/arch/x86_64/boot/boot.o
+LOAD build/arch/x86_64/boot/interrupt.o
+LOAD build/arch/x86_64/process/context.o
+OUTPUT(build/kernel.elf elf64-x86-64)
+
+.debug_info     0x0000000000000000    0x4146f
+ .debug_info    0x0000000000000000      0x731 build/arch/x86_64/boot/gdt.o
+ .debug_info    0x0000000000000731     0x1b49 build/arch/x86_64/boot/idt.o
+ .debug_info    0x000000000000227a      0x801 build/arch/x86_64/cpu.o
+ .debug_info    0x0000000000002a7b      0x47e build/arch/x86_64/io/port.o
+ .debug_info    0x0000000000002ef9      0x98d build/arch/x86_64/io/uart.o
+ .debug_info    0x0000000000003886     0x1469 build/arch/x86_64/mm/paging.o
+ .debug_info    0x0000000000004cef      0x723 build/arch/x86_64/mm/physmem.o
+ .debug_info    0x0000000000005412     0x6d70 build/arch/x86_64/process/syscall.o
+ .debug_info    0x000000000000c182      0xe9c build/mm/pmm.o
+ .debug_info    0x000000000000d01e     0x3120 build/mm/vmm.o
+ .debug_info    0x000000000001013e     0x21f7 build/mm/kmalloc.o
+ .debug_info    0x0000000000012335     0x2566 build/kernel/main.o
+ .debug_info    0x000000000001489b      0x53e build/kernel/bootinfo.o
+ .debug_info    0x0000000000014dd9     0x1ce0 build/kernel/initramfs.o
+ .debug_info    0x0000000000016ab9      0x26c build/kernel/time.o
+ .debug_info    0x0000000000016d25      0xa87 build/kernel/panic.o
+ .debug_info    0x00000000000177ac      0xfbd build/kernel/printk.o
+ .debug_info    0x0000000000018769      0xb1b build/kernel/kthread.o
+ .debug_info    0x0000000000019284     0x2bc2 build/proc/process.o
+ .debug_info    0x000000000001be46     0x1f45 build/proc/scheduler.o
+ .debug_info    0x000000000001dd8b     0x1205 build/proc/fork.o
+ .debug_info    0x000000000001ef90     0x3cb3 build/proc/exec.o
+ .debug_info    0x0000000000022c43     0x2c34 build/fs/vfs.o
+ .debug_info    0x0000000000025877     0x2548 build/fs/inode.o
+ .debug_info    0x0000000000027dbf     0x1b42 build/fs/dentry.o
+ .debug_info    0x0000000000029901     0x1e5c build/fs/file.o
+ .debug_info    0x000000000002b75d     0x161e build/fs/axiomfs/super.o
+ .debug_info    0x000000000002cd7b     0x2be2 build/fs/axiomfs/inode.o
+ .debug_info    0x000000000002f95d     0x17e2 build/fs/axiomfs/dir.o
+ .debug_info    0x000000000003113f     0x1d65 build/fs/axiomfs/file.o
+ .debug_info    0x0000000000032ea4     0x163e build/fs/axiomfs/policy_ipc.o
+ .debug_info    0x00000000000344e2     0x1afb build/fs/axiomfs/cache.o
+ .debug_info    0x0000000000035fdd     0x1d2b build/fs/devfs/devfs.o
+ .debug_info    0x0000000000037d08     0x13c6 build/ipc/msgqueue.o
+ .debug_info    0x00000000000390ce      0xd84 build/ipc/axiomd_channel.o
+ .debug_info    0x0000000000039e52      0xfef build/ipc/shm.o
+ .debug_info    0x000000000003ae41     0x183c build/sysctl/sysctl.o
+ .debug_info    0x000000000003c67d      0xf8c build/sysctl/nodes.o
+ .debug_info    0x000000000003d609      0x6b1 build/sysctl/handlers.o
+ .debug_info    0x000000000003dcba      0xe08 build/lib/string.o
+ .debug_info    0x000000000003eac2     0x1379 build/lib/printf.o
+ .debug_info    0x000000000003fe3b      0x7fa build/lib/bitmap.o
+ .debug_info    0x0000000000040635      0xdb0 build/lib/rbtree.o
+ .debug_info    0x00000000000413e5       0x2e build/arch/x86_64/boot/boot.o
+ .debug_info    0x0000000000041413       0x2e build/arch/x86_64/boot/interrupt.o
+ .debug_info    0x0000000000041441       0x2e build/arch/x86_64/process/context.o
+
+.debug_abbrev   0x0000000000000000     0x9ef7
+ .debug_abbrev  0x0000000000000000      0x22d build/arch/x86_64/boot/gdt.o
+ .debug_abbrev  0x000000000000022d      0x4df build/arch/x86_64/boot/idt.o
+ .debug_abbrev  0x000000000000070c      0x2b0 build/arch/x86_64/cpu.o
+ .debug_abbrev  0x00000000000009bc      0x127 build/arch/x86_64/io/port.o
+ .debug_abbrev  0x0000000000000ae3      0x2cc build/arch/x86_64/io/uart.o
+ .debug_abbrev  0x0000000000000daf      0x40e build/arch/x86_64/mm/paging.o
+ .debug_abbrev  0x00000000000011bd      0x277 build/arch/x86_64/mm/physmem.o
+ .debug_abbrev  0x0000000000001434      0x70d build/arch/x86_64/process/syscall.o
+ .debug_abbrev  0x0000000000001b41      0x3a8 build/mm/pmm.o
+ .debug_abbrev  0x0000000000001ee9      0x58a build/mm/vmm.o
+ .debug_abbrev  0x0000000000002473      0x52d build/mm/kmalloc.o
+ .debug_abbrev  0x00000000000029a0      0x44d build/kernel/main.o
+ .debug_abbrev  0x0000000000002ded      0x211 build/kernel/bootinfo.o
+ .debug_abbrev  0x0000000000002ffe      0x3b3 build/kernel/initramfs.o
+ .debug_abbrev  0x00000000000033b1      0x165 build/kernel/time.o
+ .debug_abbrev  0x0000000000003516      0x263 build/kernel/panic.o
+ .debug_abbrev  0x0000000000003779      0x476 build/kernel/printk.o
+ .debug_abbrev  0x0000000000003bef      0x351 build/kernel/kthread.o
+ .debug_abbrev  0x0000000000003f40      0x656 build/proc/process.o
+ .debug_abbrev  0x0000000000004596      0x6dd build/proc/scheduler.o
+ .debug_abbrev  0x0000000000004c73      0x3be build/proc/fork.o
+ .debug_abbrev  0x0000000000005031      0x52c build/proc/exec.o
+ .debug_abbrev  0x000000000000555d      0x4f0 build/fs/vfs.o
+ .debug_abbrev  0x0000000000005a4d      0x4fc build/fs/inode.o
+ .debug_abbrev  0x0000000000005f49      0x335 build/fs/dentry.o
+ .debug_abbrev  0x000000000000627e      0x3e5 build/fs/file.o
+ .debug_abbrev  0x0000000000006663      0x297 build/fs/axiomfs/super.o
+ .debug_abbrev  0x00000000000068fa      0x542 build/fs/axiomfs/inode.o
+ .debug_abbrev  0x0000000000006e3c      0x299 build/fs/axiomfs/dir.o
+ .debug_abbrev  0x00000000000070d5      0x311 build/fs/axiomfs/file.o
+ .debug_abbrev  0x00000000000073e6      0x4a6 build/fs/axiomfs/policy_ipc.o
+ .debug_abbrev  0x000000000000788c      0x376 build/fs/axiomfs/cache.o
+ .debug_abbrev  0x0000000000007c02      0x447 build/fs/devfs/devfs.o
+ .debug_abbrev  0x0000000000008049      0x3a0 build/ipc/msgqueue.o
+ .debug_abbrev  0x00000000000083e9      0x367 build/ipc/axiomd_channel.o
+ .debug_abbrev  0x0000000000008750      0x2b7 build/ipc/shm.o
+ .debug_abbrev  0x0000000000008a07      0x3f3 build/sysctl/sysctl.o
+ .debug_abbrev  0x0000000000008dfa      0x243 build/sysctl/nodes.o
+ .debug_abbrev  0x000000000000903d      0x1bc build/sysctl/handlers.o
+ .debug_abbrev  0x00000000000091f9      0x367 build/lib/string.o
+ .debug_abbrev  0x0000000000009560      0x471 build/lib/printf.o
+ .debug_abbrev  0x00000000000099d1      0x200 build/lib/bitmap.o
+ .debug_abbrev  0x0000000000009bd1      0x2ea build/lib/rbtree.o
+ .debug_abbrev  0x0000000000009ebb       0x14 build/arch/x86_64/boot/boot.o
+ .debug_abbrev  0x0000000000009ecf       0x14 build/arch/x86_64/boot/interrupt.o
+ .debug_abbrev  0x0000000000009ee3       0x14 build/arch/x86_64/process/context.o
+
+.debug_loclists
+                0x0000000000000000    0x16cc1
+ .debug_loclists
+                0x0000000000000000      0x164 build/arch/x86_64/boot/gdt.o
+ .debug_loclists
+                0x0000000000000164      0x501 build/arch/x86_64/boot/idt.o
+ .debug_loclists
+                0x0000000000000665      0x24a build/arch/x86_64/cpu.o
+ .debug_loclists
+                0x00000000000008af      0x112 build/arch/x86_64/io/port.o
+ .debug_loclists
+                0x00000000000009c1      0x286 build/arch/x86_64/io/uart.o
+ .debug_loclists
+                0x0000000000000c47      0xbe4 build/arch/x86_64/mm/paging.o
+ .debug_loclists
+                0x000000000000182b      0x37c build/arch/x86_64/mm/physmem.o
+ .debug_loclists
+                0x0000000000001ba7     0x3541 build/arch/x86_64/process/syscall.o
+ .debug_loclists
+                0x00000000000050e8      0x934 build/mm/pmm.o
+ .debug_loclists
+                0x0000000000005a1c     0x11c4 build/mm/vmm.o
+ .debug_loclists
+                0x0000000000006be0     0x1109 build/mm/kmalloc.o
+ .debug_loclists
+                0x0000000000007ce9      0x10b build/kernel/main.o
+ .debug_loclists
+                0x0000000000007df4      0x140 build/kernel/bootinfo.o
+ .debug_loclists
+                0x0000000000007f34      0x8ab build/kernel/initramfs.o
+ .debug_loclists
+                0x00000000000087df       0x93 build/kernel/time.o
+ .debug_loclists
+                0x0000000000008872      0x10c build/kernel/panic.o
+ .debug_loclists
+                0x000000000000897e      0xd3e build/kernel/printk.o
+ .debug_loclists
+                0x00000000000096bc      0x274 build/kernel/kthread.o
+ .debug_loclists
+                0x0000000000009930      0x7f2 build/proc/process.o
+ .debug_loclists
+                0x000000000000a122      0x664 build/proc/scheduler.o
+ .debug_loclists
+                0x000000000000a786      0x301 build/proc/fork.o
+ .debug_loclists
+                0x000000000000aa87     0x2001 build/proc/exec.o
+ .debug_loclists
+                0x000000000000ca88     0x16c3 build/fs/vfs.o
+ .debug_loclists
+                0x000000000000e14b      0x675 build/fs/inode.o
+ .debug_loclists
+                0x000000000000e7c0      0x575 build/fs/dentry.o
+ .debug_loclists
+                0x000000000000ed35      0x469 build/fs/file.o
+ .debug_loclists
+                0x000000000000f19e      0x15a build/fs/axiomfs/super.o
+ .debug_loclists
+                0x000000000000f2f8      0x967 build/fs/axiomfs/inode.o
+ .debug_loclists
+                0x000000000000fc5f      0x123 build/fs/axiomfs/dir.o
+ .debug_loclists
+                0x000000000000fd82      0x52a build/fs/axiomfs/file.o
+ .debug_loclists
+                0x00000000000102ac      0xd44 build/fs/axiomfs/policy_ipc.o
+ .debug_loclists
+                0x0000000000010ff0      0x450 build/fs/axiomfs/cache.o
+ .debug_loclists
+                0x0000000000011440      0x6ae build/fs/devfs/devfs.o
+ .debug_loclists
+                0x0000000000011aee      0x65c build/ipc/msgqueue.o
+ .debug_loclists
+                0x000000000001214a      0x43b build/ipc/axiomd_channel.o
+ .debug_loclists
+                0x0000000000012585      0x573 build/ipc/shm.o
+ .debug_loclists
+                0x0000000000012af8      0xb29 build/sysctl/sysctl.o
+ .debug_loclists
+                0x0000000000013621      0x671 build/sysctl/nodes.o
+ .debug_loclists
+                0x0000000000013c92      0x44a build/sysctl/handlers.o
+ .debug_loclists
+                0x00000000000140dc      0xde6 build/lib/string.o
+ .debug_loclists
+                0x0000000000014ec2     0x100c build/lib/printf.o
+ .debug_loclists
+                0x0000000000015ece      0x5e5 build/lib/bitmap.o
+ .debug_loclists
+                0x00000000000164b3      0x80e build/lib/rbtree.o
+
+.debug_aranges  0x0000000000000000      0x8a0
+ .debug_aranges
+                0x0000000000000000       0x30 build/arch/x86_64/boot/gdt.o
+ .debug_aranges
+                0x0000000000000030       0x30 build/arch/x86_64/boot/idt.o
+ .debug_aranges
+                0x0000000000000060       0x30 build/arch/x86_64/cpu.o
+ .debug_aranges
+                0x0000000000000090       0x30 build/arch/x86_64/io/port.o
+ .debug_aranges
+                0x00000000000000c0       0x30 build/arch/x86_64/io/uart.o
+ .debug_aranges
+                0x00000000000000f0       0x30 build/arch/x86_64/mm/paging.o
+ .debug_aranges
+                0x0000000000000120       0x30 build/arch/x86_64/mm/physmem.o
+ .debug_aranges
+                0x0000000000000150       0x30 build/arch/x86_64/process/syscall.o
+ .debug_aranges
+                0x0000000000000180       0x30 build/mm/pmm.o
+ .debug_aranges
+                0x00000000000001b0       0x30 build/mm/vmm.o
+ .debug_aranges
+                0x00000000000001e0       0x30 build/mm/kmalloc.o
+ .debug_aranges
+                0x0000000000000210       0x30 build/kernel/main.o
+ .debug_aranges
+                0x0000000000000240       0x30 build/kernel/bootinfo.o
+ .debug_aranges
+                0x0000000000000270       0x30 build/kernel/initramfs.o
+ .debug_aranges
+                0x00000000000002a0       0x30 build/kernel/time.o
+ .debug_aranges
+                0x00000000000002d0       0x30 build/kernel/panic.o
+ .debug_aranges
+                0x0000000000000300       0x30 build/kernel/printk.o
+ .debug_aranges
+                0x0000000000000330       0x30 build/kernel/kthread.o
+ .debug_aranges
+                0x0000000000000360       0x30 build/proc/process.o
+ .debug_aranges
+                0x0000000000000390       0x30 build/proc/scheduler.o
+ .debug_aranges
+                0x00000000000003c0       0x30 build/proc/fork.o
+ .debug_aranges
+                0x00000000000003f0       0x30 build/proc/exec.o
+ .debug_aranges
+                0x0000000000000420       0x30 build/fs/vfs.o
+ .debug_aranges
+                0x0000000000000450       0x30 build/fs/inode.o
+ .debug_aranges
+                0x0000000000000480       0x30 build/fs/dentry.o
+ .debug_aranges
+                0x00000000000004b0       0x30 build/fs/file.o
+ .debug_aranges
+                0x00000000000004e0       0x30 build/fs/axiomfs/super.o
+ .debug_aranges
+                0x0000000000000510       0x30 build/fs/axiomfs/inode.o
+ .debug_aranges
+                0x0000000000000540       0x30 build/fs/axiomfs/dir.o
+ .debug_aranges
+                0x0000000000000570       0x30 build/fs/axiomfs/file.o
+ .debug_aranges
+                0x00000000000005a0       0x30 build/fs/axiomfs/policy_ipc.o
+ .debug_aranges
+                0x00000000000005d0       0x30 build/fs/axiomfs/cache.o
+ .debug_aranges
+                0x0000000000000600       0x30 build/fs/devfs/devfs.o
+ .debug_aranges
+                0x0000000000000630       0x30 build/ipc/msgqueue.o
+ .debug_aranges
+                0x0000000000000660       0x30 build/ipc/axiomd_channel.o
+ .debug_aranges
+                0x0000000000000690       0x30 build/ipc/shm.o
+ .debug_aranges
+                0x00000000000006c0       0x30 build/sysctl/sysctl.o
+ .debug_aranges
+                0x00000000000006f0       0x30 build/sysctl/nodes.o
+ .debug_aranges
+                0x0000000000000720       0x30 build/sysctl/handlers.o
+ .debug_aranges
+                0x0000000000000750       0x30 build/lib/string.o
+ .debug_aranges
+                0x0000000000000780       0x30 build/lib/printf.o
+ .debug_aranges
+                0x00000000000007b0       0x30 build/lib/bitmap.o
+ .debug_aranges
+                0x00000000000007e0       0x30 build/lib/rbtree.o
+ .debug_aranges
+                0x0000000000000810       0x30 build/arch/x86_64/boot/boot.o
+ .debug_aranges
+                0x0000000000000840       0x30 build/arch/x86_64/boot/interrupt.o
+ .debug_aranges
+                0x0000000000000870       0x30 build/arch/x86_64/process/context.o
+
+.debug_rnglists
+                0x0000000000000000     0x2452
+ .debug_rnglists
+                0x0000000000000000       0xa5 build/arch/x86_64/boot/gdt.o
+ .debug_rnglists
+                0x00000000000000a5       0x82 build/arch/x86_64/boot/idt.o
+ .debug_rnglists
+                0x0000000000000127       0x7b build/arch/x86_64/cpu.o
+ .debug_rnglists
+                0x00000000000001a2       0x8d build/arch/x86_64/io/uart.o
+ .debug_rnglists
+                0x000000000000022f      0x116 build/arch/x86_64/mm/paging.o
+ .debug_rnglists
+                0x0000000000000345       0x32 build/arch/x86_64/mm/physmem.o
+ .debug_rnglists
+                0x0000000000000377      0x389 build/arch/x86_64/process/syscall.o
+ .debug_rnglists
+                0x0000000000000700      0x12a build/mm/pmm.o
+ .debug_rnglists
+                0x000000000000082a      0x1f0 build/mm/vmm.o
+ .debug_rnglists
+                0x0000000000000a1a      0x252 build/mm/kmalloc.o
+ .debug_rnglists
+                0x0000000000000c6c       0x61 build/kernel/main.o
+ .debug_rnglists
+                0x0000000000000ccd       0x35 build/kernel/bootinfo.o
+ .debug_rnglists
+                0x0000000000000d02       0xd7 build/kernel/initramfs.o
+ .debug_rnglists
+                0x0000000000000dd9       0x58 build/kernel/time.o
+ .debug_rnglists
+                0x0000000000000e31       0x1c build/kernel/panic.o
+ .debug_rnglists
+                0x0000000000000e4d      0x1e4 build/kernel/printk.o
+ .debug_rnglists
+                0x0000000000001031       0x56 build/kernel/kthread.o
+ .debug_rnglists
+                0x0000000000001087      0x165 build/proc/process.o
+ .debug_rnglists
+                0x00000000000011ec       0x8d build/proc/scheduler.o
+ .debug_rnglists
+                0x0000000000001279       0x7e build/proc/fork.o
+ .debug_rnglists
+                0x00000000000012f7      0x329 build/proc/exec.o
+ .debug_rnglists
+                0x0000000000001620      0x160 build/fs/vfs.o
+ .debug_rnglists
+                0x0000000000001780       0x85 build/fs/inode.o
+ .debug_rnglists
+                0x0000000000001805      0x126 build/fs/dentry.o
+ .debug_rnglists
+                0x000000000000192b       0x47 build/fs/file.o
+ .debug_rnglists
+                0x0000000000001972       0x17 build/fs/axiomfs/super.o
+ .debug_rnglists
+                0x0000000000001989       0x9f build/fs/axiomfs/inode.o
+ .debug_rnglists
+                0x0000000000001a28       0x22 build/fs/axiomfs/dir.o
+ .debug_rnglists
+                0x0000000000001a4a       0x42 build/fs/axiomfs/file.o
+ .debug_rnglists
+                0x0000000000001a8c      0x128 build/fs/axiomfs/policy_ipc.o
+ .debug_rnglists
+                0x0000000000001bb4       0xd8 build/fs/axiomfs/cache.o
+ .debug_rnglists
+                0x0000000000001c8c       0xb6 build/fs/devfs/devfs.o
+ .debug_rnglists
+                0x0000000000001d42       0x8a build/ipc/msgqueue.o
+ .debug_rnglists
+                0x0000000000001dcc       0xc3 build/ipc/axiomd_channel.o
+ .debug_rnglists
+                0x0000000000001e8f       0x3d build/ipc/shm.o
+ .debug_rnglists
+                0x0000000000001ecc       0x92 build/sysctl/sysctl.o
+ .debug_rnglists
+                0x0000000000001f5e       0x70 build/sysctl/nodes.o
+ .debug_rnglists
+                0x0000000000001fce       0x27 build/sysctl/handlers.o
+ .debug_rnglists
+                0x0000000000001ff5       0x6c build/lib/string.o
+ .debug_rnglists
+                0x0000000000002061      0x255 build/lib/printf.o
+ .debug_rnglists
+                0x00000000000022b6       0x22 build/lib/bitmap.o
+ .debug_rnglists
+                0x00000000000022d8      0x17a build/lib/rbtree.o
+
+.debug_line     0x0000000000000000    0x17044
+ .debug_line    0x0000000000000000      0x1f2 build/arch/x86_64/boot/gdt.o
+ .debug_line    0x00000000000001f2      0x640 build/arch/x86_64/boot/idt.o
+ .debug_line    0x0000000000000832      0x286 build/arch/x86_64/cpu.o
+ .debug_line    0x0000000000000ab8      0x111 build/arch/x86_64/io/port.o
+ .debug_line    0x0000000000000bc9      0x4a7 build/arch/x86_64/io/uart.o
+ .debug_line    0x0000000000001070      0xa0e build/arch/x86_64/mm/paging.o
+ .debug_line    0x0000000000001a7e      0x2e6 build/arch/x86_64/mm/physmem.o
+ .debug_line    0x0000000000001d64     0x3162 build/arch/x86_64/process/syscall.o
+ .debug_line    0x0000000000004ec6      0x85b build/mm/pmm.o
+ .debug_line    0x0000000000005721     0x113a build/mm/vmm.o
+ .debug_line    0x000000000000685b      0xfd4 build/mm/kmalloc.o
+ .debug_line    0x000000000000782f      0x3c2 build/kernel/main.o
+ .debug_line    0x0000000000007bf1      0x280 build/kernel/bootinfo.o
+ .debug_line    0x0000000000007e71      0x7f8 build/kernel/initramfs.o
+ .debug_line    0x0000000000008669      0x183 build/kernel/time.o
+ .debug_line    0x00000000000087ec      0x2a7 build/kernel/panic.o
+ .debug_line    0x0000000000008a93      0xcda build/kernel/printk.o
+ .debug_line    0x000000000000976d      0x383 build/kernel/kthread.o
+ .debug_line    0x0000000000009af0      0xe6c build/proc/process.o
+ .debug_line    0x000000000000a95c      0xab7 build/proc/scheduler.o
+ .debug_line    0x000000000000b413      0x42e build/proc/fork.o
+ .debug_line    0x000000000000b841     0x156c build/proc/exec.o
+ .debug_line    0x000000000000cdad     0x12b7 build/fs/vfs.o
+ .debug_line    0x000000000000e064      0x93e build/fs/inode.o
+ .debug_line    0x000000000000e9a2      0x827 build/fs/dentry.o
+ .debug_line    0x000000000000f1c9      0x4b5 build/fs/file.o
+ .debug_line    0x000000000000f67e      0x2e1 build/fs/axiomfs/super.o
+ .debug_line    0x000000000000f95f      0xb41 build/fs/axiomfs/inode.o
+ .debug_line    0x00000000000104a0      0x257 build/fs/axiomfs/dir.o
+ .debug_line    0x00000000000106f7      0x49e build/fs/axiomfs/file.o
+ .debug_line    0x0000000000010b95      0x9ec build/fs/axiomfs/policy_ipc.o
+ .debug_line    0x0000000000011581      0x5b9 build/fs/axiomfs/cache.o
+ .debug_line    0x0000000000011b3a      0x689 build/fs/devfs/devfs.o
+ .debug_line    0x00000000000121c3      0x5c1 build/ipc/msgqueue.o
+ .debug_line    0x0000000000012784      0x52e build/ipc/axiomd_channel.o
+ .debug_line    0x0000000000012cb2      0x553 build/ipc/shm.o
+ .debug_line    0x0000000000013205      0xb9b build/sysctl/sysctl.o
+ .debug_line    0x0000000000013da0      0x3c7 build/sysctl/nodes.o
+ .debug_line    0x0000000000014167      0x3f2 build/sysctl/handlers.o
+ .debug_line    0x0000000000014559      0xc29 build/lib/string.o
+ .debug_line    0x0000000000015182      0xd86 build/lib/printf.o
+ .debug_line    0x0000000000015f08      0x4e8 build/lib/bitmap.o
+ .debug_line    0x00000000000163f0      0x9c8 build/lib/rbtree.o
+ .debug_line    0x0000000000016db8       0xb3 build/arch/x86_64/boot/boot.o
+ .debug_line    0x0000000000016e6b      0x138 build/arch/x86_64/boot/interrupt.o
+ .debug_line    0x0000000000016fa3       0xa1 build/arch/x86_64/process/context.o
+
+.debug_str      0x0000000000000000     0x495e
+ .debug_str     0x0000000000000000     0x495e build/arch/x86_64/boot/gdt.o
+                                        0x2ed (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/boot/idt.o
+                                        0x9ea (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/cpu.o
+                                        0x278 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/io/port.o
+                                        0x1ab (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/io/uart.o
+                                        0x225 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/mm/paging.o
+                                        0x398 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/mm/physmem.o
+                                        0x324 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/process/syscall.o
+                                       0x1510 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/mm/pmm.o
+                                        0x400 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/mm/vmm.o
+                                        0xecd (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/mm/kmalloc.o
+                                        0x584 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/main.o
+                                        0xe02 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/bootinfo.o
+                                        0x2a1 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/initramfs.o
+                                        0x8e9 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/time.o
+                                        0x17b (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/panic.o
+                                        0x27a (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/printk.o
+                                        0x390 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/kernel/kthread.o
+                                        0x4ee (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/proc/process.o
+                                        0xe8d (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/proc/scheduler.o
+                                        0x9a6 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/proc/fork.o
+                                        0x70e (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/proc/exec.o
+                                        0xfa8 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/vfs.o
+                                        0xa8d (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/inode.o
+                                        0xd29 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/dentry.o
+                                        0x87f (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/file.o
+                                        0xc67 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/axiomfs/super.o
+                                        0xa67 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/axiomfs/inode.o
+                                        0xf9f (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/axiomfs/dir.o
+                                        0xae8 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/axiomfs/file.o
+                                        0xc70 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/axiomfs/policy_ipc.o
+                                        0x53b (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/axiomfs/cache.o
+                                        0xa8b (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/fs/devfs/devfs.o
+                                        0x905 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/ipc/msgqueue.o
+                                        0x80d (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/ipc/axiomd_channel.o
+                                        0x550 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/ipc/shm.o
+                                        0x682 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/sysctl/sysctl.o
+                                        0x500 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/sysctl/nodes.o
+                                        0x468 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/sysctl/handlers.o
+                                        0x2bf (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/lib/string.o
+                                        0x27c (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/lib/printf.o
+                                        0x345 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/lib/bitmap.o
+                                        0x278 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/lib/rbtree.o
+                                        0x237 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/boot/boot.o
+                                         0x4f (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/boot/interrupt.o
+                                         0x54 (size before relaxing)
+ .debug_str     0x000000000000495e        0x0 build/arch/x86_64/process/context.o
+                                         0x55 (size before relaxing)
+
+.debug_line_str
+                0x0000000000000000      0x4ee
+ .debug_line_str
+                0x0000000000000000      0x4ee build/arch/x86_64/boot/gdt.o
+                                         0xa9 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/boot/idt.o
+                                        0x10b (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/cpu.o
+                                         0xc7 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/io/port.o
+                                         0x9f (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/io/uart.o
+                                         0xc0 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/mm/paging.o
+                                         0xeb (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/mm/physmem.o
+                                         0xc7 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/arch/x86_64/process/syscall.o
+                                        0x188 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/mm/pmm.o
+                                         0xa3 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/mm/vmm.o
+                                        0x10f (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/mm/kmalloc.o
+                                         0xb9 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/main.o
+                                        0x164 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/bootinfo.o
+                                         0xaf (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/initramfs.o
+                                         0xcc (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/time.o
+                                         0xb0 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/panic.o
+                                         0xfd (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/printk.o
+                                         0xdf (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/kernel/kthread.o
+                                        0x13e (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/proc/process.o
+                                        0x132 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/proc/scheduler.o
+                                        0x111 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/proc/fork.o
+                                         0xfc (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/proc/exec.o
+                                        0x114 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/vfs.o
+                                         0xcc (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/inode.o
+                                        0x11d (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/dentry.o
+                                         0xc6 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/file.o
+                                        0x113 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/axiomfs/super.o
+                                        0x112 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/axiomfs/inode.o
+                                        0x157 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/axiomfs/dir.o
+                                        0x135 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/axiomfs/file.o
+                                        0x154 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/axiomfs/policy_ipc.o
+                                        0x10d (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/axiomfs/cache.o
+                                         0xfa (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/fs/devfs/devfs.o
+                                         0xd7 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/ipc/msgqueue.o
+                                        0x121 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/ipc/axiomd_channel.o
+                                         0xf0 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/ipc/shm.o
+                                         0xfb (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/sysctl/sysctl.o
+                                         0xd9 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/sysctl/nodes.o
+                                        0x113 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/sysctl/handlers.o
+                                         0xc5 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/lib/string.o
+                                         0x98 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/lib/printf.o
+                                         0xd9 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/lib/bitmap.o
+                                         0x98 (size before relaxing)
+ .debug_line_str
+                0x00000000000004ee        0x0 build/lib/rbtree.o
+                                         0x8f (size before relaxing)
