@@ -100,6 +100,7 @@ for Obelisk currently means:
 
 See `docs/RELEASE_CHECKLIST.md` and `docs/ROADMAP.md` for planned milestones.
 Installer details are documented in `docs/INSTALLER.md`.
+Current command support/limitations are documented in `docs/USERLAND_COMMANDS.md`.
 
 ## Optional Userland Overlay
 

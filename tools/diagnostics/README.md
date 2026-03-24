@@ -51,3 +51,33 @@ make diag-triage-repro CMD="sudo ls" BOOT_WAIT=25 POST_WAIT=10 TIMEOUT=240
 ```
 
 This injects a command into the serial console, captures output, extracts the panic block, and symbolicates addresses automatically.
+
+## Regression validation (consolidation phase)
+
+Run the deterministic smoke validation suite:
+
+```bash
+make validate-regression TIMEOUT=200
+```
+
+This checks the core "stable minimal UNIX-like" flow:
+- boot to shell prompt
+- `ls` / `ls -l`
+- `touch` / `write` / `cat` / `rm`
+- `mkdir` / `rmdir`
+- `sysctl -a`
+- `head <file>`
+- `wc <file>`
+- `users`
+
+If any required output is missing (or panic/not-found markers appear), the target fails and prints the saved log path.
+
+## Demo smoke run
+
+For a short non-gating demo script:
+
+```bash
+make demo-smoke TIMEOUT=180
+```
+
+This captures a guided command sequence log under `build/diagnostics/`.

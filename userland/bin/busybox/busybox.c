@@ -948,6 +948,11 @@ static int parse_n_option(int argc, char **argv, int *first_file, int *n_out, co
     return 0;
 }
 
+static int arg_is_help(const char *s) {
+    if (!s) return 0;
+    return (str_cmp(s, "-h") == 0 || str_cmp(s, "--help") == 0);
+}
+
 static void applet_head_stream_fd(long fd, int nlines) {
     if (nlines <= 0) return;
     char buf[256];
@@ -955,6 +960,9 @@ static void applet_head_stream_fd(long fd, int nlines) {
     while (1) {
         long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
         if (n < 0) {
+            if (n == -4) { /* EINTR */
+                continue;
+            }
             print_errno("head", n);
             return;
         }
@@ -974,6 +982,10 @@ static void applet_head_stream_fd(long fd, int nlines) {
 }
 
 static void applet_head(int argc, char **argv) {
+    if (argc > 1 && arg_is_help(argv[1])) {
+        write_str("usage: head [-n N] [file...]\n");
+        return;
+    }
     int first = 1;
     int nlines = 10;
     if (parse_n_option(argc, argv, &first, &nlines, "head") < 0) {
@@ -1022,6 +1034,9 @@ static void applet_tail_stream_fd(long fd, int nlines) {
         char buf[256];
         long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
         if (n < 0) {
+            if (n == -4) { /* EINTR */
+                continue;
+            }
             print_errno("tail", n);
             return;
         }
@@ -1046,6 +1061,10 @@ static void applet_tail_stream_fd(long fd, int nlines) {
 }
 
 static void applet_tail(int argc, char **argv) {
+    if (argc > 1 && arg_is_help(argv[1])) {
+        write_str("usage: tail [-n N] [file...]\n");
+        return;
+    }
     int first = 1;
     int nlines = 10;
     if (parse_n_option(argc, argv, &first, &nlines, "tail") < 0) {
@@ -1072,6 +1091,9 @@ static void wc_stream_fd(long fd, uint64_t *lines, uint64_t *words, uint64_t *by
     while (1) {
         long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
         if (n < 0) {
+            if (n == -4) { /* EINTR */
+                continue;
+            }
             print_errno("wc", n);
             return;
         }
@@ -1113,6 +1135,10 @@ static void wc_print_counts(int show_l, int show_w, int show_c,
 }
 
 static void applet_wc(int argc, char **argv) {
+    if (argc > 1 && arg_is_help(argv[1])) {
+        write_str("usage: wc [-lwc] [file...]\n");
+        return;
+    }
     int show_l = 0, show_w = 0, show_c = 0;
     int first = 1;
     while (first < argc && argv[first][0] == '-' && argv[first][1] != '\0') {
@@ -1159,6 +1185,9 @@ static void cut_stream_fd(long fd, char delim, int field) {
         char c = 0;
         long n = syscall3(SYS_READ, fd, (long)&c, 1);
         if (n < 0) {
+            if (n == -4) { /* EINTR */
+                continue;
+            }
             print_errno("cut", n);
             return;
         }
@@ -1215,6 +1244,10 @@ static void cut_stream_fd(long fd, char delim, int field) {
 }
 
 static void applet_cut(int argc, char **argv) {
+    if (argc > 1 && arg_is_help(argv[1])) {
+        write_str("usage: cut -d <char> -f <field> [file...]\n");
+        return;
+    }
     int first = 1;
     char delim = '\t';
     int field = 0;
@@ -1380,6 +1413,7 @@ static void applet_stat(int argc, char **argv) {
 static int run_external(char **args);
 static int run_shell(const char *prompt);
 static int try_exec_external(char **args);
+static void report_exec_failure(const char *cmd, int ret);
 static int applet_main(const char *name, int argc, char **argv);
 
 static int is_builtin_applet_name(const char *name) {
@@ -2027,10 +2061,10 @@ static int applet_su(int argc, char **argv) {
                 int rc = applet_main(cmd_argv[0], cmd_argc, cmd_argv);
                 syscall1(SYS_EXIT, rc);
             }
-            if (try_exec_external(cmd_argv) < 0) {
-                write_str(cmd_argv[0]);
-                write_str(": command not found\n");
-                syscall1(SYS_EXIT, 127);
+            int erc = try_exec_external(cmd_argv);
+            if (erc < 0) {
+                report_exec_failure(cmd_argv[0], erc);
+                syscall1(SYS_EXIT, (erc == -2) ? 127 : 1);
             }
             __builtin_unreachable();
         }
@@ -2075,10 +2109,10 @@ static int applet_sudo(int argc, char **argv) {
                 syscall1(SYS_EXIT, rc);
             }
         }
-        if (try_exec_external(&argv[1]) < 0) {
-            write_str(argv[1]);
-            write_str(": command not found\n");
-            syscall1(SYS_EXIT, 127);
+        int erc = try_exec_external(&argv[1]);
+        if (erc < 0) {
+            report_exec_failure(argv[1], erc);
+            syscall1(SYS_EXIT, (erc == -2) ? 127 : 1);
         }
         __builtin_unreachable();
     }
@@ -2476,6 +2510,15 @@ static int exec_with_sh_fallback(const char *path, char **args) {
     return (int)syscall3(SYS_EXECVE, (long)"/bin/sh", (long)sh_argv, (long)shell_envp);
 }
 
+static void report_exec_failure(const char *cmd, int ret) {
+    if (ret == -2) { /* ENOENT */
+        write_str(cmd);
+        write_str(": command not found\n");
+    } else {
+        print_errno(cmd, ret);
+    }
+}
+
 static int try_exec_external(char **args) {
     if (!args || !args[0] || args[0][0] == '\0') return -1;
 
@@ -2503,6 +2546,7 @@ static int try_exec_external(char **args) {
     }
 
     static const char *paths[] = { "/bin", "/sbin", "/usr/bin" };
+    int last_err = -2; /* ENOENT by default */
     char candidate[256];
     for (int i = 0; i < 3; i++) {
         size_t dlen = str_len(paths[i]);
@@ -2513,8 +2557,11 @@ static int try_exec_external(char **args) {
         str_copy(candidate + dlen + 1, args[0], sizeof(candidate) - dlen - 1);
         long ret = exec_with_sh_fallback(candidate, args);
         if (ret >= 0) return 0;
+        if (ret != -2) {
+            last_err = (int)ret;
+        }
     }
-    return -1;
+    return last_err;
 }
 
 static int run_external(char **args) {
@@ -2524,10 +2571,10 @@ static int run_external(char **args) {
         return -1;
     }
     if (pid == 0) {
-        if (try_exec_external(args) < 0) {
-            write_str(args[0]);
-            write_str(": command not found\n");
-            syscall1(SYS_EXIT, 127);
+        int erc = try_exec_external(args);
+        if (erc < 0) {
+            report_exec_failure(args[0], erc);
+            syscall1(SYS_EXIT, (erc == -2) ? 127 : 1);
         }
         __builtin_unreachable();
     }

@@ -216,6 +216,14 @@ diag-triage-repro:
 	@MODE=repro REPRO_CMD="$(or $(CMD),sudo ls)" BOOT_WAIT_SEC="$(or $(BOOT_WAIT),25)" POST_CMD_WAIT_SEC="$(or $(POST_WAIT),10)" \
 		bash "$(DIAG_DIR)/triage-panic.sh" "$(or $(TIMEOUT),240)"
 
+.PHONY: validate-regression
+validate-regression:
+	@bash "$(DIAG_DIR)/smoke-regression.sh" "$(or $(TIMEOUT),200)"
+
+.PHONY: demo-smoke
+demo-smoke:
+	@bash "$(DIAG_DIR)/demo-smoke.sh" "$(or $(TIMEOUT),180)"
+
 # Clean everything
 .PHONY: clean
 clean:
@@ -246,6 +254,8 @@ help:
 	@echo "  diag-symbolicate - Map panic addresses to symbols (LOG=<path>)"
 	@echo "  diag-triage      - Capture + extract + symbolicate in one step"
 	@echo "  diag-triage-repro - Repro capture + extract + symbolicate in one step"
+	@echo "  validate-regression - Run boot/userland smoke regression suite"
+	@echo "  demo-smoke   - Run a short guided demo command sequence"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  help       - Show this help message"
 	@echo ""

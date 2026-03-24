@@ -1,0 +1,11 @@
+# obeliskd service unit
+
+name=identity
+description=show default user identity at boot
+autostart=yes
+oneshot=yes
+restart=never
+user=obelisk
+uid=1000
+gid=1000
+exec=/bin/id

@@ -29,6 +29,17 @@ milestones.
 - Stable userspace `sysctl` tooling for read/write operations
 - Compatibility plan for optional procfs (installer-selectable)
 
+## Current Consolidation Gate (post-M3)
+
+- Regression target validates stable boot + core userland workflow
+- Command behavior is predictable: either real work or explicit error/usage
+- Documented supported command set + known limitations
+
+## Next Major Subsystem (single-track)
+
+- Shell pipeline plumbing (`|`) as the next focused subsystem
+- Defer full login/passwd and `/proc` expansion until after pipe stability
+
 ## M4 - Appliance/NAS Features
 
 - Minimal network stack suitable for storage appliance workloads

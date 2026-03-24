@@ -1,0 +1,299 @@
+make[1]: Entering directory '/home/robertsolus/Desktop/obelisk'
+Building kernel...
+make[2]: Entering directory '/home/robertsolus/Desktop/obelisk/kernel'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/home/robertsolus/Desktop/obelisk/kernel'
+Building userland...
+make[2]: Entering directory '/home/robertsolus/Desktop/obelisk/userland'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/home/robertsolus/Desktop/obelisk/userland'
+Packaging root filesystem...
+Applying rootfs overlay from rootfs-overlay...
+Creating ISO image...
+GNU xorriso 1.5.6.pl02 : RockRidge filesystem manipulator, libburnia project.
+
+Drive current: -outdev 'stdio:build/obelisk.iso'
+Media current: stdio file, overwriteable
+Media status : is blank
+Media summary: 0 sessions, 0 data blocks, 0 data, 59.7g free
+Added to ISO image: directory '/'='/tmp/grub.Dk3cHC'
+xorriso : UPDATE :     290 files added in 1 seconds
+Added to ISO image: directory '/'='/home/robertsolus/Desktop/obelisk/build/iso'
+xorriso : UPDATE :     295 files added in 1 seconds
+xorriso : NOTE : Copying to System Area: 512 bytes from file '/usr/lib64/grub/i386-pc/boot_hybrid.img'
+ISO image produced: 5555 sectors
+Written to medium : 5555 sectors at LBA 0
+Writing to 'stdio:build/obelisk.iso' completed successfully.
+
+ISO created: build/obelisk.iso
+Starting QEMU with terminal serial console...
+Tip: Ctrl+C now goes to guest UART, not host kill.
+QEMU quit keys: Ctrl+A then X
+c[?7l[2J[0mSeaBIOS (version rel-1.17.0-0-gb52ca86e094d-prebuilt.qemu.org)
+
+
+iPXE (http://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+1EFD1EC0+1EF31EC0 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from Hard Disk...
+Boot failed: could not read the boot disk
+
+Booting from Floppy...
+Boot failed: could not read the boot disk
+
+Booting from DVD/CD...
+[0;30;47mWelcome to GRUB!
+
+[01;01H[0m[2J[02;30HGNU GRUB  version 2.12[04;02H┌────────────────────────────────────────────────────────────────────────────┐[05;02H│[05;79H│[06;02H│[06;79H│[07;02H│[07;79H│[08;02H│[08;79H│[09;02H│[09;79H│[10;02H│[10;79H│[11;02H│[11;79H│[12;02H│[12;79H│[13;02H│[13;79H│[14;02H│[14;79H│[15;02H│[15;79H│[16;02H│[16;79H│[17;02H│[17;79H│[18;02H└────────────────────────────────────────────────────────────────────────────┘[20;02H     Use the ↑ and ↓ keys to select which entry is highlighted.          
+      Press enter to boot the selected OS, `e' to edit the commands       
+      before booting or `c' for a command-line.                           [05;80H [05;03H[0;30;47m*Obelisk OS                                                                 [06;03H[0m Obelisk OS (Debug Mode)                                                    [07;03H Obelisk OS (Safe Mode)                                                     [08;03H Obelisk OS Installer (TUI)                                                 [09;03H Obelisk OS Installer (CLI)                                                 [10;03H      [10;08H[10;09H                                                                      [11;03H                                                                            [12;03H                                                                            [13;03H                                                                            [14;03H                                                                            [15;03H                                                                            [16;03H                                                                            [17;03H                                                                            [17;80H 
+
+
+
+
+
+   The highlighted entry will be executed automatically in 3s.                 [05;78H
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   The highl[23;12H[23;13Highted entry will be executed automatically in 2s.                 [05;78H
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   The highlighted entry will be executed automatically in 1s.                 [05;78H
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   The highlighted entry will be executed automatically in 0s.                 [01;01H[2J[2J  Booting `Obelisk OS'
+
+
+  ____  _          _ _     _       ___  ____  
+ / __ \| |        | (_)   | |     / _ \/ ___| 
+| |  | | |__   ___| |_ ___| | __ | | | \___ \ 
+| |  | | '_ \ / _ \ | / __| |/ / | | | |___) |
+| |__| | |_) |  __/ | \__ \   <  | |_| |____/ 
+ \____/|_.__/ \___|_|_|___/_|\_\  \___/|_____| 
+
+  From Axioms, Order.
+  Version 0.1.0 (Axiom)
+
+Early initialization...
+Multiboot magic: 0x36d76289
+Multiboot info at: 0x1000b0
+Initializing CPU...
+CPU control: CR0=0x80000033 CR4=0x620
+Initializing GDT...
+GDT initialized: 7 entries, TSS at 0xffffffff80133000
+Initializing IDT...
+IDT initialized: 256 entries
+Initializing syscall interface...
+syscall: fast SYSCALL/SYSRET path disabled, using INT 0x80 ABI
+Syscall interface initialized (404 syscalls registered)
+CPU initialized.
+Initializing memory subsystem...
+Initializing physical memory manager...
+Parsing Multiboot2 information at 0x00000000001000b0
+Kernel: 0x100000 - 0x229000 (1188 KB)
+Memory map:
+  0x0000000000000000 - 0x000000000009fbff: Available (0 MB)
+  0x000000000009fc00 - 0x000000000009ffff: Reserved (0 MB)
+  0x00000000000f0000 - 0x00000000000fffff: Reserved (0 MB)
+  0x0000000000100000 - 0x000000001ffdffff: Available (510 MB)
+  0x000000001ffe0000 - 0x000000001fffffff: Reserved (0 MB)
+  0x00000000fffc0000 - 0x00000000ffffffff: Reserved (0 MB)
+  0x000000fd00000000 - 0x000000ffffffffff: Reserved (12288 MB)
+Total memory: 12799 MB, Usable: 511 MB
+PMM: Bitmap initialized for 268435456 pages (1048576 MB)
+Reserved module memory: 0x230000 - 0xa4b000 (rootfs)
+Physical memory manager initialized
+Physical Memory Statistics:
+  Total: 268435456 pages (1048576 MB)
+  Free:  128412 pages (501 MB)
+  Used:  268307044 pages (1048074 MB)
+  Zone DMA: 4096 total, 1468 free
+  Zone Normal: 1044480 total, 126944 free
+  Zone High: 267386880 total, 0 free
+Initializing virtual memory manager...
+Paging initialized, kernel PML4 at 0x103000
+VMM initialized
+Initializing kernel memory allocator...
+Early heap: 0xffff888001000000 - 0xffff888001100000
+Created cache 'kmalloc-8': obj_size=8, aligned=8, per_slab=449
+Created cache 'kmalloc-16': obj_size=16, aligned=16, per_slab=238
+Created cache 'kmalloc-32': obj_size=32, aligned=32, per_slab=122
+Created cache 'kmalloc-64': obj_size=64, aligned=64, per_slab=62
+Created cache 'kmalloc-128': obj_size=128, aligned=128, per_slab=31
+Created cache 'kmalloc-256': obj_size=256, aligned=256, per_slab=15
+Created cache 'kmalloc-512': obj_size=512, aligned=512, per_slab=7
+Created cache 'kmalloc-1024': obj_size=1024, aligned=1024, per_slab=7
+Created cache 'kmalloc-2048': obj_size=2048, aligned=2048, per_slab=3
+Created cache 'kmalloc-4096': obj_size=4096, aligned=4096, per_slab=1
+Created cache 'kmalloc-8192': obj_size=8192, aligned=8192, per_slab=1
+Slab allocator initialized with 11 size classes
+Memory subsystem initialized.
+Initializing process management...
+Initializing process management...
+Created cache 'process': obj_size=6048, aligned=6048, per_slab=1
+Created idle process (pid=1)
+Created init process (pid=2)
+Process management initialized
+Initializing scheduler...
+Registered scheduling policy: round-robin
+Scheduler initialized with policy: round-robin
+Process management initialized.
+Initializing filesystems...
+Initializing VFS...
+Created cache 'inode_cache': obj_size=176, aligned=176, per_slab=22
+Created cache 'dentry_cache': obj_size=352, aligned=352, per_slab=11
+Created cache 'file_cache': obj_size=56, aligned=56, per_slab=71
+VFS initialized
+AxiomFS: Initializing...
+VFS: Registered filesystem 'axiomfs'
+AxiomFS: Initializing policy subsystem...
+AxiomFS: Policy subsystem initialized (daemon=no)
+AxiomFS: Initialized
+VFS: Mounting none at / (type=axiomfs)
+AxiomFS: Mounting nodev
+AxiomFS: Mounted successfully
+AxiomFS: Block size: 4096, Blocks: 1048576, Inodes: 65536
+VFS: Mounted root filesystem
+Initializing devfs...
+VFS: Registered filesystem 'devfs'
+devfs: Registered device 'null' (char, 4096:3)
+devfs: Registered device 'zero' (char, 4096:5)
+devfs: Registered device 'console' (char, 20480:1)
+devfs: Registered device 'tty' (char, 20480:0)
+devfs initialized
+VFS: Mounting none at /dev (type=devfs)
+Filesystems initialized.
+Initializing IPC...
+Initializing message queues...
+Created cache 'ipc_message': obj_size=296, aligned=296, per_slab=13
+Message queues initialized
+Initializing axiomd channel...
+axiomd channel initialized (queues: 0, 1)
+IPC initialized.
+Initializing sysctl...
+Initializing sysctl...
+Created cache 'sysctl_node': obj_size=144, aligned=144, per_slab=27
+sysctl initialized
+sysctl initialized.
+Late initialization...
+initramfs: imported 86 file(s), failed 0
+init: filesystem context set to '/'
+Initializing timer (HZ=100)...
+IRQ 0 received (count=1)
+Timer initialized
+Starting scheduler...
+init: bootstrap started, attempting exec /sbin/init
+
+[36m[1m                /\
+[36m[1m               /  \      obeliskd init
+[36m[1m              / /\ \     From Axioms, Order.
+[36m[1m             / ____ \    modern service bootstrap
+[36m[1m            /_/    \_\
+[2m------------------------------------------------------------
+[0m[32m[ok][0m obeliskd starting
+[32m[ok][0m loaded /etc/obelisk/initd.conf
+[2mprofile=production user=obelisk uid/gid=1000/1000[0m
+[35m[*][0m Launching service graph
+[36m  -> [0mmotd [2m(boot banner and session hint)[0m
+Obelisk shell ready. Type 'help' for commands.
+$ ls
+proc   lib    bin    usr    home   lib64  dev    tmp    var    etc    sbin
+$ ls -l /
+drwxrwxr-x 0 0 proc
+drwxrwxr-x 0 0 lib
+drwxrwxr-x 0 0 bin
+drwxrwxr-x 0 0 usr
+drwxrwxr-x 0 0 home
+drwxrwxr-x 0 0 lib64
+drwxrwxr-x 0 0 dev
+drwxrwxrwx 0 0 tmp
+drwxrwxr-x 0 0 var
+drwxrwxr-x 0 0 etc
+drwxrwxr-x 0 0 sbin
+$ touch /tmp/smoke_file
+$ write /tmp/smoke_file "hello smoke"
+$ cat /tmp/smoke_file
+hello smoke
+$ rm /tmp/smoke_file
+$ mkdir /tmp/smoke_dir
+$ rmdir /tmp/smoke_dir
+$ sysctl -a
+system.kernel.version = 0.1.0
+system.kernel.ostype = Obelisk
+system.kernel.boot_time = 0
+system.kernel.panic_on_oops = 1
+system.kernel.hostname = obelisk
+system.kernel.domainname = 
+system.kernel.uptime = 6
+system.kernel.context_switches = 4
+system.cpu.count = 1
+system.cpu.frequency = 0
+system.cpu.vendor = AuthenticAMD
+system.cpu.model = QEMU Virtual CPU version 2.5+
+system.memory.total = 536342528
+system.memory.free = 471810048
+system.memory.cached = 0
+system.scheduler.policy = round-robin
+system.scheduler.timeslice = 10
+system.fs.axiomfs.cache_timeout = 100
+system.fs.axiomfs.cache_size = 65536
+system.fs.axiomfs.daemon_timeout = 100
+system.fs.axiomfs.policy_enabled = true
+$ head /etc/motd
+Obelisk OS early userspace image
+Use /sbin/installer or /sbin/installer-tui to stage an installation.
+Static-only default image. Host zsh/coreutils import is disabled unless IMPORT_HOST_USERLAND=1.
+$ wc /etc/motd
+3 23 198 /etc/motd
+$ users
+root
+$ echo __SMOKE_DONE__
+__SMOKE_DONE__
+$ QEMU: Terminated
+make[1]: Leaving directory '/home/robertsolus/Desktop/obelisk'
