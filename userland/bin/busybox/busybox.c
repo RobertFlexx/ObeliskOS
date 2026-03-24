@@ -1,0 +1,1604 @@
+/*
+ * Obelisk OS - Minimal BusyBox-style Userland
+ * From Axioms, Order.
+ */
+
+#include <stdint.h>
+#include <stddef.h>
+
+typedef long ssize_t;
+
+#define SYS_READ    0
+#define SYS_WRITE   1
+#define SYS_OPEN    2
+#define SYS_CLOSE   3
+#define SYS_DUP     32
+#define SYS_DUP2    33
+#define SYS_FORK    57
+#define SYS_EXECVE  59
+#define SYS_EXIT    60
+#define SYS_WAIT4   61
+#define SYS_UNAME   63
+#define SYS_GETDENTS64 217
+#define SYS_GETCWD  79
+#define SYS_CHDIR   80
+#define SYS_MKDIR   83
+#define SYS_RMDIR   84
+#define SYS_UNLINK  87
+#define SYS_GETUID  102
+#define SYS_GETEUID 107
+#define SYS_SETUID  105
+#define SYS_SETGID  106
+#define SYS_REBOOT  169
+
+#define O_RDONLY    0x0000
+#define O_WRONLY    0x0001
+#define O_CREAT     0x0040
+#define O_APPEND    0x0400
+#define O_TRUNC     0x0200
+#define O_DIRECTORY 0x10000
+
+struct linux_dirent64 {
+    uint64_t d_ino;
+    int64_t  d_off;
+    uint16_t d_reclen;
+    uint8_t  d_type;
+    char     d_name[];
+} __attribute__((packed));
+
+static char *const shell_envp[] = {
+    "PATH=/bin:/sbin:/usr/bin",
+    "HOME=/",
+    "SHELL=/bin/sh",
+    "TERM=vt100",
+    NULL
+};
+
+struct utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+    char domainname[65];
+};
+
+static inline long syscall0(long num) {
+    long ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num)
+        : "cc", "memory"
+    );
+    return ret;
+}
+
+static inline long syscall1(long num, long arg1) {
+    long ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1)
+        : "cc", "memory"
+    );
+    return ret;
+}
+
+static inline long syscall2(long num, long arg1, long arg2) {
+    long ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1), "S"(arg2)
+        : "cc", "memory"
+    );
+    return ret;
+}
+
+static inline long syscall3(long num, long arg1, long arg2, long arg3) {
+    long ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3)
+        : "cc", "memory"
+    );
+    return ret;
+}
+
+static inline long syscall4(long num, long arg1, long arg2, long arg3, long arg4) {
+    long ret;
+    register long r10 __asm__("r10") = arg4;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10)
+        : "cc", "memory"
+    );
+    return ret;
+}
+
+static size_t str_len(const char *s) {
+    size_t len = 0;
+    while (s && s[len]) {
+        len++;
+    }
+    return len;
+}
+
+static int str_cmp(const char *a, const char *b) {
+    while (*a && *b && *a == *b) {
+        a++;
+        b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+static int str_ncmp(const char *a, const char *b, size_t n) {
+    while (n > 0 && *a && *b && *a == *b) {
+        a++;
+        b++;
+        n--;
+    }
+    if (n == 0) return 0;
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+static void str_copy(char *dst, const char *src, size_t cap) {
+    size_t i = 0;
+    if (cap == 0) return;
+    while (i + 1 < cap && src[i]) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static void write_ch(char c) {
+    syscall3(SYS_WRITE, 1, (long)&c, 1);
+}
+
+static const char *base_name(const char *path) {
+    const char *name = path;
+    while (*path) {
+        if (*path == '/') {
+            name = path + 1;
+        }
+        path++;
+    }
+    return name;
+}
+
+static void write_str(const char *s) {
+    syscall3(SYS_WRITE, 1, (long)s, (long)str_len(s));
+}
+
+static int split_words_shell(char *line, char **argv, int max_args) {
+    int argc = 0;
+    char *p = line;
+    while (*p && argc < max_args) {
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        if (!*p) {
+            break;
+        }
+        char *dst = p;
+        argv[argc++] = dst;
+        int in_single = 0;
+        int in_double = 0;
+        while (*p) {
+            char c = *p++;
+            if (!in_single && c == '"' ) {
+                in_double = !in_double;
+                continue;
+            }
+            if (!in_double && c == '\'') {
+                in_single = !in_single;
+                continue;
+            }
+            if (!in_single && c == '\\' && *p) {
+                *dst++ = *p++;
+                continue;
+            }
+            if (!in_single && !in_double && (c == ' ' || c == '\t')) {
+                break;
+            }
+            *dst++ = c;
+        }
+        *dst = '\0';
+    }
+    return argc;
+}
+
+static void print_errno(const char *op, long err) {
+    write_str(op);
+    write_str(": failed (");
+    if (err < 0) {
+        err = -err;
+    }
+    char tmp[24];
+    int n = 0;
+    if (err == 0) {
+        tmp[n++] = '0';
+    } else {
+        char rev[24];
+        int r = 0;
+        while (err > 0 && r < (int)sizeof(rev)) {
+            rev[r++] = (char)('0' + (err % 10));
+            err /= 10;
+        }
+        while (r > 0) {
+            tmp[n++] = rev[--r];
+        }
+    }
+    tmp[n] = '\0';
+    write_str(tmp);
+    write_str(")\n");
+}
+
+static void applet_pwd(void) {
+    char buf[256];
+    long ret = syscall2(SYS_GETCWD, (long)buf, sizeof(buf));
+    if (ret < 0) {
+        print_errno("pwd", ret);
+        return;
+    }
+    write_str(buf);
+    write_str("\n");
+}
+
+static void applet_cd(int argc, char **argv) {
+    const char *path = (argc > 1) ? argv[1] : "/";
+    long ret = syscall1(SYS_CHDIR, (long)path);
+    if (ret < 0) {
+        print_errno("cd", ret);
+    }
+}
+
+static void applet_ls(int argc, char **argv) {
+    const char *path = (argc > 1) ? argv[1] : ".";
+    long fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
+    if (fd < 0) {
+        print_errno("ls", fd);
+        return;
+    }
+
+    char buf[1024];
+    while (1) {
+        long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+        if (nread < 0) {
+            print_errno("ls", nread);
+            break;
+        }
+        if (nread == 0) {
+            break;
+        }
+        long bpos = 0;
+        while (bpos < nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+            if (d->d_name[0] != '.') {
+                write_str(d->d_name);
+                write_ch('\n');
+            }
+            if (d->d_reclen == 0) {
+                break;
+            }
+            bpos += d->d_reclen;
+        }
+    }
+    syscall1(SYS_CLOSE, fd);
+}
+
+static void applet_cat(int argc, char **argv) {
+    if (argc < 2) {
+        char buf[512];
+        while (1) {
+            long n = syscall3(SYS_READ, 0, (long)buf, sizeof(buf));
+            if (n < 0) {
+                if (n == -4) { /* EINTR */
+                    continue;
+                }
+                print_errno("cat", n);
+                break;
+            }
+            if (n == 0) {
+                break;
+            }
+            syscall3(SYS_WRITE, 1, (long)buf, n);
+        }
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        long fd = syscall3(SYS_OPEN, (long)argv[i], O_RDONLY, 0);
+        if (fd < 0) {
+            print_errno("cat", fd);
+            continue;
+        }
+        char buf[512];
+        while (1) {
+            long n = syscall3(SYS_READ, fd, (long)buf, sizeof(buf));
+            if (n < 0) {
+                print_errno("cat", n);
+                break;
+            }
+            if (n == 0) {
+                break;
+            }
+            syscall3(SYS_WRITE, 1, (long)buf, n);
+        }
+        syscall1(SYS_CLOSE, fd);
+    }
+}
+
+static void applet_touch(int argc, char **argv) {
+    if (argc < 2) {
+        write_str("touch: missing operand\n");
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        long fd = syscall3(SYS_OPEN, (long)argv[i], O_CREAT | O_WRONLY, 0644);
+        if (fd < 0) {
+            print_errno("touch", fd);
+            continue;
+        }
+        syscall1(SYS_CLOSE, fd);
+    }
+}
+
+static void applet_mkdir(int argc, char **argv) {
+    if (argc < 2) {
+        write_str("mkdir: missing operand\n");
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        long ret = syscall2(SYS_MKDIR, (long)argv[i], 0755);
+        if (ret < 0) {
+            print_errno("mkdir", ret);
+        }
+    }
+}
+
+static int rm_recursive_path(const char *path, int force) {
+    long fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
+    if (fd < 0) {
+        long ret = syscall1(SYS_UNLINK, (long)path);
+        if (ret < 0 && !(force && ret == -2)) { /* ENOENT */
+            print_errno("rm", ret);
+            return (int)ret;
+        }
+        return 0;
+    }
+
+    char buf[1024];
+    while (1) {
+        long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+        if (nread <= 0) break;
+        long bpos = 0;
+        while (bpos < nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+            if (d->d_name[0] &&
+                !(d->d_name[0] == '.' && d->d_name[1] == '\0') &&
+                !(d->d_name[0] == '.' && d->d_name[1] == '.' && d->d_name[2] == '\0')) {
+                char child[512];
+                size_t plen = str_len(path);
+                size_t nlen = str_len(d->d_name);
+                if (plen + 1 + nlen + 1 < sizeof(child)) {
+                    str_copy(child, path, sizeof(child));
+                    if (plen > 0 && child[plen - 1] != '/') {
+                        child[plen++] = '/';
+                        child[plen] = '\0';
+                    }
+                    str_copy(child + plen, d->d_name, sizeof(child) - plen);
+                    rm_recursive_path(child, force);
+                }
+            }
+            if (d->d_reclen == 0) break;
+            bpos += d->d_reclen;
+        }
+    }
+    syscall1(SYS_CLOSE, fd);
+    long ret = syscall1(SYS_RMDIR, (long)path);
+    if (ret < 0 && !(force && ret == -2)) {
+        print_errno("rm", ret);
+        return (int)ret;
+    }
+    return 0;
+}
+
+static void applet_rm(int argc, char **argv) {
+    int recursive = 0;
+    int force = 0;
+    int first = 1;
+    while (first < argc && argv[first][0] == '-') {
+        const char *o = argv[first] + 1;
+        while (*o) {
+            if (*o == 'r' || *o == 'R') recursive = 1;
+            else if (*o == 'f') force = 1;
+            o++;
+        }
+        first++;
+    }
+    if (first >= argc) {
+        write_str("rm: missing operand\n");
+        return;
+    }
+    for (int i = first; i < argc; i++) {
+        long ret = syscall1(SYS_UNLINK, (long)argv[i]);
+        if (ret == -21 && recursive) { /* EISDIR */
+            rm_recursive_path(argv[i], force);
+            continue;
+        }
+        if (ret < 0 && !(force && ret == -2)) { /* ENOENT */
+            print_errno("rm", ret);
+        }
+    }
+}
+
+static void applet_rmdir(int argc, char **argv) {
+    if (argc < 2) {
+        write_str("rmdir: missing operand\n");
+        return;
+    }
+    for (int i = 1; i < argc; i++) {
+        long ret = syscall1(SYS_RMDIR, (long)argv[i]);
+        if (ret < 0) {
+            print_errno("rmdir", ret);
+        }
+    }
+}
+
+static void applet_write(int argc, char **argv) {
+    if (argc < 3) {
+        write_str("write: usage: write <file> <text...>\n");
+        return;
+    }
+    long fd = syscall3(SYS_OPEN, (long)argv[1], O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        print_errno("write", fd);
+        return;
+    }
+    for (int i = 2; i < argc; i++) {
+        const char *p = argv[i];
+        while (*p) {
+            if (p[0] == '\\' && p[1] == 'n') {
+                syscall3(SYS_WRITE, fd, (long)"\n", 1);
+                p += 2;
+                continue;
+            }
+            if (p[0] == '\\' && p[1] == 't') {
+                syscall3(SYS_WRITE, fd, (long)"\t", 1);
+                p += 2;
+                continue;
+            }
+            syscall3(SYS_WRITE, fd, (long)p, 1);
+            p++;
+        }
+        if (i + 1 < argc) {
+            syscall3(SYS_WRITE, fd, (long)" ", 1);
+        }
+    }
+    syscall3(SYS_WRITE, fd, (long)"\n", 1);
+    syscall1(SYS_CLOSE, fd);
+}
+
+static void applet_echo(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        write_str(argv[i]);
+        if (i + 1 < argc) {
+            write_str(" ");
+        }
+    }
+    write_str("\n");
+}
+
+static void applet_uname(void) {
+    struct utsname u;
+    long ret = syscall1(SYS_UNAME, (long)&u);
+    if (ret < 0) {
+        write_str("uname: syscall failed\n");
+        return;
+    }
+    write_str(u.sysname);
+    write_str(" ");
+    write_str(u.release);
+    write_str(" ");
+    write_str(u.machine);
+    write_str("\n");
+}
+
+static void applet_reboot(void) {
+    long ret = syscall4(SYS_REBOOT, 0xfee1dead, 0x28121969, 0x01234567, 0);
+    if (ret < 0) {
+        write_str("reboot: syscall failed\n");
+    }
+}
+
+static void applet_shutdown(void) {
+    long ret = syscall4(SYS_REBOOT, 0xfee1dead, 0x28121969, 0x4321FEDC, 0);
+    if (ret < 0) {
+        write_str("shutdown: syscall failed\n");
+    }
+}
+
+static int run_external(char **args);
+static int run_shell(const char *prompt);
+static int try_exec_external(char **args);
+
+struct user_record {
+    char name[32];
+    char pass[64];
+    unsigned uid;
+    unsigned gid;
+    char shell[64];
+};
+
+static int parse_uint10(const char *s, unsigned *out) {
+    unsigned v = 0;
+    int n = 0;
+    while (s[n] >= '0' && s[n] <= '9') {
+        v = (v * 10u) + (unsigned)(s[n] - '0');
+        n++;
+    }
+    if (n == 0 || s[n] != '\0') return -1;
+    *out = v;
+    return 0;
+}
+
+static int read_small_file(const char *path, char *buf, size_t cap) {
+    long fd = syscall3(SYS_OPEN, (long)path, O_RDONLY, 0);
+    if (fd < 0) return (int)fd;
+    size_t off = 0;
+    while (off + 1 < cap) {
+        long n = syscall3(SYS_READ, fd, (long)(buf + off), (long)(cap - 1 - off));
+        if (n < 0) {
+            syscall1(SYS_CLOSE, fd);
+            return (int)n;
+        }
+        if (n == 0) break;
+        off += (size_t)n;
+    }
+    buf[off] = '\0';
+    syscall1(SYS_CLOSE, fd);
+    return (int)off;
+}
+
+static int split_colon_fields(char *line, char **fields, int max_fields) {
+    int n = 0;
+    char *p = line;
+    while (n < max_fields) {
+        fields[n++] = p;
+        while (*p && *p != ':') p++;
+        if (*p != ':') break;
+        *p++ = '\0';
+    }
+    return n;
+}
+
+static int has_wildcards(const char *s) {
+    for (size_t i = 0; s[i]; i++) {
+        if (s[i] == '*' || s[i] == '?') return 1;
+    }
+    return 0;
+}
+
+static int wildcard_match(const char *pat, const char *s) {
+    if (!*pat) return !*s;
+    if (*pat == '*') {
+        while (*pat == '*') pat++;
+        if (!*pat) return 1;
+        while (*s) {
+            if (wildcard_match(pat, s)) return 1;
+            s++;
+        }
+        return 0;
+    }
+    if (*pat == '?') {
+        return *s ? wildcard_match(pat + 1, s + 1) : 0;
+    }
+    if (*pat != *s) return 0;
+    return wildcard_match(pat + 1, s + 1);
+}
+
+static int expand_globs(char **in, int in_argc, char **out, int out_max,
+                        char scratch[][256], int scratch_max) {
+    int outc = 0;
+    int sc = 0;
+    for (int i = 0; i < in_argc && outc < out_max; i++) {
+        const char *arg = in[i];
+        if (!has_wildcards(arg)) {
+            out[outc++] = in[i];
+            continue;
+        }
+
+        const char *slash = NULL;
+        for (const char *p = arg; *p; p++) {
+            if (*p == '/') slash = p;
+        }
+        char dir[256];
+        char pat[128];
+        int preserve_path = 0;
+        if (slash) {
+            size_t dlen = (size_t)(slash - arg);
+            if (dlen == 0) {
+                str_copy(dir, "/", sizeof(dir));
+            } else {
+                if (dlen >= sizeof(dir)) dlen = sizeof(dir) - 1;
+                for (size_t k = 0; k < dlen; k++) dir[k] = arg[k];
+                dir[dlen] = '\0';
+            }
+            str_copy(pat, slash + 1, sizeof(pat));
+            preserve_path = 1;
+        } else {
+            str_copy(dir, ".", sizeof(dir));
+            str_copy(pat, arg, sizeof(pat));
+        }
+
+        long fd = syscall3(SYS_OPEN, (long)dir, O_RDONLY | O_DIRECTORY, 0);
+        if (fd < 0) {
+            out[outc++] = in[i];
+            continue;
+        }
+
+        int matched = 0;
+        char buf[1024];
+        while (1) {
+            long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+            if (nread <= 0) break;
+            long bpos = 0;
+            while (bpos < nread && outc < out_max && sc < scratch_max) {
+                struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+                if (d->d_name[0] &&
+                    !(d->d_name[0] == '.' && (pat[0] != '.')) &&
+                    wildcard_match(pat, d->d_name)) {
+                    if (preserve_path) {
+                        str_copy(scratch[sc], dir, 256);
+                        size_t dl = str_len(scratch[sc]);
+                        if (dl > 0 && scratch[sc][dl - 1] != '/') {
+                            scratch[sc][dl++] = '/';
+                            scratch[sc][dl] = '\0';
+                        }
+                        str_copy(scratch[sc] + dl, d->d_name, 256 - dl);
+                    } else {
+                        str_copy(scratch[sc], d->d_name, 256);
+                    }
+                    out[outc++] = scratch[sc++];
+                    matched = 1;
+                }
+                if (d->d_reclen == 0) break;
+                bpos += d->d_reclen;
+            }
+        }
+        syscall1(SYS_CLOSE, fd);
+        if (!matched && outc < out_max) {
+            out[outc++] = in[i];
+        }
+    }
+    return outc;
+}
+
+static int parse_redirections(char **args, int argc, char **cmd, int cmd_max,
+                              const char **in_path, const char **out_path, int *append) {
+    int cmdc = 0;
+    *in_path = NULL;
+    *out_path = NULL;
+    *append = 0;
+    for (int i = 0; i < argc; i++) {
+        if (str_cmp(args[i], "<") == 0 || str_cmp(args[i], ">") == 0 || str_cmp(args[i], ">>") == 0) {
+            if (i + 1 >= argc) {
+                write_str("shell: redirection missing file operand\n");
+                return -1;
+            }
+            if (str_cmp(args[i], "<") == 0) {
+                *in_path = args[++i];
+            } else if (str_cmp(args[i], ">>") == 0) {
+                *out_path = args[++i];
+                *append = 1;
+            } else {
+                *out_path = args[++i];
+                *append = 0;
+            }
+            continue;
+        }
+        if (cmdc < cmd_max) {
+            cmd[cmdc++] = args[i];
+        }
+    }
+    return cmdc;
+}
+
+static int apply_redirections(const char *in_path, const char *out_path, int append,
+                              int *saved_in, int *saved_out) {
+    const int CLOSE_RESTORE = -2;
+    *saved_in = -1;
+    *saved_out = -1;
+
+    if (in_path) {
+        long fd = syscall3(SYS_OPEN, (long)in_path, O_RDONLY, 0);
+        if (fd < 0) {
+            print_errno("open", fd);
+            return -1;
+        }
+        *saved_in = (int)syscall1(SYS_DUP, 0);
+        if (*saved_in < 0) {
+            *saved_in = CLOSE_RESTORE;
+        }
+        if (syscall2(SYS_DUP2, fd, 0) < 0) {
+            syscall1(SYS_CLOSE, fd);
+            write_str("shell: failed to redirect stdin\n");
+            return -1;
+        }
+        syscall1(SYS_CLOSE, fd);
+    }
+
+    if (out_path) {
+        long oflags = O_CREAT | O_WRONLY | (append ? O_APPEND : O_TRUNC);
+        long fd = syscall3(SYS_OPEN, (long)out_path, oflags, 0644);
+        if (fd < 0) {
+            print_errno("open", fd);
+            return -1;
+        }
+        *saved_out = (int)syscall1(SYS_DUP, 1);
+        if (*saved_out < 0) {
+            *saved_out = CLOSE_RESTORE;
+        }
+        if (syscall2(SYS_DUP2, fd, 1) < 0) {
+            syscall1(SYS_CLOSE, fd);
+            write_str("shell: failed to redirect stdout\n");
+            return -1;
+        }
+        syscall1(SYS_CLOSE, fd);
+    }
+
+    return 0;
+}
+
+static void restore_redirections(int saved_in, int saved_out) {
+    const int CLOSE_RESTORE = -2;
+    if (saved_in >= 0) {
+        syscall2(SYS_DUP2, saved_in, 0);
+        syscall1(SYS_CLOSE, saved_in);
+    } else if (saved_in == CLOSE_RESTORE) {
+        syscall1(SYS_CLOSE, 0);
+    }
+    if (saved_out >= 0) {
+        syscall2(SYS_DUP2, saved_out, 1);
+        syscall1(SYS_CLOSE, saved_out);
+    } else if (saved_out == CLOSE_RESTORE) {
+        syscall1(SYS_CLOSE, 1);
+    }
+}
+
+static int lookup_user_record(const char *username, struct user_record *out) {
+    char filebuf[4096];
+    int n = read_small_file("/etc/passwd", filebuf, sizeof(filebuf));
+    if (n < 0) return n;
+
+    char *line = filebuf;
+    while (*line) {
+        while (*line == '\n' || *line == '\r') line++;
+        if (!*line) break;
+        char *next = line;
+        while (*next && *next != '\n') next++;
+        if (*next == '\n') *next++ = '\0';
+
+        if (line[0] != '#' && line[0] != '\0') {
+            char *f[7];
+            int nf = split_colon_fields(line, f, 7);
+            if (nf >= 5 && str_cmp(f[0], username) == 0) {
+                unsigned uid = 0, gid = 0;
+                if (parse_uint10(f[2], &uid) < 0 || parse_uint10(f[3], &gid) < 0) {
+                    return -1;
+                }
+                str_copy(out->name, f[0], sizeof(out->name));
+                str_copy(out->pass, f[1], sizeof(out->pass));
+                out->uid = uid;
+                out->gid = gid;
+                if (nf >= 7) str_copy(out->shell, f[6], sizeof(out->shell));
+                else out->shell[0] = '\0';
+                return 0;
+            }
+        }
+        line = next;
+    }
+    return -2;
+}
+
+static int lookup_uid_name(unsigned uid, char *name_out, size_t cap) {
+    char filebuf[4096];
+    int n = read_small_file("/etc/passwd", filebuf, sizeof(filebuf));
+    if (n < 0) return n;
+    char *line = filebuf;
+    while (*line) {
+        while (*line == '\n' || *line == '\r') line++;
+        if (!*line) break;
+        char *next = line;
+        while (*next && *next != '\n') next++;
+        if (*next == '\n') *next++ = '\0';
+        if (line[0] != '#' && line[0] != '\0') {
+            char *f[7];
+            unsigned v = 0;
+            int nf = split_colon_fields(line, f, 7);
+            if (nf >= 4 && parse_uint10(f[2], &v) == 0 && v == uid) {
+                str_copy(name_out, f[0], cap);
+                return 0;
+            }
+        }
+        line = next;
+    }
+    return -1;
+}
+
+static int prompt_password(char *out, size_t cap) {
+    write_str("Password: ");
+    long n = syscall3(SYS_READ, 0, (long)out, (long)(cap - 1));
+    if (n < 0) {
+        write_ch('\n');
+        return (int)n;
+    }
+    size_t len = (size_t)n;
+    while (len > 0 && (out[len - 1] == '\n' || out[len - 1] == '\r')) len--;
+    out[len] = '\0';
+    return 0;
+}
+
+static int parse_hex_u64(const char *s, uint64_t *out) {
+    uint64_t v = 0;
+    int n = 0;
+    while (s[n]) {
+        char c = s[n];
+        uint64_t d;
+        if (c >= '0' && c <= '9') d = (uint64_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') d = (uint64_t)(10 + c - 'a');
+        else if (c >= 'A' && c <= 'F') d = (uint64_t)(10 + c - 'A');
+        else return -1;
+        v = (v << 4) | d;
+        n++;
+    }
+    if (n == 0 || n > 16) return -1;
+    *out = v;
+    return 0;
+}
+
+static uint64_t fnv1a64(const char *s) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; s[i]; i++) {
+        h ^= (uint8_t)s[i];
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+static int verify_password(const char *stored, const char *input) {
+    if (!stored || stored[0] == '\0') return 1;
+    if (str_cmp(stored, "x") == 0 || str_cmp(stored, "*") == 0) return 0;
+    if (str_ncmp(stored, "plain$", 6) == 0) {
+        return str_cmp(stored + 6, input) == 0;
+    }
+    if (str_ncmp(stored, "fnv1a64$", 8) == 0) {
+        uint64_t hv = 0;
+        if (parse_hex_u64(stored + 8, &hv) < 0) return 0;
+        return fnv1a64(input) == hv;
+    }
+    return str_cmp(stored, input) == 0; /* legacy plain-text */
+}
+
+struct sudo_policy {
+    int allowed;
+    int nopasswd;
+    int cmd_all;
+    char cmd[128];
+};
+
+static char *trim_ws(char *s) {
+    while (*s == ' ' || *s == '\t') s++;
+    size_t n = str_len(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = '\0';
+    return s;
+}
+
+static char *find_substr(char *hay, const char *needle) {
+    size_t n = str_len(needle);
+    if (n == 0) return hay;
+    for (size_t i = 0; hay[i]; i++) {
+        size_t j = 0;
+        while (j < n && hay[i + j] == needle[j]) j++;
+        if (j == n) return &hay[i];
+    }
+    return NULL;
+}
+
+static void parse_sudoers_line(char *line, const char *username, const char *cmd0,
+                               struct sudo_policy *pol) {
+    char *p = trim_ws(line);
+    if (p[0] == '\0' || p[0] == '#') return;
+
+    char actor[32];
+    int ai = 0;
+    while (p[ai] && p[ai] != ' ' && p[ai] != '\t' && ai < (int)sizeof(actor) - 1) {
+        actor[ai] = p[ai];
+        ai++;
+    }
+    actor[ai] = '\0';
+    if (!(str_cmp(actor, username) == 0 || str_cmp(actor, "ALL") == 0)) {
+        return;
+    }
+
+    char *rest = trim_ws(p + ai);
+    if (rest[0] == '\0') return;
+
+    int nopw = 0;
+    char *np = find_substr(rest, "NOPASSWD:");
+    if (np) {
+        nopw = 1;
+        rest = trim_ws(np + 9);
+    } else {
+        char *colon = NULL;
+        for (char *q = rest; *q; q++) if (*q == ':') colon = q;
+        if (colon) rest = trim_ws(colon + 1);
+    }
+
+    if (rest[0] == '\0') {
+        /* fallback to last token */
+        char *last = rest;
+        for (char *q = p; *q; q++) {
+            if (*q == ' ' || *q == '\t') {
+                while (*q == ' ' || *q == '\t') q++;
+                if (*q) last = q;
+            }
+        }
+        rest = trim_ws(last);
+    }
+
+    int allow_cmd = 0;
+    if (str_ncmp(rest, "ALL", 3) == 0 && (rest[3] == '\0' || rest[3] == ',' || rest[3] == ' ' || rest[3] == '\t')) {
+        allow_cmd = 1;
+    } else {
+        char tmp[256];
+        str_copy(tmp, rest, sizeof(tmp));
+        char *it = tmp;
+        while (*it) {
+            while (*it == ' ' || *it == '\t' || *it == ',') it++;
+            if (!*it) break;
+            char *start = it;
+            while (*it && *it != ',' && *it != ' ' && *it != '\t') it++;
+            char hold = *it;
+            *it = '\0';
+            const char *base = base_name(start);
+                if (str_cmp(start, cmd0) == 0 ||
+                    str_cmp(base, cmd0) == 0 ||
+                    str_cmp(base, base_name(cmd0)) == 0 ||
+                    wildcard_match(start, cmd0) ||
+                    wildcard_match(start, base_name(cmd0)) ||
+                    wildcard_match(base, base_name(cmd0))) {
+                allow_cmd = 1;
+                *it = hold;
+                break;
+            }
+            *it = hold;
+            if (*it) it++;
+        }
+    }
+
+    if (allow_cmd) {
+        pol->allowed = 1;
+        if (nopw) pol->nopasswd = 1;
+        if (str_ncmp(rest, "ALL", 3) == 0) pol->cmd_all = 1;
+    }
+}
+
+static struct sudo_policy sudo_lookup_policy(const char *username, const char *cmd0) {
+    struct sudo_policy pol;
+    pol.allowed = 0;
+    pol.nopasswd = 0;
+    pol.cmd_all = 0;
+    pol.cmd[0] = '\0';
+
+    long euid = syscall0(SYS_GETEUID);
+    if (euid == 0) {
+        pol.allowed = 1;
+        pol.nopasswd = 1;
+        pol.cmd_all = 1;
+        return pol;
+    }
+
+    char filebuf[4096];
+    int n = read_small_file("/etc/sudoers", filebuf, sizeof(filebuf));
+    if (n < 0) return pol;
+    char *line = filebuf;
+    while (*line) {
+        while (*line == '\n' || *line == '\r') line++;
+        if (!*line) break;
+        char *next = line;
+        while (*next && *next != '\n') next++;
+        if (*next == '\n') *next++ = '\0';
+        parse_sudoers_line(line, username, cmd0, &pol);
+        line = next;
+    }
+    return pol;
+}
+
+static int applet_su(int argc, char **argv) {
+    const char *target = "root";
+    int cmd_idx = -1;
+    for (int i = 1; i < argc; i++) {
+        if (str_cmp(argv[i], "-c") == 0) {
+            if (i + 1 >= argc) {
+                write_str("su: option requires an argument -- c\n");
+                return 1;
+            }
+            cmd_idx = i + 1;
+            break;
+        }
+        target = argv[i];
+    }
+
+    struct user_record u;
+    if (lookup_user_record(target, &u) < 0) {
+        write_str("su: unknown user\n");
+        return 1;
+    }
+
+    long euid = syscall0(SYS_GETEUID);
+    if (euid != 0 && u.pass[0]) {
+        char input[64];
+        if (prompt_password(input, sizeof(input)) < 0 || !verify_password(u.pass, input)) {
+            write_str("su: authentication failure\n");
+            return 1;
+        }
+    }
+
+    long pid = syscall0(SYS_FORK);
+    if (pid < 0) {
+        print_errno("su: fork", pid);
+        return 1;
+    }
+    if (pid == 0) {
+        syscall1(SYS_SETGID, (long)u.gid);
+        syscall1(SYS_SETUID, (long)u.uid);
+        if (cmd_idx >= 0) {
+            if (try_exec_external(&argv[cmd_idx]) < 0) {
+                write_str(argv[cmd_idx]);
+                write_str(": command not found\n");
+                syscall1(SYS_EXIT, 127);
+            }
+            __builtin_unreachable();
+        }
+        const char *prompt = (u.uid == 0) ? "# " : "$ ";
+        int rc = run_shell(prompt);
+        syscall1(SYS_EXIT, rc);
+    }
+
+    int status = 0;
+    while (syscall4(SYS_WAIT4, pid, (long)&status, 0, 0) < 0) {
+    }
+    return 0;
+}
+
+static int applet_sudo(int argc, char **argv) {
+    if (argc < 2) {
+        write_str("usage: sudo <command> [args...]\n");
+        return 1;
+    }
+
+    long uid = syscall0(SYS_GETUID);
+    char uname[32];
+    if (lookup_uid_name((unsigned)uid, uname, sizeof(uname)) < 0) {
+        str_copy(uname, "unknown", sizeof(uname));
+    }
+    struct sudo_policy pol = sudo_lookup_policy(uname, argv[1]);
+    if (!pol.allowed) {
+        write_str("sudo: user is not in sudoers\n");
+        return 1;
+    }
+    if (!pol.nopasswd) {
+        struct user_record u;
+        if (lookup_user_record(uname, &u) == 0 && u.pass[0]) {
+            char input[64];
+            if (prompt_password(input, sizeof(input)) < 0 || !verify_password(u.pass, input)) {
+                write_str("sudo: authentication failure\n");
+                return 1;
+            }
+        }
+    }
+
+    long pid = syscall0(SYS_FORK);
+    if (pid < 0) {
+        print_errno("sudo: fork", pid);
+        return 1;
+    }
+    if (pid == 0) {
+        syscall1(SYS_SETGID, 0);
+        syscall1(SYS_SETUID, 0);
+        if (try_exec_external(&argv[1]) < 0) {
+            write_str(argv[1]);
+            write_str(": command not found\n");
+            syscall1(SYS_EXIT, 127);
+        }
+        __builtin_unreachable();
+    }
+
+    int status = 0;
+    while (syscall4(SYS_WAIT4, pid, (long)&status, 0, 0) < 0) {
+    }
+    return 0;
+}
+
+static const char *builtin_names[] = {
+    "help", "echo", "uname", "clear", "reboot", "shutdown", "exit",
+    "zsh", "sh", "busybox", "cd", "pwd", "ls", "cat", "touch",
+    "mkdir", "rm", "rmdir", "write", "su", "sudo",
+    "sysctl", "installer", "installer-tui", NULL
+};
+
+static int add_candidate(char out[][64], int count, int max, const char *name) {
+    for (int i = 0; i < count; i++) {
+        if (str_cmp(out[i], name) == 0) return count;
+    }
+    if (count < max) {
+        str_copy(out[count], name, 64);
+        return count + 1;
+    }
+    return count;
+}
+
+static int collect_matches_from_dir(const char *dir, const char *prefix,
+                                    char out[][64], int count, int max) {
+    long fd = syscall3(SYS_OPEN, (long)dir, O_RDONLY | O_DIRECTORY, 0);
+    if (fd < 0) return count;
+    size_t plen = str_len(prefix);
+    char buf[1024];
+    while (1) {
+        long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+        if (nread <= 0) break;
+        long bpos = 0;
+        while (bpos < nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+            if (d->d_name[0] && d->d_name[0] != '.') {
+                if (str_ncmp(d->d_name, prefix, plen) == 0) {
+                    count = add_candidate(out, count, max, d->d_name);
+                }
+            }
+            if (d->d_reclen == 0) break;
+            bpos += d->d_reclen;
+        }
+    }
+    syscall1(SYS_CLOSE, fd);
+    return count;
+}
+
+static int complete_first_token(char *line, size_t cap) {
+    char matches[64][64];
+    int mcount = 0;
+    size_t plen = str_len(line);
+    if (plen == 0) return 0;
+    for (size_t i = 0; line[i]; i++) {
+        if (line[i] == ' ' || line[i] == '\t') {
+            return 0;
+        }
+    }
+    for (int i = 0; builtin_names[i]; i++) {
+        if (str_ncmp(builtin_names[i], line, plen) == 0) {
+            mcount = add_candidate(matches, mcount, 64, builtin_names[i]);
+        }
+    }
+    mcount = collect_matches_from_dir("/bin", line, matches, mcount, 64);
+    mcount = collect_matches_from_dir("/sbin", line, matches, mcount, 64);
+    mcount = collect_matches_from_dir("/usr/bin", line, matches, mcount, 64);
+
+    if (mcount == 1) {
+        str_copy(line, matches[0], cap);
+        size_t n = str_len(line);
+        if (n + 1 < cap) {
+            line[n++] = ' ';
+            line[n] = '\0';
+        }
+        return 1;
+    }
+    if (mcount > 1) {
+        for (int i = 0; i < mcount; i++) {
+            write_str(matches[i]);
+            write_str("  ");
+        }
+        write_ch('\n');
+        return 2;
+    }
+    return 0;
+}
+
+static void redraw_line(const char *prompt, const char *line) {
+    write_ch('\r');
+    write_str(prompt);
+    write_str(line);
+    write_str(" \r");
+    write_str(prompt);
+    write_str(line);
+}
+
+static int read_line_interactive(const char *prompt, char *line, size_t cap,
+                                 char history[][256], int hist_count, int *hist_pos) {
+    size_t len = 0;
+    line[0] = '\0';
+    write_str(prompt);
+
+    while (1) {
+        char c = 0;
+        long n = syscall3(SYS_READ, 0, (long)&c, 1);
+        if (n == -4) { /* EINTR */
+            line[0] = '\0';
+            len = 0;
+            write_str(prompt);
+            continue;
+        }
+        if (n <= 0) {
+            continue;
+        }
+
+        if (c == '\n') {
+            write_ch('\n');
+            line[len] = '\0';
+            return 0;
+        }
+
+        if (c == '\t') {
+            int comp = complete_first_token(line, cap);
+            if (comp == 1) {
+                redraw_line(prompt, line);
+                len = str_len(line);
+            } else if (comp == 2) {
+                redraw_line(prompt, line);
+            }
+            continue;
+        }
+
+        if (c == 0x1b) {
+            char a = 0, b = 0;
+            if (syscall3(SYS_READ, 0, (long)&a, 1) <= 0) continue;
+            if (syscall3(SYS_READ, 0, (long)&b, 1) <= 0) continue;
+            if (a == '[') {
+                if (b == 'A') { /* Up */
+                    if (hist_count > 0) {
+                        if (*hist_pos < 0) {
+                            *hist_pos = hist_count - 1;
+                        } else if (*hist_pos > 0) {
+                            (*hist_pos)--;
+                        }
+                        str_copy(line, history[*hist_pos], cap);
+                        len = str_len(line);
+                        redraw_line(prompt, line);
+                    }
+                    continue;
+                }
+                if (b == 'B') { /* Down -> clear line */
+                    if (*hist_pos >= 0 && *hist_pos < hist_count - 1) {
+                        (*hist_pos)++;
+                        str_copy(line, history[*hist_pos], cap);
+                        len = str_len(line);
+                    } else {
+                        *hist_pos = -1;
+                        line[0] = '\0';
+                        len = 0;
+                    }
+                    redraw_line(prompt, line);
+                    continue;
+                }
+                /* Left/right currently no-op but consumed cleanly. */
+                if (b == 'C' || b == 'D') {
+                    continue;
+                }
+            }
+            continue;
+        }
+
+        if (c == '\b' || c == 0x7f) {
+            if (len > 0) {
+                len--;
+                line[len] = '\0';
+                write_str("\b \b");
+            }
+            continue;
+        }
+
+        if (c >= 32 && c <= 126) {
+            if (len + 1 < cap) {
+                line[len++] = c;
+                line[len] = '\0';
+                write_ch(c);
+            }
+            continue;
+        }
+    }
+}
+
+static int exec_with_sh_fallback(const char *path, char **args) {
+    long ret = syscall3(SYS_EXECVE, (long)path, (long)args, (long)shell_envp);
+    if (ret != -8) { /* ENOEXEC */
+        return (int)ret;
+    }
+
+    char *sh_argv[20];
+    int argc = 0;
+    while (args[argc] && argc < 18) {
+        argc++;
+    }
+    int k = 0;
+    sh_argv[k++] = "/bin/sh";
+    sh_argv[k++] = (char *)path;
+    for (int i = 1; i < argc; i++) {
+        sh_argv[k++] = args[i];
+    }
+    sh_argv[k] = NULL;
+    return (int)syscall3(SYS_EXECVE, (long)"/bin/sh", (long)sh_argv, (long)shell_envp);
+}
+
+static int try_exec_external(char **args) {
+    if (!args || !args[0] || args[0][0] == '\0') return -1;
+
+    if (args[0][0] == '/') {
+        return exec_with_sh_fallback(args[0], args);
+    }
+    if (args[0][0] == '.' && args[0][1] == '/') {
+        char cwd[256];
+        char abs[512];
+        long ret = syscall2(SYS_GETCWD, (long)cwd, sizeof(cwd));
+        if (ret >= 0) {
+            size_t clen = str_len(cwd);
+            size_t nlen = str_len(args[0] + 2);
+            if (clen + 1 + nlen + 1 < sizeof(abs)) {
+                str_copy(abs, cwd, sizeof(abs));
+                if (clen > 0 && abs[clen - 1] != '/') {
+                    abs[clen++] = '/';
+                    abs[clen] = '\0';
+                }
+                str_copy(abs + clen, args[0] + 2, sizeof(abs) - clen);
+                return exec_with_sh_fallback(abs, args);
+            }
+        }
+        return exec_with_sh_fallback(args[0], args);
+    }
+
+    static const char *paths[] = { "/bin", "/sbin", "/usr/bin" };
+    char candidate[256];
+    for (int i = 0; i < 3; i++) {
+        size_t dlen = str_len(paths[i]);
+        size_t nlen = str_len(args[0]);
+        if (dlen + 1 + nlen + 1 >= sizeof(candidate)) continue;
+        str_copy(candidate, paths[i], sizeof(candidate));
+        candidate[dlen] = '/';
+        str_copy(candidate + dlen + 1, args[0], sizeof(candidate) - dlen - 1);
+        long ret = exec_with_sh_fallback(candidate, args);
+        if (ret >= 0) return 0;
+    }
+    return -1;
+}
+
+static int run_external(char **args) {
+    long pid = syscall0(SYS_FORK);
+    if (pid < 0) {
+        print_errno("fork", pid);
+        return -1;
+    }
+    if (pid == 0) {
+        if (try_exec_external(args) < 0) {
+            write_str(args[0]);
+            write_str(": command not found\n");
+            syscall1(SYS_EXIT, 127);
+        }
+        __builtin_unreachable();
+    }
+
+    int status = 0;
+    while (1) {
+        long ret = syscall4(SYS_WAIT4, pid, (long)&status, 0, 0);
+        if (ret >= 0) {
+            break;
+        }
+        if (ret == -4) { /* EINTR */
+            continue;
+        }
+        print_errno("wait4", ret);
+        break;
+    }
+    return 0;
+}
+
+static int run_shell(const char *prompt) {
+    char line[256];
+    char *args[32];
+    char *cmd[32];
+    char *expanded[32];
+    static char glob_scratch[32][256];
+    static char history[16][256];
+    int hist_count = 0;
+    int hist_pos = -1;
+
+    write_str("Obelisk shell ready. Type 'help' for commands.\n");
+    while (1) {
+        hist_pos = -1;
+        read_line_interactive(prompt, line, sizeof(line), history, hist_count, &hist_pos);
+
+        int argc = split_words_shell(line, args, 32);
+        argc = expand_globs(args, argc, expanded, 32, glob_scratch, 32);
+        for (int i = 0; i < argc; i++) args[i] = expanded[i];
+        if (argc == 0) {
+            continue;
+        }
+        const char *in_path = NULL;
+        const char *out_path = NULL;
+        int append = 0;
+        int cmdc = parse_redirections(args, argc, cmd, 31, &in_path, &out_path, &append);
+        if (cmdc < 0) {
+            continue;
+        }
+        if (cmdc == 0) {
+            continue;
+        }
+        cmd[cmdc] = NULL;
+        argc = cmdc;
+        for (int i = 0; i < argc; i++) args[i] = cmd[i];
+
+        if (hist_count == 0 || str_cmp(history[hist_count - 1], line) != 0) {
+            if (hist_count < 16) {
+                str_copy(history[hist_count++], line, sizeof(history[0]));
+            } else {
+                for (int i = 1; i < 16; i++) {
+                    str_copy(history[i - 1], history[i], sizeof(history[0]));
+                }
+                str_copy(history[15], line, sizeof(history[0]));
+            }
+        }
+
+        int saved_in = -1, saved_out = -1;
+        if (apply_redirections(in_path, out_path, append, &saved_in, &saved_out) < 0) {
+            restore_redirections(saved_in, saved_out);
+            continue;
+        }
+
+        if (str_cmp(args[0], "help") == 0) {
+            write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write su sudo\n");
+            write_str("shell: Up/Down=history, TAB=live completion, Backspace, redirects < > >>\n");
+        } else if (str_cmp(args[0], "echo") == 0) {
+            applet_echo(argc, args);
+        } else if (str_cmp(args[0], "uname") == 0) {
+            applet_uname();
+        } else if (str_cmp(args[0], "cd") == 0) {
+            applet_cd(argc, args);
+        } else if (str_cmp(args[0], "pwd") == 0) {
+            applet_pwd();
+        } else if (str_cmp(args[0], "ls") == 0) {
+            applet_ls(argc, args);
+        } else if (str_cmp(args[0], "cat") == 0) {
+            applet_cat(argc, args);
+        } else if (str_cmp(args[0], "touch") == 0) {
+            applet_touch(argc, args);
+        } else if (str_cmp(args[0], "mkdir") == 0) {
+            applet_mkdir(argc, args);
+        } else if (str_cmp(args[0], "rm") == 0) {
+            applet_rm(argc, args);
+        } else if (str_cmp(args[0], "rmdir") == 0) {
+            applet_rmdir(argc, args);
+        } else if (str_cmp(args[0], "write") == 0) {
+            applet_write(argc, args);
+        } else if (str_cmp(args[0], "su") == 0) {
+            applet_su(argc, args);
+        } else if (str_cmp(args[0], "sudo") == 0) {
+            applet_sudo(argc, args);
+        } else if (str_cmp(args[0], "reboot") == 0) {
+            applet_reboot();
+        } else if (str_cmp(args[0], "shutdown") == 0 ||
+                   str_cmp(args[0], "poweroff") == 0 ||
+                   str_cmp(args[0], "halt") == 0) {
+            applet_shutdown();
+        } else if (str_cmp(args[0], "clear") == 0) {
+            write_str("\033[2J\033[H");
+        } else if (str_cmp(args[0], "zsh") == 0) {
+            run_shell("zsh% ");
+        } else if (str_cmp(args[0], "sh") == 0 || str_cmp(args[0], "busybox") == 0) {
+            run_shell("$ ");
+        } else if (str_cmp(args[0], "exit") == 0) {
+            return 0;
+        } else {
+            run_external(args);
+        }
+        restore_redirections(saved_in, saved_out);
+    }
+}
+
+static int applet_main(const char *name, int argc, char **argv) {
+    if (str_cmp(name, "busybox") == 0) {
+        if (argc >= 2) {
+            return applet_main(argv[1], argc - 1, &argv[1]);
+        }
+        return run_shell("$ ");
+    }
+    if (str_cmp(name, "sh") == 0 || str_cmp(name, "ash") == 0) {
+        return run_shell("$ ");
+    }
+    if (str_cmp(name, "zsh") == 0) {
+        return run_shell("zsh% ");
+    }
+    if (str_cmp(name, "echo") == 0) {
+        applet_echo(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "uname") == 0) {
+        applet_uname();
+        return 0;
+    }
+    if (str_cmp(name, "pwd") == 0) {
+        applet_pwd();
+        return 0;
+    }
+    if (str_cmp(name, "ls") == 0) {
+        applet_ls(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "cat") == 0) {
+        applet_cat(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "touch") == 0) {
+        applet_touch(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "mkdir") == 0) {
+        applet_mkdir(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "rm") == 0) {
+        applet_rm(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "rmdir") == 0) {
+        applet_rmdir(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "reboot") == 0) {
+        applet_reboot();
+        return 0;
+    }
+    if (str_cmp(name, "shutdown") == 0 ||
+        str_cmp(name, "poweroff") == 0 ||
+        str_cmp(name, "halt") == 0) {
+        applet_shutdown();
+        return 0;
+    }
+    if (str_cmp(name, "clear") == 0) {
+        write_str("\033[2J\033[H");
+        return 0;
+    }
+    if (str_cmp(name, "su") == 0) {
+        return applet_su(argc, argv);
+    }
+    if (str_cmp(name, "sudo") == 0) {
+        return applet_sudo(argc, argv);
+    }
+
+    write_str("busybox: unsupported applet: ");
+    write_str(name);
+    write_str("\n");
+    return 1;
+}
+
+void _start(void) {
+    uint64_t *stack_ptr;
+    __asm__ volatile("movq %%rsp, %0" : "=r"(stack_ptr));
+
+    int argc = (int)stack_ptr[0];
+    char **argv = (char **)&stack_ptr[1];
+    char *fallback_argv[] = { "busybox", NULL };
+    char **use_argv = argv;
+    int use_argc = argc;
+
+    if (use_argc <= 0 || !use_argv || !use_argv[0]) {
+        /* Kernel bring-up path may not provide full argv yet. */
+        use_argv = fallback_argv;
+        use_argc = 1;
+    }
+
+    const char *name = base_name(use_argv[0]);
+    int rc = applet_main(name, use_argc, use_argv);
+    syscall1(SYS_EXIT, rc);
+    __builtin_unreachable();
+}

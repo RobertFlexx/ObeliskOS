@@ -1,0 +1,3 @@
+Obelisk OS early userspace image
+Use /sbin/installer or /sbin/installer-tui to stage an installation.
+Host zsh/coreutils import is enabled by default (set IMPORT_HOST_USERLAND=0 to disable).
