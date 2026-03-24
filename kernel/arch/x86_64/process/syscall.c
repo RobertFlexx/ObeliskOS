@@ -408,6 +408,8 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
 static int64_t sys_read(int fd, void *buf, size_t count) {
     struct process *proc = current;
     struct file *file = NULL;
+    uint8_t kbuf[256];
+    size_t done = 0;
 
     if (!buf) {
         return -EFAULT;
@@ -417,7 +419,28 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
         file = fd_get(proc->files, fd);
     }
     if (file) {
-        return vfs_read(file, buf, count, NULL);
+        while (done < count) {
+            size_t chunk = count - done;
+            if (chunk > sizeof(kbuf)) {
+                chunk = sizeof(kbuf);
+            }
+
+            int64_t n = vfs_read(file, kbuf, chunk, NULL);
+            if (n < 0) {
+                return (done > 0) ? (int64_t)done : n;
+            }
+            if (n == 0) {
+                break;
+            }
+            if (vmm_copy_to_user((uint8_t *)buf + done, kbuf, (size_t)n) < 0) {
+                return (done > 0) ? (int64_t)done : -EFAULT;
+            }
+            done += (size_t)n;
+            if ((size_t)n < chunk) {
+                break;
+            }
+        }
+        return (int64_t)done;
     }
     if (fd != 0) {
         return -EBADF;
@@ -425,8 +448,6 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
     if (count == 0) {
         return 0;
     }
-
-    char *out = (char *)buf;
 
     /* Character mode for interactive shells/editors. */
     if (count == 1) {
@@ -439,7 +460,9 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
             tty_flush_input();
             return -EINTR;
         }
-        out[0] = c;
+        if (vmm_copy_to_user(buf, &c, 1) < 0) {
+            return -EFAULT;
+        }
         return 1;
     }
 
@@ -464,7 +487,10 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
             continue;
         }
 
-        out[i++] = c;
+        if (vmm_copy_to_user((uint8_t *)buf + i, &c, 1) < 0) {
+            return (i > 0) ? (int64_t)i : -EFAULT;
+        }
+        i++;
         console_putc(c);
 
         if (c == '\n') {
@@ -478,6 +504,8 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
 static int64_t sys_write(int fd, const void *buf, size_t count) {
     struct process *proc = current;
     struct file *file = NULL;
+    uint8_t kbuf[256];
+    size_t done = 0;
 
     if (!buf) {
         return -EFAULT;
@@ -487,23 +515,50 @@ static int64_t sys_write(int fd, const void *buf, size_t count) {
         file = fd_get(proc->files, fd);
     }
     if (file) {
-        return vfs_write(file, buf, count, NULL);
+        while (done < count) {
+            size_t chunk = count - done;
+            if (chunk > sizeof(kbuf)) {
+                chunk = sizeof(kbuf);
+            }
+            if (vmm_copy_from_user(kbuf, (const uint8_t *)buf + done, chunk) < 0) {
+                return (done > 0) ? (int64_t)done : -EFAULT;
+            }
+            int64_t n = vfs_write(file, kbuf, chunk, NULL);
+            if (n < 0) {
+                return (done > 0) ? (int64_t)done : n;
+            }
+            done += (size_t)n;
+            if ((size_t)n < chunk) {
+                break;
+            }
+        }
+        return (int64_t)done;
     }
 
     /* Mirror userspace output to serial and VGA for default stdio. */
     if (fd == 1 || fd == 2) {
-        const char *p = (const char *)buf;
-        console_write(p, count);
-        return count;
+        while (done < count) {
+            size_t chunk = count - done;
+            if (chunk > sizeof(kbuf)) {
+                chunk = sizeof(kbuf);
+            }
+            if (vmm_copy_from_user(kbuf, (const uint8_t *)buf + done, chunk) < 0) {
+                return (done > 0) ? (int64_t)done : -EFAULT;
+            }
+            console_write((const char *)kbuf, chunk);
+            done += chunk;
+        }
+        return (int64_t)done;
     }
     return -EBADF;
 }
 
 static int64_t sys_writev(int fd, const void *iov, int iovcnt) {
-    const struct iovec *vec = (const struct iovec *)iov;
+    const struct iovec *uvec = (const struct iovec *)iov;
+    struct iovec kv;
     int64_t total = 0;
 
-    if (!vec || iovcnt < 0) {
+    if (!uvec || iovcnt < 0) {
         return -EINVAL;
     }
     if (iovcnt > 1024) {
@@ -511,18 +566,21 @@ static int64_t sys_writev(int fd, const void *iov, int iovcnt) {
     }
 
     for (int i = 0; i < iovcnt; i++) {
-        if (!vec[i].iov_base && vec[i].iov_len != 0) {
+        if (vmm_copy_from_user(&kv, uvec + i, sizeof(kv)) < 0) {
+            return (total > 0) ? total : -EFAULT;
+        }
+        if (!kv.iov_base && kv.iov_len != 0) {
             return -EFAULT;
         }
-        if (vec[i].iov_len == 0) {
+        if (kv.iov_len == 0) {
             continue;
         }
-        int64_t n = sys_write(fd, vec[i].iov_base, vec[i].iov_len);
+        int64_t n = sys_write(fd, kv.iov_base, kv.iov_len);
         if (n < 0) {
             return (total > 0) ? total : n;
         }
         total += n;
-        if ((size_t)n < vec[i].iov_len) {
+        if ((size_t)n < kv.iov_len) {
             break;
         }
     }
@@ -674,6 +732,9 @@ static int64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, 
         if (!proc->files) {
             return -EBADF;
         }
+        if (((uint64_t)offset & (PAGE_SIZE - 1)) != 0) {
+            return -EINVAL;
+        }
         file = fd_get(proc->files, fd);
         if (!file) {
             return -EBADF;
@@ -684,47 +745,6 @@ static int64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, 
     if (mapped == MAP_FAILED) {
         return -ENOMEM;
     }
-
-    uint64_t start = ALIGN_DOWN((uint64_t)mapped, PAGE_SIZE);
-    uint64_t end = ALIGN_UP((uint64_t)mapped + length, PAGE_SIZE);
-    uint64_t pte_flags = vmm_prot_to_pte_flags(prot);
-
-    for (uint64_t vaddr = start; vaddr < end; vaddr += PAGE_SIZE) {
-        uint64_t phys = pmm_alloc_page();
-        if (!phys) {
-            vmm_munmap(proc->mm, (void *)start, end - start);
-            return -ENOMEM;
-        }
-        memset(PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
-        if (mmu_map(proc->mm->pt, vaddr, phys, pte_flags) != 0) {
-            pmm_free_page(phys);
-            vmm_munmap(proc->mm, (void *)start, end - start);
-            return -ENOMEM;
-        }
-    }
-
-    if (file) {
-        uint64_t copied = 0;
-        while (copied < length) {
-            uint64_t dst_vaddr = (uint64_t)mapped + copied;
-            uint64_t phys = mmu_resolve(proc->mm->pt, dst_vaddr);
-            if (!phys) {
-                return -EFAULT;
-            }
-            size_t page_off = (size_t)(dst_vaddr & (PAGE_SIZE - 1));
-            size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), (uint64_t)(length - copied));
-            off_t read_off = offset + copied;
-            int ret = vfs_read(file, (uint8_t *)PHYS_TO_VIRT(phys) + page_off, chunk, &read_off);
-            if (ret <= 0) {
-                break;
-            }
-            copied += (size_t)ret;
-            if ((size_t)ret < chunk) {
-                break;
-            }
-        }
-    }
-
     return (int64_t)(uint64_t)mapped;
 }
 
@@ -813,7 +833,9 @@ static int64_t sys_gettid(void) {
 }
 
 static int64_t sys_getppid(void) {
-    return 0;
+    struct process *p = current;
+    if (!p || !p->parent) return 0;
+    return p->parent->pid;
 }
 
 static int64_t sys_getuid(void) {
@@ -1007,6 +1029,15 @@ static int64_t sys_chdir(const char *path) {
         dput(dentry);
         return -ENOTDIR;
     }
+    if (dentry->d_inode->i_op && dentry->d_inode->i_op->permission) {
+        ret = dentry->d_inode->i_op->permission(dentry->d_inode, MAY_EXEC);
+    } else {
+        ret = generic_permission(dentry->d_inode, MAY_EXEC);
+    }
+    if (ret < 0) {
+        dput(dentry);
+        return ret;
+    }
 
     if (proc->cwd) {
         dput(proc->cwd);
@@ -1155,14 +1186,37 @@ static int64_t sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t
 static int64_t sys_faccessat(int dirfd, const char *pathname, int mode) {
     char resolved[PATH_MAX];
     struct dentry *dentry;
+    int mask = 0;
     int ret = resolve_user_at_path(dirfd, pathname, resolved, sizeof(resolved));
     if (ret < 0) {
         return ret;
     }
-    (void)mode;
+    if (mode & ~(R_OK | W_OK | X_OK | F_OK)) {
+        return -EINVAL;
+    }
+    if (mode & R_OK) mask |= MAY_READ;
+    if (mode & W_OK) mask |= MAY_WRITE;
+    if (mode & X_OK) mask |= MAY_EXEC;
+
     dentry = vfs_lookup(resolved);
     if (!dentry) {
         return -ENOENT;
+    }
+    if (mask != 0) {
+        struct inode *inode = dentry->d_inode;
+        if (!inode) {
+            dput(dentry);
+            return -ENOENT;
+        }
+        if (inode->i_op && inode->i_op->permission) {
+            ret = inode->i_op->permission(inode, mask);
+        } else {
+            ret = generic_permission(inode, mask);
+        }
+        if (ret < 0) {
+            dput(dentry);
+            return ret;
+        }
     }
     dput(dentry);
     return 0;
@@ -1410,24 +1464,12 @@ static int64_t sys_sysctl(void *args) {
 
 /* Set up SYSCALL/SYSRET MSRs */
 static void syscall_msr_init(void) {
-    /* Enable SYSCALL instruction */
+    /* Keep fast SYSCALL disabled for now.
+     * Our userspace runs reliably via INT 0x80, while the fast path still
+     * needs a dedicated kernel-stack handoff on entry. */
     uint64_t efer = rdmsr(MSR_EFER);
-    efer |= MSR_EFER_SCE;
+    efer &= ~MSR_EFER_SCE;
     wrmsr(MSR_EFER, efer);
-    
-    /* Set up STAR MSR (segment selectors) */
-    /* STAR[31:0] = reserved
-     * STAR[47:32] = kernel CS (also sets kernel SS = CS + 8)
-     * STAR[63:48] = user CS - 16 (also sets user SS) */
-    uint64_t star = ((uint64_t)0x08 << 32) | ((uint64_t)0x1B << 48);
-    wrmsr(MSR_STAR, star);
-    
-    /* Set LSTAR to syscall entry point */
-    extern void syscall_entry(void);
-    wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
-    
-    /* Set SFMASK (RFLAGS bits to clear on syscall) */
-    wrmsr(MSR_SFMASK, EFLAGS_IF | EFLAGS_TF | EFLAGS_DF);
 }
 
 /* Initialize syscall subsystem */
@@ -1436,6 +1478,7 @@ void syscall_init(void) {
     
     syscall_table_init();
     syscall_msr_init();
+    printk(KERN_WARNING "syscall: fast SYSCALL/SYSRET path disabled, using INT 0x80 ABI\n");
     
     printk(KERN_INFO "Syscall interface initialized (%d syscalls registered)\n",
            NR_SYSCALLS);

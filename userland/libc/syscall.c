@@ -178,6 +178,26 @@ int getgid(void) {
     return ob_syscall0(104);
 }
 
+/* Get effective user ID */
+int geteuid(void) {
+    return ob_syscall0(107);
+}
+
+/* Get effective group ID */
+int getegid(void) {
+    return ob_syscall0(108);
+}
+
+/* Set user ID */
+int setuid(int uid) {
+    return ob_syscall1(105, uid);
+}
+
+/* Set group ID */
+int setgid(int gid) {
+    return ob_syscall1(106, gid);
+}
+
 /* Change directory */
 int chdir(const char *path) {
     return ob_syscall1(80, (long)path);
@@ -234,4 +254,14 @@ int kill(int pid, int sig) {
 /* sysctl */
 int sysctl(void *args) {
     return ob_syscall1(400, (long)args);
+}
+
+/*
+ * Minimal assert handler for -betterC D objects.
+ * DMD may emit calls to __assert for safety checks in low-level code.
+ */
+void __assert(void) {
+    const char msg[] = "fatal: __assert\n";
+    write(2, msg, sizeof(msg) - 1);
+    _exit(127);
 }

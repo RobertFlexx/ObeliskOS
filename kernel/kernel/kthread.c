@@ -117,7 +117,8 @@ struct kthread *kthread_create(int (*func)(void *), void *data,
     
     /* Initialize context */
     memset(&kt->context, 0, sizeof(kt->context));
-    kt->context.rsp = (uint64_t)kt->stack + KTHREAD_STACK_SIZE - 8;
+    kt->context.rsp = (uint64_t)kt->stack + KTHREAD_STACK_SIZE - sizeof(uint64_t);
+    *(uint64_t *)kt->context.rsp = (uint64_t)kthread_entry;
     kt->context.rip = (uint64_t)kthread_entry;
     
     /* Add to global list */

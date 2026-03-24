@@ -5,6 +5,7 @@
 
 # Architecture
 ARCH := x86_64
+EXPERIMENTAL_DYNAMIC_ELF ?= 0
 
 # Toolchain
 ifeq ($(CROSS_COMPILE),)
@@ -59,6 +60,7 @@ CFLAGS := \
     -std=gnu11 \
     -O2 \
     -g \
+    -DCONFIG_EXPERIMENTAL_DYNAMIC_ELF=$(EXPERIMENTAL_DYNAMIC_ELF) \
     $(INCLUDES)
 
 # Assembler flags

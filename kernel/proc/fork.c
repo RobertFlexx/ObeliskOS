@@ -10,6 +10,15 @@
 #include <mm/vmm.h>
 #include <arch/regs.h>
 
+#ifndef CONFIG_PROC_TRACE
+#define CONFIG_PROC_TRACE 0
+#endif
+#if CONFIG_PROC_TRACE
+#define FORK_LOG(...) printk(KERN_INFO __VA_ARGS__)
+#else
+#define FORK_LOG(...) do { } while (0)
+#endif
+
 /* Clone flags */
 #define CLONE_VM        0x00000100
 #define CLONE_FS        0x00000200
@@ -108,14 +117,19 @@ static int copy_sighand(struct process *child, struct process *parent, uint32_t 
  */
 static void setup_child_context(struct process *child, struct process *parent,
                                 uint64_t stack, struct cpu_regs *regs) {
-    /* Copy parent's context */
-    memcpy(&child->context, &parent->context, sizeof(struct cpu_context));
-    
-    /* Set up child to return 0 from fork() */
-    child->context.rsp = (uint64_t)child->kernel_stack + child->kernel_stack_size - sizeof(struct cpu_regs);
-    
-    /* Copy register frame to child's stack */
-    struct cpu_regs *child_regs = (struct cpu_regs *)child->context.rsp;
+    /* Build a synthetic context-switch return frame:
+     *   [ret target=fork_return][struct cpu_regs...]
+     * context_switch() returns to fork_return, which then restores cpu_regs
+     * and iretq's to userspace with child fork() result in rax=0. */
+    const uint64_t top = (uint64_t)child->kernel_stack + child->kernel_stack_size;
+    const uint64_t frame_rsp = top - sizeof(uint64_t) - sizeof(struct cpu_regs);
+    struct cpu_regs *child_regs = (struct cpu_regs *)(frame_rsp + sizeof(uint64_t));
+
+    (void)parent;
+    memset(&child->context, 0, sizeof(child->context));
+    child->context.rsp = frame_rsp;
+    *(uint64_t *)frame_rsp = (uint64_t)fork_return;
+
     memcpy(child_regs, regs, sizeof(struct cpu_regs));
     
     /* Child returns 0 */
@@ -126,8 +140,8 @@ static void setup_child_context(struct process *child, struct process *parent,
         child_regs->rsp = stack;
     }
     
-    /* Set return address to fork_return */
-    child->context.rip = (uint64_t)fork_return;
+    /* context_switch returns using the synthetic stack frame above. */
+    child->context.rip = 0;
 }
 
 /*
@@ -217,7 +231,7 @@ pid_t do_fork(uint32_t flags, uint64_t stack, struct cpu_regs *regs) {
         /* TODO: Wait for child to exec or exit */
     }
     
-    printk(KERN_DEBUG "fork: parent=%d, child=%d\n", parent->pid, child->pid);
+    FORK_LOG("fork: parent=%d, child=%d\n", parent->pid, child->pid);
     
     return child->pid;
     

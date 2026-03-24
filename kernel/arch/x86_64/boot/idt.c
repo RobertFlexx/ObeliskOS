@@ -10,6 +10,8 @@
 #include <mm/vmm.h>
 #include <proc/process.h>
 
+extern int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs);
+
 struct idt_entry {
     uint16_t offset_low;
     uint16_t selector;
@@ -29,6 +31,9 @@ struct idt_ptr {
 
 #define IDT_INTERRUPT_GATE  0x8E
 #define IDT_USER_INTERRUPT  0xEE
+#define PF_VECTOR           14
+#define IRQ_BASE            32
+#define IRQ_COUNT           16
 
 static struct idt_entry idt[IDT_ENTRIES] __aligned(16);
 static struct idt_ptr idt_desc;
@@ -85,6 +90,24 @@ extern void irq_stub_15(void);
 
 extern void syscall_stub(void);
 
+static void *const isr_stubs[32] = {
+    isr_stub_0, isr_stub_1, isr_stub_2, isr_stub_3,
+    isr_stub_4, isr_stub_5, isr_stub_6, isr_stub_7,
+    isr_stub_8, isr_stub_9, isr_stub_10, isr_stub_11,
+    isr_stub_12, isr_stub_13, isr_stub_14, isr_stub_15,
+    isr_stub_16, isr_stub_17, isr_stub_18, isr_stub_19,
+    isr_stub_20, isr_stub_21, isr_stub_22, isr_stub_23,
+    isr_stub_24, isr_stub_25, isr_stub_26, isr_stub_27,
+    isr_stub_28, isr_stub_29, isr_stub_30, isr_stub_31
+};
+
+static void *const irq_stubs[IRQ_COUNT] = {
+    irq_stub_0, irq_stub_1, irq_stub_2, irq_stub_3,
+    irq_stub_4, irq_stub_5, irq_stub_6, irq_stub_7,
+    irq_stub_8, irq_stub_9, irq_stub_10, irq_stub_11,
+    irq_stub_12, irq_stub_13, irq_stub_14, irq_stub_15
+};
+
 static const char *exception_names[] = {
     "Division Error", "Debug", "Non-Maskable Interrupt", "Breakpoint",
     "Overflow", "Bound Range Exceeded", "Invalid Opcode", "Device Not Available",
@@ -111,6 +134,10 @@ static bool regs_from_user(const struct cpu_regs *regs) {
     return (regs->cs & 0x3) == 0x3;
 }
 
+static bool valid_exception_vector(uint64_t vector) {
+    return vector < 32;
+}
+
 static void idt_dump_regs(const struct cpu_regs *regs) {
     printk(KERN_ERR "RAX: 0x%016lx  RBX: 0x%016lx\n", regs->rax, regs->rbx);
     printk(KERN_ERR "RCX: 0x%016lx  RDX: 0x%016lx\n", regs->rcx, regs->rdx);
@@ -125,7 +152,7 @@ static void idt_dump_regs(const struct cpu_regs *regs) {
 }
 
 static void log_exception_header(uint64_t vector, uint64_t error_code) {
-    if (vector == 14) {
+    if (vector == PF_VECTOR) {
         uint64_t fault_addr = read_cr2();
         printk(KERN_ERR "\n=== PAGE FAULT ===\n");
         printk(KERN_ERR "Address: 0x%016lx\n", fault_addr);
@@ -149,7 +176,7 @@ static bool try_handle_user_page_fault(struct cpu_regs *regs) {
     uint64_t fault_addr;
     int ret;
 
-    if (!regs_from_user(regs) || regs->vector != 14) {
+    if (!regs_from_user(regs) || regs->vector != PF_VECTOR) {
         return false;
     }
     if (!p || !p->mm) {
@@ -161,20 +188,67 @@ static bool try_handle_user_page_fault(struct cpu_regs *regs) {
     return ret == 0;
 }
 
+static bool try_emulate_user_syscall_ud(struct cpu_regs *regs) {
+    uint8_t op0, op1;
+    int64_t ret;
+
+    /* When fast SYSCALL is disabled, 'syscall' (0x0f 0x05) traps as #UD.
+     * Emulate it through the existing INT 0x80-compatible dispatcher. */
+    if (!regs || !regs_from_user(regs) || regs->vector != 6) {
+        return false;
+    }
+
+    op0 = *(const uint8_t *)(uintptr_t)regs->rip;
+    op1 = *(const uint8_t *)(uintptr_t)(regs->rip + 1);
+    if (op0 != 0x0f || op1 != 0x05) {
+        return false;
+    }
+
+    ret = syscall_dispatch(regs->rax, regs);
+    regs->rax = (uint64_t)ret;
+    regs->rip += 2;  /* Skip emulated syscall instruction. */
+    return true;
+}
+
 void exception_handler(struct cpu_regs *regs) {
-    const uint64_t vector = regs->vector;
-    const bool user_mode = regs_from_user(regs);
+    const uint64_t vector = regs ? regs->vector : (uint64_t)-1;
+    bool user_mode;
+    static int exception_depth = 0;
+
+    if (!regs) {
+        panic("exception_handler: null register frame");
+    }
+    user_mode = regs_from_user(regs);
+    exception_depth++;
+    if (exception_depth > 1 && !user_mode) {
+        log_exception_header(vector, regs->error_code);
+        idt_dump_regs(regs);
+        panic("Nested kernel exception");
+    }
 
     /* Fast path: recoverable user-space page fault. */
     if (try_handle_user_page_fault(regs)) {
+        exception_depth--;
         return;
     }
 
-    log_exception_header(vector, regs->error_code);
+    /* Compat path: emulate user-mode 'syscall' while fast path is disabled. */
+    if (try_emulate_user_syscall_ud(regs)) {
+        exception_depth--;
+        return;
+    }
+
+    if (!valid_exception_vector(vector)) {
+        printk(KERN_ERR "\n=== EXCEPTION: Invalid vector %lu ===\n", vector);
+        printk(KERN_ERR "Error code: 0x%lx\n", regs->error_code);
+    } else {
+        log_exception_header(vector, regs->error_code);
+    }
     idt_dump_regs(regs);
 
     /* Debug/breakpoint exceptions are non-fatal by design. */
     if (vector == 1 || vector == 3) {
+        exception_depth--;
         return;
     }
 
@@ -182,16 +256,27 @@ void exception_handler(struct cpu_regs *regs) {
         struct process *p = current;
         printk(KERN_ERR "User exception in pid=%d comm=%s: vector=%lu, terminating task\n",
                p ? p->pid : -1, p ? p->comm : "?", vector);
+        exception_depth--;
         do_exit(128 + (int)vector);
         __builtin_unreachable();
     }
 
+    exception_depth--;
     panic("Unrecoverable kernel exception");
 }
 
 void irq_handler(struct cpu_regs *regs) {
-    uint64_t irq = regs->vector - 32;
+    uint64_t irq;
     static uint64_t irq0_count = 0;
+    if (!regs) {
+        panic("irq_handler: null register frame");
+    }
+    if (regs->vector < IRQ_BASE || regs->vector >= (IRQ_BASE + IRQ_COUNT)) {
+        printk(KERN_ERR "Spurious IRQ vector %lu\n", regs->vector);
+        outb(0x20, 0x20);
+        return;
+    }
+    irq = regs->vector - IRQ_BASE;
 
     if (irq == 0) {
         irq0_count++;
@@ -228,6 +313,9 @@ static void pic_init(void) {
 void irq_enable(uint8_t irq) {
     uint16_t port;
     uint8_t mask;
+    if (irq >= IRQ_COUNT) {
+        return;
+    }
 
     if (irq < 8) {
         port = 0x21;
@@ -243,6 +331,9 @@ void irq_enable(uint8_t irq) {
 void irq_disable(uint8_t irq) {
     uint16_t port;
     uint8_t mask;
+    if (irq >= IRQ_COUNT) {
+        return;
+    }
 
     if (irq < 8) {
         port = 0x21;
@@ -256,58 +347,21 @@ void irq_disable(uint8_t irq) {
 }
 
 void idt_init(void) {
+    int i;
     printk(KERN_INFO "Initializing IDT...\n");
     memset(idt, 0, sizeof(idt));
 
-    idt_set_entry(0, (uint64_t)isr_stub_0, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(1, (uint64_t)isr_stub_1, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(2, (uint64_t)isr_stub_2, 0x08, IDT_INTERRUPT_GATE, 2);
-    idt_set_entry(3, (uint64_t)isr_stub_3, 0x08, IDT_USER_INTERRUPT, 0);
-    idt_set_entry(4, (uint64_t)isr_stub_4, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(5, (uint64_t)isr_stub_5, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(6, (uint64_t)isr_stub_6, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(7, (uint64_t)isr_stub_7, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(8, (uint64_t)isr_stub_8, 0x08, IDT_INTERRUPT_GATE, 1);
-    idt_set_entry(9, (uint64_t)isr_stub_9, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(10, (uint64_t)isr_stub_10, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(11, (uint64_t)isr_stub_11, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(12, (uint64_t)isr_stub_12, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(13, (uint64_t)isr_stub_13, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(14, (uint64_t)isr_stub_14, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(15, (uint64_t)isr_stub_15, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(16, (uint64_t)isr_stub_16, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(17, (uint64_t)isr_stub_17, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(18, (uint64_t)isr_stub_18, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(19, (uint64_t)isr_stub_19, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(20, (uint64_t)isr_stub_20, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(21, (uint64_t)isr_stub_21, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(22, (uint64_t)isr_stub_22, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(23, (uint64_t)isr_stub_23, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(24, (uint64_t)isr_stub_24, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(25, (uint64_t)isr_stub_25, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(26, (uint64_t)isr_stub_26, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(27, (uint64_t)isr_stub_27, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(28, (uint64_t)isr_stub_28, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(29, (uint64_t)isr_stub_29, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(30, (uint64_t)isr_stub_30, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(31, (uint64_t)isr_stub_31, 0x08, IDT_INTERRUPT_GATE, 0);
+    for (i = 0; i < 32; i++) {
+        uint8_t gate = (i == 3) ? IDT_USER_INTERRUPT : IDT_INTERRUPT_GATE;
+        uint8_t ist = 0;
+        if (i == 2) ist = 2;
+        if (i == 8) ist = 1;
+        idt_set_entry(i, (uint64_t)isr_stubs[i], 0x08, gate, ist);
+    }
 
-    idt_set_entry(32, (uint64_t)irq_stub_0, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(33, (uint64_t)irq_stub_1, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(34, (uint64_t)irq_stub_2, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(35, (uint64_t)irq_stub_3, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(36, (uint64_t)irq_stub_4, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(37, (uint64_t)irq_stub_5, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(38, (uint64_t)irq_stub_6, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(39, (uint64_t)irq_stub_7, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(40, (uint64_t)irq_stub_8, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(41, (uint64_t)irq_stub_9, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(42, (uint64_t)irq_stub_10, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(43, (uint64_t)irq_stub_11, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(44, (uint64_t)irq_stub_12, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(45, (uint64_t)irq_stub_13, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(46, (uint64_t)irq_stub_14, 0x08, IDT_INTERRUPT_GATE, 0);
-    idt_set_entry(47, (uint64_t)irq_stub_15, 0x08, IDT_INTERRUPT_GATE, 0);
+    for (i = 0; i < IRQ_COUNT; i++) {
+        idt_set_entry(IRQ_BASE + i, (uint64_t)irq_stubs[i], 0x08, IDT_INTERRUPT_GATE, 0);
+    }
 
     idt_set_entry(0x80, (uint64_t)syscall_stub, 0x08, IDT_USER_INTERRUPT, 0);
 

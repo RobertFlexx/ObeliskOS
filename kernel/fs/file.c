@@ -145,7 +145,8 @@ int close_fd(int fd) {
     proc->files->fds[fd].file = NULL;
     proc->files->fds[fd].flags = 0;
     
-    return vfs_close(file);
+    put_file(file);
+    return 0;
 }
 
 /* ==========================================================================

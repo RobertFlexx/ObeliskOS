@@ -11,6 +11,8 @@
 #include <mm/pmm.h>
 #include <mm/kmalloc.h>
 #include <arch/mmu.h>
+#include <proc/process.h>
+#include <fs/vfs.h>
 
 /* Kernel address space */
 static struct address_space kernel_as;
@@ -263,10 +265,10 @@ int vmm_remove_vma(struct address_space *as, struct vm_area *vma) {
 uint64_t vmm_prot_to_pte_flags(int prot) {
     uint64_t flags = PTE_PRESENT | PTE_USER;
     
-    if (prot & VMA_WRITE) {
+    if (prot & PROT_WRITE) {
         flags |= PTE_WRITABLE;
     }
-    
+    /* NX is intentionally not set until EFER.NXE is enabled in CPU init. */
     (void)prot;
 
     return flags;
@@ -277,27 +279,40 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
                int prot, int flags, struct file *file, off_t offset) {
     uint64_t start;
     uint64_t end;
-    
+    uint64_t pte_flags;
+
+    if (!as || !as->pt || length == 0) {
+        return MAP_FAILED;
+    }
+    if ((flags & MAP_ANONYMOUS) == 0) {
+        if (!file || offset < 0 || ((uint64_t)offset & (PAGE_SIZE - 1)) != 0) {
+            return MAP_FAILED;
+        }
+    }
+
     length = ALIGN_UP(length, PAGE_SIZE);
     
     if (flags & MAP_FIXED) {
         /* Fixed address requested */
         start = (uint64_t)addr;
+        if ((start & (PAGE_SIZE - 1)) != 0) {
+            return MAP_FAILED;
+        }
         start = ALIGN_DOWN(start, PAGE_SIZE);
     } else {
-        /* Find free region */
-        /* Simple linear search for now */
+        /* Find first suitable gap in user space. */
         start = USER_HEAP_BASE;
-        
-        struct vm_area *vma = as->vma_list;
-        while (vma) {
-            if (start + length <= vma->start) {
+        while (1) {
+            struct vm_area *vma;
+            end = start + length;
+            if (end < start || end > USER_SPACE_END) {
+                return MAP_FAILED;
+            }
+            vma = vmm_find_vma_intersection(as, start, end);
+            if (!vma) {
                 break;
             }
-            if (vma->end > start) {
-                start = vma->end;
-            }
-            vma = vma->next;
+            start = ALIGN_UP(vma->end, PAGE_SIZE);
         }
     }
     
@@ -308,12 +323,12 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
         return MAP_FAILED;
     }
     
-    /* Check for overlap with existing mappings */
-    if (vmm_find_vma_intersection(as, start, end)) {
-        if (flags & VMA_FIXED) {
+    /* Linux-like MAP_FIXED semantics: replace overlapping mappings. */
+    if (flags & MAP_FIXED) {
+        if (vmm_munmap(as, (void *)start, length) != 0) {
             return MAP_FAILED;
         }
-        /* Try to find another location */
+    } else if (vmm_find_vma_intersection(as, start, end)) {
         return MAP_FAILED;
     }
     
@@ -340,10 +355,39 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
         vmm_free_vma(vma);
         return MAP_FAILED;
     }
-    
-    /* For anonymous mappings, we can optionally pre-allocate pages */
-    /* For now, we use demand paging */
-    
+
+    pte_flags = vmm_prot_to_pte_flags(prot);
+
+    /* For file-backed mappings, eagerly populate page cache view:
+     * - page-aligned file offsets
+     * - zero-fill short reads / EOF tail
+     * This matches dynamic-loader segment expectations better than pure demand-zero. */
+    if ((flags & MAP_ANONYMOUS) == 0 && file) {
+        for (uint64_t vaddr = start; vaddr < end; vaddr += PAGE_SIZE) {
+            uint64_t phys = pmm_alloc_page();
+            off_t read_off = offset + (off_t)(vaddr - start);
+            int ret;
+
+            if (!phys) {
+                vmm_munmap(as, (void *)start, length);
+                return MAP_FAILED;
+            }
+            memset(PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
+            if (mmu_map(as->pt, vaddr, phys, pte_flags) != 0) {
+                pmm_free_page(phys);
+                vmm_munmap(as, (void *)start, length);
+                return MAP_FAILED;
+            }
+
+            ret = vfs_read(file, PHYS_TO_VIRT(phys), PAGE_SIZE, &read_off);
+            if (ret < 0) {
+                vmm_munmap(as, (void *)start, length);
+                return MAP_FAILED;
+            }
+            /* short read/EOF remains zero-filled */
+        }
+    }
+
     return (void *)start;
 }
 
@@ -573,34 +617,88 @@ void vmm_unmap_physical(void *virt, size_t size) {
  * User Memory Access
  * ========================================================================== */
 
+static int vmm_verify_user_range(const void *addr, size_t size, bool write) {
+    struct process *proc = current;
+    struct address_space *as;
+    uintptr_t start;
+    uintptr_t end;
+    uintptr_t page;
+
+    if (!addr) {
+        return -EFAULT;
+    }
+    if (size == 0) {
+        return 0;
+    }
+
+    start = (uintptr_t)addr;
+    if (start >= USER_SPACE_END) {
+        return -EFAULT;
+    }
+    if (size > (USER_SPACE_END - start)) {
+        return -EFAULT;
+    }
+
+    if (!proc || !proc->mm || !proc->mm->pt) {
+        return -EFAULT;
+    }
+    as = proc->mm;
+    end = start + size;
+
+    for (page = ALIGN_DOWN(start, PAGE_SIZE); page < end; page += PAGE_SIZE) {
+        uint64_t phys = mmu_resolve(as->pt, page);
+        uint64_t flags;
+        if (!phys) {
+            return -EFAULT;
+        }
+        flags = mmu_get_flags(as->pt, page);
+        if (!(flags & PTE_PRESENT) || !(flags & PTE_USER)) {
+            return -EFAULT;
+        }
+        if (write && !(flags & PTE_WRITABLE)) {
+            return -EFAULT;
+        }
+    }
+
+    return 0;
+}
+
 /* Copy from user space */
 int vmm_copy_from_user(void *dst, const void *src, size_t size) {
-    /* TODO: Verify user address and handle faults */
+    int ret;
+    if (!dst) {
+        return -EFAULT;
+    }
+    ret = vmm_verify_user_range(src, size, false);
+    if (ret < 0) {
+        return ret;
+    }
     memcpy(dst, src, size);
     return 0;
 }
 
 /* Copy to user space */
 int vmm_copy_to_user(void *dst, const void *src, size_t size) {
-    /* TODO: Verify user address and handle faults */
+    int ret;
+    if (!src) {
+        return -EFAULT;
+    }
+    ret = vmm_verify_user_range(dst, size, true);
+    if (ret < 0) {
+        return ret;
+    }
     memcpy(dst, src, size);
     return 0;
 }
 
 /* Verify user read access */
 int vmm_verify_user_read(const void *addr, size_t size) {
-    /* TODO: Check VMA permissions */
-    (void)addr;
-    (void)size;
-    return 0;
+    return vmm_verify_user_range(addr, size, false);
 }
 
 /* Verify user write access */
 int vmm_verify_user_write(void *addr, size_t size) {
-    /* TODO: Check VMA permissions */
-    (void)addr;
-    (void)size;
-    return 0;
+    return vmm_verify_user_range(addr, size, true);
 }
 
 /* ==========================================================================

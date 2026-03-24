@@ -11,6 +11,16 @@
 #include <mm/kmalloc.h>
 #include <mm/vmm.h>
 #include <fs/vfs.h>
+#include <fs/file.h>
+
+#ifndef CONFIG_PROC_TRACE
+#define CONFIG_PROC_TRACE 0
+#endif
+#if CONFIG_PROC_TRACE
+#define PROC_LOG(...) printk(KERN_INFO __VA_ARGS__)
+#else
+#define PROC_LOG(...) do { } while (0)
+#endif
 
 /* Process ID allocation */
 pid_t next_pid = 1;
@@ -127,7 +137,7 @@ struct fd_table *fd_table_clone(struct fd_table *old) {
         if (old->fds[i].file) {
             new->fds[i].file = old->fds[i].file;
             new->fds[i].flags = old->fds[i].flags;
-            /* TODO: Increment file refcount */
+            get_file(new->fds[i].file);
         }
     }
     
@@ -143,7 +153,9 @@ void fd_table_free(struct fd_table *fdt) {
         /* Close all files */
         for (size_t i = 0; i < fdt->max_fds; i++) {
             if (fdt->fds[i].file) {
-                /* TODO: Close file */
+                put_file(fdt->fds[i].file);
+                fdt->fds[i].file = NULL;
+                fdt->fds[i].flags = 0;
             }
         }
         
@@ -339,7 +351,7 @@ struct process *process_create(const char *name, uint32_t flags) {
         list_add(&proc->sibling, &proc->parent->children);
     }
     
-    printk(KERN_DEBUG "Created process '%s' (pid=%d)\n", proc->comm, proc->pid);
+    PROC_LOG("proc: created '%s' (pid=%d)\n", proc->comm, proc->pid);
     
     return proc;
 }
@@ -347,7 +359,7 @@ struct process *process_create(const char *name, uint32_t flags) {
 void process_destroy(struct process *proc) {
     if (!proc) return;
     
-    printk(KERN_DEBUG "Destroying process '%s' (pid=%d)\n", proc->comm, proc->pid);
+    PROC_LOG("proc: destroy '%s' (pid=%d)\n", proc->comm, proc->pid);
     
     /* Remove from all lists */
     list_del(&proc->tasks);
@@ -407,7 +419,12 @@ static void create_idle_process(void) {
     }
     
     idle_process->state = PROC_STATE_READY;
-    idle_process->context.rip = (uint64_t)idle_thread;
+    {
+        uint64_t top = (uint64_t)idle_process->kernel_stack + idle_process->kernel_stack_size;
+        idle_process->context.rsp = top - sizeof(uint64_t);
+        *(uint64_t *)idle_process->context.rsp = (uint64_t)idle_thread;
+        idle_process->context.rip = (uint64_t)idle_thread;
+    }
     
     printk(KERN_INFO "Created idle process (pid=%d)\n", idle_process->pid);
 }
@@ -476,6 +493,9 @@ void process_set_init_path(const char *path) {
     strncpy(init_exec_path, path, sizeof(init_exec_path) - 1);
     init_exec_path[sizeof(init_exec_path) - 1] = '\0';
     if (init_process) {
+        uint64_t top = (uint64_t)init_process->kernel_stack + init_process->kernel_stack_size;
+        init_process->context.rsp = top - sizeof(uint64_t);
+        *(uint64_t *)init_process->context.rsp = (uint64_t)init_bootstrap_thread;
         init_process->context.rip = (uint64_t)init_bootstrap_thread;
         init_process->state = PROC_STATE_READY;
     }
@@ -500,6 +520,11 @@ void process_init(void) {
     
     /* Create init process */
     create_init_process();
+    {
+        uint64_t top = (uint64_t)init_process->kernel_stack + init_process->kernel_stack_size;
+        init_process->context.rsp = top - sizeof(uint64_t);
+        *(uint64_t *)init_process->context.rsp = (uint64_t)init_bootstrap_thread;
+    }
     init_process->context.rip = (uint64_t)init_bootstrap_thread;
     init_process->state = PROC_STATE_READY;
     

@@ -14,11 +14,14 @@ endif
 CC := $(CROSS_COMPILE)gcc
 CXX := $(CROSS_COMPILE)g++
 AR := $(CROSS_COMPILE)ar
+DMD ?= dmd
+DFLAGS := -betterC -m64 -O -release -boundscheck=off
 
 BUILDDIR := build
 OUTDIR := $(BUILDDIR)/out
 LIBC_DIR := libc
 INIT_DIR := init
+INITD_DIR := initd
 BIN_DIR := bin
 
 LIBC_OBJS := \
@@ -28,13 +31,20 @@ LIBC_OBJS := \
 
 LIBC := $(BUILDDIR)/libc.a
 INIT := $(OUTDIR)/init
+OBELISKD := $(OUTDIR)/obeliskd
 SYSCTL := $(OUTDIR)/sysctl
 INSTALLER := $(OUTDIR)/installer
 INSTALLER_TUI := $(OUTDIR)/installer-tui
 BUSYBOX := $(OUTDIR)/busybox
 IDCPP := $(OUTDIR)/idcpp
+STATCPP := $(OUTDIR)/statcpp
+CREDPROBE := $(OUTDIR)/credprobe
+SETUIDCHECK := $(OUTDIR)/setuidcheck
+EXECPROBE := $(OUTDIR)/execprobe
+TRAVERSEPROBE := $(OUTDIR)/traverseprobe
+MKSTATPROBE := $(OUTDIR)/mkstatprobe
 
-PROGRAMS := $(INIT) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE)
 
 CFLAGS := \
 	-ffreestanding \
@@ -83,6 +93,11 @@ $(BUILDDIR)/%.o: %.cpp | $(BUILDDIR)
 	@echo "  CXX     $<"
 	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
+$(BUILDDIR)/%.o: %.d | $(BUILDDIR)
+	@mkdir -p $(dir $@)
+	@echo "  DMD     $<"
+	@$(DMD) $(DFLAGS) -c $< -of$@
+
 $(LIBC): $(LIBC_OBJS)
 	@echo "  AR      $@"
 	@$(AR) rcs $@ $^
@@ -90,6 +105,10 @@ $(LIBC): $(LIBC_OBJS)
 $(INIT): $(BUILDDIR)/init/init.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $<
+
+$(OBELISKD): $(BUILDDIR)/initd/main.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
 $(SYSCTL): $(BUILDDIR)/bin/sysctl/sysctl.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
@@ -108,6 +127,30 @@ $(BUSYBOX): $(BUILDDIR)/bin/busybox/busybox.o $(LIBC) | $(OUTDIR)
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
 $(IDCPP): $(BUILDDIR)/bin/idcpp/idcpp.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(STATCPP): $(BUILDDIR)/bin/statcpp/statcpp.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(CREDPROBE): $(BUILDDIR)/bin/credprobe/credprobe.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(SETUIDCHECK): $(BUILDDIR)/bin/setuidcheck/setuidcheck.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(EXECPROBE): $(BUILDDIR)/bin/execprobe/execprobe.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(TRAVERSEPROBE): $(BUILDDIR)/bin/traverseprobe/traverseprobe.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(MKSTATPROBE): $(BUILDDIR)/bin/mkstatprobe/mkstatprobe.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
 

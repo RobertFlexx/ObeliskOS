@@ -7,6 +7,7 @@
 KERNEL_DIR := kernel
 USERLAND_DIR := userland
 TOOLS_DIR := tools
+DIAG_DIR := $(TOOLS_DIR)/diagnostics
 BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
 ROOTFS_DIR := $(BUILD_DIR)/rootfs
@@ -31,7 +32,8 @@ QEMU_GRAPHICAL_FLAGS := -vga std -display $(QEMU_DISPLAY) -serial vc
 QEMU_SERIAL_FLAGS := -nographic -monitor none -chardev stdio,mux=on,signal=off,id=char0 -serial chardev:char0
 
 # Host userland import settings (real zsh/coreutils from host)
-IMPORT_HOST_USERLAND ?= 1
+IMPORT_HOST_USERLAND ?= 0
+EXPERIMENTAL_DYNAMIC_ELF ?= 0
 HOST_ZSH_BIN ?= /usr/bin/zsh
 HOST_COREUTILS_BINS ?= ls cat cp mv rm mkdir rmdir ln chmod chown pwd uname date head tail wc sort uniq cut tr tee sleep true false env printenv id whoami
 HOST_USERLAND_IMPORT_SCRIPT := $(TOOLS_DIR)/import-host-userland.sh
@@ -49,7 +51,7 @@ all: iso
 .PHONY: kernel
 kernel:
 	@echo "Building kernel..."
-	@$(MAKE) -C $(KERNEL_DIR)
+	@$(MAKE) -C $(KERNEL_DIR) EXPERIMENTAL_DYNAMIC_ELF=$(EXPERIMENTAL_DYNAMIC_ELF)
 	@mkdir -p $(BUILD_DIR)
 	@cp $(KERNEL_DIR)/build/kernel.elf $(KERNEL)
 
@@ -63,8 +65,12 @@ userland:
 .PHONY: rootfs
 rootfs: userland
 	@echo "Packaging root filesystem..."
-	@mkdir -p $(ROOTFS_DIR)/sbin $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/usr/bin $(ROOTFS_DIR)/usr/lib $(ROOTFS_DIR)/usr/lib64 $(ROOTFS_DIR)/lib $(ROOTFS_DIR)/lib64 $(ROOTFS_DIR)/etc/axiomd/policy $(ROOTFS_DIR)/etc $(ROOTFS_DIR)/var/log $(ROOTFS_DIR)/tmp $(ROOTFS_DIR)/proc $(ROOTFS_DIR)/dev
-	@cp $(USERLAND_OUT_DIR)/init $(ROOTFS_DIR)/sbin/init
+	@rm -rf "$(ROOTFS_DIR)"
+	@mkdir -p $(ROOTFS_DIR)/sbin $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/usr/bin $(ROOTFS_DIR)/usr/lib $(ROOTFS_DIR)/usr/lib64 $(ROOTFS_DIR)/lib $(ROOTFS_DIR)/lib64 $(ROOTFS_DIR)/etc/axiomd/policy $(ROOTFS_DIR)/etc $(ROOTFS_DIR)/var/log $(ROOTFS_DIR)/tmp $(ROOTFS_DIR)/proc $(ROOTFS_DIR)/dev $(ROOTFS_DIR)/home/obelisk
+	@chmod 1777 $(ROOTFS_DIR)/tmp
+	@chmod 1777 $(ROOTFS_DIR)/tmp
+	@cp $(USERLAND_OUT_DIR)/obeliskd $(ROOTFS_DIR)/sbin/init
+	@cp $(USERLAND_OUT_DIR)/init $(ROOTFS_DIR)/sbin/init-legacy
 	@cp $(USERLAND_OUT_DIR)/sysctl $(ROOTFS_DIR)/sbin/sysctl
 	@cp $(USERLAND_OUT_DIR)/installer $(ROOTFS_DIR)/sbin/installer
 	@cp $(USERLAND_OUT_DIR)/installer-tui $(ROOTFS_DIR)/sbin/installer-tui
@@ -74,22 +80,29 @@ rootfs: userland
 	@cp $(USERLAND_DIR)/axiomd/policy/access.pro $(ROOTFS_DIR)/etc/axiomd/policy/access.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/allocation.pro $(ROOTFS_DIR)/etc/axiomd/policy/allocation.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/inheritance.pro $(ROOTFS_DIR)/etc/axiomd/policy/inheritance.pro
-	@for tool in busybox sh zsh su sudo idcpp ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar; do \
+	@for tool in busybox sh zsh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar; do \
 		if [ -f "$(USERLAND_OUT_DIR)/$$tool" ]; then \
 			cp "$(USERLAND_OUT_DIR)/$$tool" "$(ROOTFS_DIR)/bin/$$tool"; \
 		fi; \
 	done
 	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sh" ]; then \
-		ln -sf /bin/busybox "$(ROOTFS_DIR)/bin/sh"; \
+		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/sh"; \
 	fi
 	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/zsh" ]; then \
-		ln -sf /bin/busybox "$(ROOTFS_DIR)/bin/zsh"; \
+		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/zsh"; \
 	fi
 	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/su" ]; then \
-		ln -sf /bin/busybox "$(ROOTFS_DIR)/bin/su"; \
+		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/su"; \
 	fi
 	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sudo" ]; then \
-		ln -sf /bin/busybox "$(ROOTFS_DIR)/bin/sudo"; \
+		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/sudo"; \
+	fi
+	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ]; then \
+		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id uname date head tail wc sort uniq cut tr tee sleep true false env printenv; do \
+			if [ ! -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
+				cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/$$app"; \
+			fi; \
+		done; \
 	fi
 	@if [ -d "$(ROOTFS_OVERLAY_DIR)" ]; then \
 		echo "Applying rootfs overlay from $(ROOTFS_OVERLAY_DIR)..."; \
@@ -102,7 +115,7 @@ rootfs: userland
 	@printf "%s\n" \
 		"Obelisk OS early userspace image" \
 		"Use /sbin/installer or /sbin/installer-tui to stage an installation." \
-		"Host zsh/coreutils import is enabled by default (set IMPORT_HOST_USERLAND=0 to disable)." \
+		"Static-only default image. Host zsh/coreutils import is disabled unless IMPORT_HOST_USERLAND=1." \
 		> "$(ROOTFS_DIR)/etc/motd"
 	@tar -C $(ROOTFS_DIR) -cf $(ROOTFS_TAR) .
 
@@ -163,6 +176,41 @@ debug: iso
 run-verbose: iso
 	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_SERIAL_FLAGS) -d int -cdrom $(ISO) 2>&1 | head -1000
 
+# Diagnostics helpers
+.PHONY: diag-capture
+diag-capture:
+	@bash "$(DIAG_DIR)/capture-run-serial.sh" "$(or $(TIMEOUT),180)"
+
+.PHONY: diag-repro
+diag-repro:
+	@REPRO_CMD="$(or $(CMD),sudo ls)" BOOT_WAIT_SEC="$(or $(BOOT_WAIT),25)" POST_CMD_WAIT_SEC="$(or $(POST_WAIT),10)" \
+		bash "$(DIAG_DIR)/repro-run-serial.sh" "$(or $(TIMEOUT),240)"
+
+.PHONY: diag-extract
+diag-extract:
+	@if [ -z "$(LOG)" ]; then \
+		echo "Usage: make diag-extract LOG=build/diagnostics/<run-log>.log"; \
+		exit 1; \
+	fi
+	@bash "$(DIAG_DIR)/extract-panic.sh" "$(LOG)"
+
+.PHONY: diag-symbolicate
+diag-symbolicate:
+	@if [ -z "$(LOG)" ]; then \
+		echo "Usage: make diag-symbolicate LOG=build/diagnostics/<run-log>.log [KERNEL_ELF=build/kernel.elf]"; \
+		exit 1; \
+	fi
+	@bash "$(DIAG_DIR)/symbolicate-panic.sh" "$(or $(KERNEL_ELF),$(KERNEL))" "$(LOG)"
+
+.PHONY: diag-triage
+diag-triage:
+	@bash "$(DIAG_DIR)/triage-panic.sh" "$(or $(TIMEOUT),180)"
+
+.PHONY: diag-triage-repro
+diag-triage-repro:
+	@MODE=repro REPRO_CMD="$(or $(CMD),sudo ls)" BOOT_WAIT_SEC="$(or $(BOOT_WAIT),25)" POST_CMD_WAIT_SEC="$(or $(POST_WAIT),10)" \
+		bash "$(DIAG_DIR)/triage-panic.sh" "$(or $(TIMEOUT),240)"
+
 # Clean everything
 .PHONY: clean
 clean:
@@ -187,6 +235,12 @@ help:
 	@echo "  run-sdl    - Run in QEMU with SDL display fallback"
 	@echo "  run-kvm    - Run in QEMU with KVM acceleration"
 	@echo "  debug      - Run in QEMU with GDB server"
+	@echo "  diag-capture     - Capture a serial run log (TIMEOUT=<sec>)"
+	@echo "  diag-repro       - Capture serial run with injected CMD (default: sudo ls)"
+	@echo "  diag-extract     - Extract last panic block (LOG=<path>)"
+	@echo "  diag-symbolicate - Map panic addresses to symbols (LOG=<path>)"
+	@echo "  diag-triage      - Capture + extract + symbolicate in one step"
+	@echo "  diag-triage-repro - Repro capture + extract + symbolicate in one step"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  help       - Show this help message"
 	@echo ""

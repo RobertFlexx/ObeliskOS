@@ -30,6 +30,21 @@ static int num_policies = 0;
 static uint64_t total_switches = 0;
 static struct thread_info scheduler_ti;
 
+static inline bool run_list_linked(const struct process *p) {
+    return p && p->run_list.next != &p->run_list && p->run_list.prev != &p->run_list;
+}
+
+static inline bool process_schedulable(const struct process *p) {
+    if (!p) return false;
+    if (p->state == PROC_STATE_ZOMBIE || p->state == PROC_STATE_DEAD) return false;
+    if (p->flags & PROC_FLAG_EXITING) return false;
+    return true;
+}
+
+static inline bool policy_ready(const struct sched_policy_ops *ops) {
+    return ops && ops->enqueue && ops->dequeue && ops->pick_next && ops->time_slice;
+}
+
 struct thread_info *current_thread_info(void) {
     return &scheduler_ti;
 }
@@ -51,6 +66,7 @@ static void rr_enqueue(struct run_queue *rq, struct process *p) {
     
     if (prio < 0) prio = 0;
     if (prio >= MAX_PRIO) prio = MAX_PRIO - 1;
+    if (!p || run_list_linked(p)) return;
     
     list_add_tail(&p->run_list, &rq->queues[prio]);
     rq->bitmap[prio / 64] |= (1UL << (prio % 64));
@@ -59,6 +75,7 @@ static void rr_enqueue(struct run_queue *rq, struct process *p) {
 
 static void rr_dequeue(struct run_queue *rq, struct process *p) {
     int prio = p->priority;
+    if (!p || !run_list_linked(p)) return;
     
     list_del(&p->run_list);
     INIT_LIST_HEAD(&p->run_list);
@@ -151,6 +168,10 @@ static struct sched_policy_ops rr_policy = {
 
 void scheduler_enqueue(struct process *p) {
     if (!p || p == runqueue.idle) return;
+    if (!process_schedulable(p)) return;
+    if (!policy_ready(current_policy)) {
+        panic("scheduler_enqueue: policy not initialized");
+    }
     
     p->state = PROC_STATE_READY;
     p->time_slice = current_policy->time_slice(p);
@@ -159,6 +180,9 @@ void scheduler_enqueue(struct process *p) {
 
 void scheduler_dequeue(struct process *p) {
     if (!p || p == runqueue.idle) return;
+    if (!policy_ready(current_policy)) {
+        panic("scheduler_dequeue: policy not initialized");
+    }
     
     current_policy->dequeue(&runqueue, p);
 }
@@ -169,12 +193,15 @@ void schedule(void) {
     struct run_queue *rq = &runqueue;
     
     cli();  /* Disable interrupts */
+    if (!policy_ready(current_policy)) {
+        panic("schedule: invalid scheduler policy");
+    }
     
     prev = rq->curr;
     
     /* Handle previous process */
     if (prev) {
-        if (prev->state == PROC_STATE_RUNNING) {
+        if (prev->state == PROC_STATE_RUNNING && prev != rq->idle && process_schedulable(prev)) {
             prev->state = PROC_STATE_READY;
             current_policy->enqueue(rq, prev);
         }
@@ -182,6 +209,12 @@ void schedule(void) {
     
     /* Pick next process */
     next = current_policy->pick_next(rq);
+    if (!next) {
+        next = rq->idle;
+    }
+    if (next && next != rq->idle && !process_schedulable(next)) {
+        next = rq->idle;
+    }
     
     if (next != prev) {
         rq->nr_switches++;
@@ -254,6 +287,7 @@ void scheduler_exit(void) {
     struct process *p = current;
     
     if (p) {
+        p->flags |= PROC_FLAG_EXITING;
         p->state = PROC_STATE_ZOMBIE;
         
         /* Wake up parent */
@@ -278,7 +312,9 @@ void scheduler_sleep(struct process *p, wait_queue_head_t *wq) {
     cli();
     
     p->state = PROC_STATE_BLOCKED;
-    scheduler_dequeue(p);
+    if (run_list_linked(p)) {
+        scheduler_dequeue(p);
+    }
     
     /* TODO: Add to wait queue */
     (void)wq;
@@ -300,7 +336,9 @@ void scheduler_sleep_timeout(struct process *p, uint64_t timeout_ms) {
     if (!p) return;
     
     p->state = PROC_STATE_SLEEPING;
-    scheduler_dequeue(p);
+    if (run_list_linked(p)) {
+        scheduler_dequeue(p);
+    }
     
     /* TODO: Set up timer to wake process */
     (void)timeout_ms;
@@ -351,6 +389,9 @@ int scheduler_get_policy(struct process *p) {
 }
 
 int scheduler_register_policy(struct sched_policy_ops *ops) {
+    if (!ops || !ops->name || !ops->enqueue || !ops->dequeue || !ops->pick_next || !ops->time_slice) {
+        return -EINVAL;
+    }
     if (num_policies >= MAX_SCHED_POLICIES) {
         return -ENOMEM;
     }
@@ -425,7 +466,9 @@ void scheduler_init(void) {
     }
     
     /* Register default policy */
-    scheduler_register_policy(&rr_policy);
+    if (scheduler_register_policy(&rr_policy) < 0) {
+        panic("scheduler_init: failed to register default policy");
+    }
     current_policy = &rr_policy;
     
     /* Set idle process */

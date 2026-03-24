@@ -27,6 +27,19 @@ struct kmem_cache *inode_cache;
 struct kmem_cache *dentry_cache;
 struct kmem_cache *file_cache;
 
+static int vfs_check_permission(struct inode *inode, int mask) {
+    if (!inode) {
+        return -ENOENT;
+    }
+    if (mask == 0) {
+        return 0;
+    }
+    if (inode->i_op && inode->i_op->permission) {
+        return inode->i_op->permission(inode, mask);
+    }
+    return generic_permission(inode, mask);
+}
+
 static bool vfs_trace_path(const char *pathname) {
     (void)pathname;
     return false;
@@ -267,6 +280,16 @@ struct dentry *vfs_lookup(const char *pathname) {
         }
         len = p - pathname;
         
+        /* Enforce search permission on each traversed directory. */
+        if (!dentry->d_inode || !S_ISDIR(dentry->d_inode->i_mode)) {
+            dput(dentry);
+            return NULL;
+        }
+        if (vfs_check_permission(dentry->d_inode, MAY_EXEC) < 0) {
+            dput(dentry);
+            return NULL;
+        }
+
         /* Lookup component */
         if (trace) {
             char comp[64];
@@ -348,7 +371,25 @@ struct file *vfs_open(const char *pathname, int flags, mode_t mode) {
     }
     
     /* Check permissions */
-    /* TODO: Proper permission checking */
+    {
+        int acc_mask = 0;
+        int accmode = flags & O_ACCMODE;
+        if (accmode == O_RDONLY) {
+            acc_mask |= MAY_READ;
+        } else if (accmode == O_WRONLY) {
+            acc_mask |= MAY_WRITE;
+        } else {
+            acc_mask |= MAY_READ | MAY_WRITE;
+        }
+        if (flags & O_TRUNC) {
+            acc_mask |= MAY_WRITE;
+        }
+        ret = vfs_check_permission(inode, acc_mask);
+        if (ret < 0) {
+            dput(dentry);
+            return ERR_PTR(ret);
+        }
+    }
     
     /* Allocate file structure */
     file = kmem_cache_zalloc(file_cache);
@@ -552,6 +593,11 @@ int vfs_create(const char *pathname, mode_t mode) {
         dput(parent);
         return -ENOTDIR;
     }
+    ret = vfs_check_permission(dir, MAY_WRITE | MAY_EXEC);
+    if (ret < 0) {
+        dput(parent);
+        return ret;
+    }
     
     if (!dir->i_op || !dir->i_op->create) {
         dput(parent);
@@ -620,6 +666,11 @@ int vfs_mkdir(const char *pathname, mode_t mode) {
         dput(parent);
         return -ENOTDIR;
     }
+    ret = vfs_check_permission(dir, MAY_WRITE | MAY_EXEC);
+    if (ret < 0) {
+        dput(parent);
+        return ret;
+    }
     
     if (!dir->i_op || !dir->i_op->mkdir) {
         dput(parent);
@@ -666,6 +717,11 @@ int vfs_rmdir(const char *pathname) {
     }
     
     dir = parent->d_inode;
+    ret = vfs_check_permission(dir, MAY_WRITE | MAY_EXEC);
+    if (ret < 0) {
+        dput(dentry);
+        return ret;
+    }
     if (!dir->i_op || !dir->i_op->rmdir) {
         dput(dentry);
         return -EROFS;
@@ -706,6 +762,11 @@ int vfs_unlink(const char *pathname) {
     }
     
     dir = parent->d_inode;
+    ret = vfs_check_permission(dir, MAY_WRITE | MAY_EXEC);
+    if (ret < 0) {
+        dput(dentry);
+        return ret;
+    }
     if (!dir->i_op || !dir->i_op->unlink) {
         dput(dentry);
         return -EROFS;

@@ -10,6 +10,7 @@
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <fs/vfs.h>
+#include <fs/inode.h>
 #include <uapi/syscall.h>
 
 /* ELF definitions */
@@ -65,6 +66,20 @@ struct elf64_phdr {
 #define MAX_ARG_PAGES   32
 #define MAX_ARG_STRLEN  4096
 #define MAX_ARGC        256
+
+#ifndef CONFIG_EXPERIMENTAL_DYNAMIC_ELF
+#define CONFIG_EXPERIMENTAL_DYNAMIC_ELF 0
+#endif
+
+#ifndef CONFIG_EXEC_TRACE
+#define CONFIG_EXEC_TRACE 0
+#endif
+
+#if CONFIG_EXEC_TRACE
+#define EXEC_LOG(...) printk(KERN_INFO __VA_ARGS__)
+#else
+#define EXEC_LOG(...) do { } while (0)
+#endif
 
 /* Minimal auxv entries for libc-compatible startup */
 #define AT_NULL         0
@@ -295,8 +310,8 @@ static int validate_elf(struct elf64_hdr *hdr) {
 }
 
 /*
- * Obelisk currently supports only static ET_EXEC binaries.
- * Dynamic/PIE binaries require PT_INTERP + auxv + dynamic linker handoff.
+ * Dynamic PT_INTERP execution is gated behind EXPERIMENTAL_DYNAMIC_ELF.
+ * Default builds remain static-first for release stability.
  */
 static int validate_exec_format(struct file *file, struct elf64_hdr *hdr) {
     struct elf64_phdr phdr;
@@ -315,8 +330,11 @@ static int validate_exec_format(struct file *file, struct elf64_hdr *hdr) {
         }
     }
 
-    /* PT_INTERP is handled by do_execve trampoline path. */
-    (void)has_interp;
+    if (has_interp && !CONFIG_EXPERIMENTAL_DYNAMIC_ELF) {
+        printk(KERN_WARNING
+               "exec: PT_INTERP binary rejected (experimental dynamic ELF disabled)\n");
+        return -ENOEXEC;
+    }
 
     return 0;
 }
@@ -349,8 +367,8 @@ static int load_elf_segments(struct process *proc, struct file *file,
             continue;
         }
         uint64_t seg_vaddr = phdr.p_vaddr + load_bias;
-        printk(KERN_INFO "exec: PT_LOAD[%d] vaddr=0x%lx filesz=%lu memsz=%lu flags=0x%x\n",
-               i, seg_vaddr, phdr.p_filesz, phdr.p_memsz, phdr.p_flags);
+        EXEC_LOG("exec: PT_LOAD[%d] vaddr=0x%lx filesz=%lu memsz=%lu flags=0x%x\n",
+                 i, seg_vaddr, phdr.p_filesz, phdr.p_memsz, phdr.p_flags);
         
         /* Calculate memory region */
         uint64_t start = ALIGN_DOWN(seg_vaddr, PAGE_SIZE);
@@ -527,9 +545,7 @@ static int setup_user_stack(struct process *proc, char *const argv[],
         argv_ptrs[i] = sp_val;
     }
 
-    if (argc > 0) {
-        execfn_ptr = argv_ptrs[0];
-    } else if (filename) {
+    if (filename) {
         size_t len = strlen(filename) + 1;
         if (sp_val < stack_bottom + len) return -E2BIG;
         sp_val -= len;
@@ -556,10 +572,10 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     auxv[auxc++] = (struct auxv_pair){ AT_BASE,   img ? img->load_bias : 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_FLAGS,  0 };
     auxv[auxc++] = (struct auxv_pair){ AT_ENTRY,  img ? img->entry : 0 };
-    auxv[auxc++] = (struct auxv_pair){ AT_UID,    0 };
-    auxv[auxc++] = (struct auxv_pair){ AT_EUID,   0 };
-    auxv[auxc++] = (struct auxv_pair){ AT_GID,    0 };
-    auxv[auxc++] = (struct auxv_pair){ AT_EGID,   0 };
+    auxv[auxc++] = (struct auxv_pair){ AT_UID,    (proc && proc->cred) ? proc->cred->uid  : 0 };
+    auxv[auxc++] = (struct auxv_pair){ AT_EUID,   (proc && proc->cred) ? proc->cred->euid : 0 };
+    auxv[auxc++] = (struct auxv_pair){ AT_GID,    (proc && proc->cred) ? proc->cred->gid  : 0 };
+    auxv[auxc++] = (struct auxv_pair){ AT_EGID,   (proc && proc->cred) ? proc->cred->egid : 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_PLATFORM, platform_ptr };
     auxv[auxc++] = (struct auxv_pair){ AT_CLKTCK, 100 };
     auxv[auxc++] = (struct auxv_pair){ AT_SECURE, 0 };
@@ -603,8 +619,8 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     
     *sp = sp_val;
     proc->mm->start_stack = sp_val;
-    printk(KERN_INFO "exec: user stack ready top=0x%lx sp=0x%lx argc=%d envc=%d\n",
-           stack_top, sp_val, argc, envc);
+    EXEC_LOG("exec: user stack ready top=0x%lx sp=0x%lx argc=%d envc=%d\n",
+             stack_top, sp_val, argc, envc);
     exec_debug_dump_stack(proc, sp_val, argc, envc, filename);
     
     return 0;
@@ -633,20 +649,40 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     memset(&interp_img, 0, sizeof(interp_img));
     memset(&stack_img, 0, sizeof(stack_img));
     
-    printk(KERN_INFO "exec: begin %s pid=%d\n", filename, proc ? proc->pid : -1);
+    EXEC_LOG("exec: begin %s pid=%d\n", filename, proc ? proc->pid : -1);
     
     /* Open executable */
-    printk(KERN_INFO "exec: opening %s\n", filename);
+    EXEC_LOG("exec: opening %s\n", filename);
     file = vfs_open(filename, O_RDONLY, 0);
     if (IS_ERR(file)) {
-        printk(KERN_ERR "exec: open failed for %s: %ld\n", filename, PTR_ERR(file));
-        return PTR_ERR(file);
+        long err = PTR_ERR(file);
+        /* PATH probing frequently hits ENOENT; keep that quiet. */
+        if (err != -ENOENT) {
+            printk(KERN_ERR "exec: open failed for %s: %ld\n", filename, err);
+        } else {
+            EXEC_LOG("exec: open failed for %s: %ld\n", filename, err);
+        }
+        return err;
     }
-    printk(KERN_INFO "exec: opened %s\n", filename);
+    EXEC_LOG("exec: opened %s\n", filename);
+
+    if (!file->f_dentry || !file->f_dentry->d_inode) {
+        vfs_close(file);
+        return -ENOENT;
+    }
+    if (file->f_dentry->d_inode->i_op && file->f_dentry->d_inode->i_op->permission) {
+        ret = file->f_dentry->d_inode->i_op->permission(file->f_dentry->d_inode, MAY_EXEC);
+    } else {
+        ret = generic_permission(file->f_dentry->d_inode, MAY_EXEC);
+    }
+    if (ret < 0) {
+        vfs_close(file);
+        return ret;
+    }
     
     /* Read ELF header */
     off_t offset = 0;
-    printk(KERN_INFO "exec: reading ELF header\n");
+    EXEC_LOG("exec: reading ELF header\n");
     ret = vfs_read(file, &hdr, sizeof(hdr), &offset);
     if (ret != sizeof(hdr)) {
         printk(KERN_ERR "exec: failed reading ELF header ret=%d expected=%lu\n",
@@ -654,7 +690,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         vfs_close(file);
         return -EIO;
     }
-    printk(KERN_INFO "exec: ELF header read complete\n");
+    EXEC_LOG("exec: ELF header read complete\n");
     
     /* Validate ELF */
     ret = validate_elf(&hdr);
@@ -701,7 +737,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
                         }
                         sh_argv[k] = NULL;
                         vfs_close(file);
-                        printk(KERN_INFO "exec: shebang '%s' via %s\n", filename, interp);
+                        EXEC_LOG("exec: shebang '%s' via %s\n", filename, interp);
                         ret = do_execve(interp, sh_argv, envp);
                         kfree(sh_argv);
                         return ret;
@@ -712,7 +748,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         vfs_close(file);
         return ret;
     }
-    printk(KERN_INFO "exec: ELF validated entry=0x%lx phnum=%u\n", hdr.e_entry, hdr.e_phnum);
+    EXEC_LOG("exec: ELF validated entry=0x%lx phnum=%u\n", hdr.e_entry, hdr.e_phnum);
 
     ret = read_elf_interp_path(file, &hdr, interp_path, sizeof(interp_path));
     if (ret < 0) {
@@ -720,8 +756,15 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         return ret;
     }
     if (ret > 0 && strcmp(filename, interp_path) != 0) {
+        if (!CONFIG_EXPERIMENTAL_DYNAMIC_ELF) {
+            printk(KERN_WARNING
+                   "exec: rejecting dynamic ELF %s (set EXPERIMENTAL_DYNAMIC_ELF=1 to enable)\n",
+                   filename);
+            vfs_close(file);
+            return -ENOEXEC;
+        }
         use_interp = true;
-        printk(KERN_INFO "exec: PT_INTERP detected, loading interpreter %s\n", interp_path);
+        EXEC_LOG("exec: PT_INTERP detected, loading interpreter %s\n", interp_path);
         interp_file = vfs_open(interp_path, O_RDONLY, 0);
         if (IS_ERR(interp_file)) {
             vfs_close(file);
@@ -782,7 +825,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
             vfs_close(file);
             return ret;
         }
-        printk(KERN_INFO "exec: segments loaded for %s and interpreter %s\n", filename, interp_path);
+        EXEC_LOG("exec: segments loaded for %s and interpreter %s\n", filename, interp_path);
         stack_img = main_img;
         stack_img.load_bias = interp_img.load_bias; /* AT_BASE points to interpreter base. */
         user_entry = interp_img.entry;
@@ -794,7 +837,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
             vfs_close(file);
             return ret;
         }
-        printk(KERN_INFO "exec: segments loaded for %s\n", filename);
+        EXEC_LOG("exec: segments loaded for %s\n", filename);
         stack_img = img;
         user_entry = img.entry;
     }
@@ -846,7 +889,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     
     /* Switch to new address space */
     mmu_switch(new_mm->pt);
-    printk(KERN_INFO "exec: switching to user mode entry=0x%lx sp=0x%lx\n", user_entry, sp);
+    EXEC_LOG("exec: switching to user mode entry=0x%lx sp=0x%lx\n", user_entry, sp);
     
     /* Jump to user mode */
     extern void user_mode_enter(uint64_t entry, uint64_t stack);

@@ -26,10 +26,14 @@ typedef long ssize_t;
 #define SYS_RMDIR   84
 #define SYS_UNLINK  87
 #define SYS_GETUID  102
+#define SYS_GETGID  104
 #define SYS_GETEUID 107
+#define SYS_GETEGID 108
 #define SYS_SETUID  105
 #define SYS_SETGID  106
 #define SYS_REBOOT  169
+#define AT_NULL     0
+#define AT_EXECFN   31
 
 #define O_RDONLY    0x0000
 #define O_WRONLY    0x0001
@@ -46,10 +50,14 @@ struct linux_dirent64 {
     char     d_name[];
 } __attribute__((packed));
 
-static char *const shell_envp[] = {
+static char env_home[96] = "HOME=/";
+static char env_shell[96] = "SHELL=/bin/sh";
+static char env_user[64] = "USER=root";
+static char *shell_envp[] = {
     "PATH=/bin:/sbin:/usr/bin",
-    "HOME=/",
-    "SHELL=/bin/sh",
+    env_home,
+    env_shell,
+    env_user,
     "TERM=vt100",
     NULL
 };
@@ -153,6 +161,20 @@ static void str_copy(char *dst, const char *src, size_t cap) {
         i++;
     }
     dst[i] = '\0';
+}
+
+static void str_append(char *dst, const char *src, size_t cap) {
+    size_t dlen = str_len(dst);
+    if (dlen >= cap) return;
+    str_copy(dst + dlen, src, cap - dlen);
+}
+
+static void build_env_kv(char *dst, size_t cap, const char *key, const char *val) {
+    if (cap == 0) return;
+    dst[0] = '\0';
+    str_copy(dst, key, cap);
+    str_append(dst, "=", cap);
+    str_append(dst, val ? val : "", cap);
 }
 
 static void write_ch(char c) {
@@ -522,17 +544,121 @@ static void applet_shutdown(void) {
     }
 }
 
+static int lookup_uid_name(unsigned uid, char *name_out, size_t cap);
+
+static void write_u64_dec(uint64_t v) {
+    char tmp[24];
+    int n = 0;
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        char rev[24];
+        int r = 0;
+        while (v > 0 && r < (int)sizeof(rev)) {
+            rev[r++] = (char)('0' + (v % 10));
+            v /= 10;
+        }
+        while (r > 0) {
+            tmp[n++] = rev[--r];
+        }
+    }
+    tmp[n] = '\0';
+    write_str(tmp);
+}
+
+static void applet_whoami(void) {
+    long uid = syscall0(SYS_GETUID);
+    char uname[32];
+    if (uid >= 0 && lookup_uid_name((unsigned)uid, uname, sizeof(uname)) == 0) {
+        write_str(uname);
+    } else {
+        write_u64_dec(uid >= 0 ? (uint64_t)uid : 0);
+    }
+    write_str("\n");
+}
+
+static void applet_id(void) {
+    long uid = syscall0(SYS_GETUID);
+    long euid = syscall0(SYS_GETEUID);
+    long gid = syscall0(SYS_GETGID);
+    long egid = syscall0(SYS_GETEGID);
+    write_str("uid=");
+    write_u64_dec(uid >= 0 ? (uint64_t)uid : 0);
+    write_str(" euid=");
+    write_u64_dec(euid >= 0 ? (uint64_t)euid : 0);
+    write_str(" gid=");
+    write_u64_dec(gid >= 0 ? (uint64_t)gid : 0);
+    write_str(" egid=");
+    write_u64_dec(egid >= 0 ? (uint64_t)egid : 0);
+    write_str("\n");
+}
+
 static int run_external(char **args);
 static int run_shell(const char *prompt);
 static int try_exec_external(char **args);
+static int applet_main(const char *name, int argc, char **argv);
+
+static int is_builtin_applet_name(const char *name) {
+    static const char *const names[] = {
+        "busybox", "sh", "ash", "zsh", "echo", "uname", "pwd",
+        "ls", "cat", "touch", "mkdir", "rm", "rmdir",
+        "reboot", "shutdown", "poweroff", "halt", "clear",
+        "su", "sudo", "whoami", "id", NULL
+    };
+    for (int i = 0; names[i]; i++) {
+        if (str_cmp(name, names[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 struct user_record {
     char name[32];
     char pass[64];
     unsigned uid;
     unsigned gid;
+    char home[64];
     char shell[64];
 };
+
+struct static_account {
+    const char *name;
+    unsigned uid;
+    unsigned gid;
+    const char *home;
+    const char *shell;
+};
+
+static const struct static_account static_accounts[] = {
+    { "root", 0, 0, "/root", "/bin/sh" },
+    { "obelisk", 1000, 1000, "/home/obelisk", "/bin/sh" },
+};
+
+static int lookup_static_user_record(const char *username, struct user_record *out) {
+    for (size_t i = 0; i < (sizeof(static_accounts) / sizeof(static_accounts[0])); i++) {
+        if (str_cmp(static_accounts[i].name, username) == 0) {
+            str_copy(out->name, static_accounts[i].name, sizeof(out->name));
+            out->pass[0] = '\0';
+            out->uid = static_accounts[i].uid;
+            out->gid = static_accounts[i].gid;
+            str_copy(out->home, static_accounts[i].home, sizeof(out->home));
+            str_copy(out->shell, static_accounts[i].shell, sizeof(out->shell));
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int lookup_static_uid_name(unsigned uid, char *name_out, size_t cap) {
+    for (size_t i = 0; i < (sizeof(static_accounts) / sizeof(static_accounts[0])); i++) {
+        if (static_accounts[i].uid == uid) {
+            str_copy(name_out, static_accounts[i].name, cap);
+            return 0;
+        }
+    }
+    return -1;
+}
 
 static int parse_uint10(const char *s, unsigned *out) {
     unsigned v = 0;
@@ -773,61 +899,100 @@ static void restore_redirections(int saved_in, int saved_out) {
 static int lookup_user_record(const char *username, struct user_record *out) {
     char filebuf[4096];
     int n = read_small_file("/etc/passwd", filebuf, sizeof(filebuf));
-    if (n < 0) return n;
+    if (n >= 0) {
+        char *line = filebuf;
+        while (*line) {
+            while (*line == '\n' || *line == '\r') line++;
+            if (!*line) break;
+            char *next = line;
+            while (*next && *next != '\n') next++;
+            if (*next == '\n') *next++ = '\0';
 
-    char *line = filebuf;
-    while (*line) {
-        while (*line == '\n' || *line == '\r') line++;
-        if (!*line) break;
-        char *next = line;
-        while (*next && *next != '\n') next++;
-        if (*next == '\n') *next++ = '\0';
-
-        if (line[0] != '#' && line[0] != '\0') {
-            char *f[7];
-            int nf = split_colon_fields(line, f, 7);
-            if (nf >= 5 && str_cmp(f[0], username) == 0) {
-                unsigned uid = 0, gid = 0;
-                if (parse_uint10(f[2], &uid) < 0 || parse_uint10(f[3], &gid) < 0) {
-                    return -1;
+            if (line[0] != '#' && line[0] != '\0') {
+                char *f[7];
+                int nf = split_colon_fields(line, f, 7);
+                if (nf >= 5 && str_cmp(f[0], username) == 0) {
+                    unsigned uid = 0, gid = 0;
+                    if (parse_uint10(f[2], &uid) < 0 || parse_uint10(f[3], &gid) < 0) {
+                        return -1;
+                    }
+                    str_copy(out->name, f[0], sizeof(out->name));
+                    str_copy(out->pass, f[1], sizeof(out->pass));
+                    out->uid = uid;
+                    out->gid = gid;
+                    if (nf >= 6) str_copy(out->home, f[5], sizeof(out->home));
+                    else out->home[0] = '\0';
+                    if (nf >= 7) str_copy(out->shell, f[6], sizeof(out->shell));
+                    else out->shell[0] = '\0';
+                    return 0;
                 }
-                str_copy(out->name, f[0], sizeof(out->name));
-                str_copy(out->pass, f[1], sizeof(out->pass));
-                out->uid = uid;
-                out->gid = gid;
-                if (nf >= 7) str_copy(out->shell, f[6], sizeof(out->shell));
-                else out->shell[0] = '\0';
-                return 0;
             }
+            line = next;
         }
-        line = next;
     }
-    return -2;
+
+    if (lookup_static_user_record(username, out) == 0) {
+        return 0;
+    }
+    return (n < 0) ? n : -2;
 }
 
 static int lookup_uid_name(unsigned uid, char *name_out, size_t cap) {
     char filebuf[4096];
     int n = read_small_file("/etc/passwd", filebuf, sizeof(filebuf));
-    if (n < 0) return n;
-    char *line = filebuf;
-    while (*line) {
-        while (*line == '\n' || *line == '\r') line++;
-        if (!*line) break;
-        char *next = line;
-        while (*next && *next != '\n') next++;
-        if (*next == '\n') *next++ = '\0';
-        if (line[0] != '#' && line[0] != '\0') {
-            char *f[7];
-            unsigned v = 0;
-            int nf = split_colon_fields(line, f, 7);
-            if (nf >= 4 && parse_uint10(f[2], &v) == 0 && v == uid) {
-                str_copy(name_out, f[0], cap);
-                return 0;
+    if (n >= 0) {
+        char *line = filebuf;
+        while (*line) {
+            while (*line == '\n' || *line == '\r') line++;
+            if (!*line) break;
+            char *next = line;
+            while (*next && *next != '\n') next++;
+            if (*next == '\n') *next++ = '\0';
+            if (line[0] != '#' && line[0] != '\0') {
+                char *f[7];
+                unsigned v = 0;
+                int nf = split_colon_fields(line, f, 7);
+                if (nf >= 4 && parse_uint10(f[2], &v) == 0 && v == uid) {
+                    str_copy(name_out, f[0], cap);
+                    return 0;
+                }
             }
+            line = next;
         }
-        line = next;
     }
-    return -1;
+    if (lookup_static_uid_name(uid, name_out, cap) == 0) {
+        return 0;
+    }
+    return (n < 0) ? n : -1;
+}
+
+static int lookup_uid_record(unsigned uid, struct user_record *out) {
+    char name[32];
+    if (lookup_uid_name(uid, name, sizeof(name)) < 0) {
+        return -1;
+    }
+    return lookup_user_record(name, out);
+}
+
+static void set_identity_env(const struct user_record *u) {
+    char fallback_home[96];
+    const char *home = u->home[0] ? u->home : NULL;
+    const char *shell = u->shell[0] ? u->shell : "/bin/sh";
+
+    if (!home) {
+        if (u->uid == 0) {
+            home = "/root";
+        } else {
+            fallback_home[0] = '\0';
+            str_copy(fallback_home, "/home/", sizeof(fallback_home));
+            str_append(fallback_home, u->name, sizeof(fallback_home));
+            home = fallback_home;
+        }
+    }
+
+    build_env_kv(env_home, sizeof(env_home), "HOME", home);
+    build_env_kv(env_shell, sizeof(env_shell), "SHELL", shell);
+    build_env_kv(env_user, sizeof(env_user), "USER", u->name[0] ? u->name : "unknown");
 }
 
 static int prompt_password(char *out, size_t cap) {
@@ -988,7 +1153,7 @@ static void parse_sudoers_line(char *line, const char *username, const char *cmd
     }
 }
 
-static struct sudo_policy sudo_lookup_policy(const char *username, const char *cmd0) {
+static __attribute__((unused)) struct sudo_policy sudo_lookup_policy(const char *username, const char *cmd0) {
     struct sudo_policy pol;
     pol.allowed = 0;
     pol.nopasswd = 0;
@@ -1055,11 +1220,27 @@ static int applet_su(int argc, char **argv) {
         return 1;
     }
     if (pid == 0) {
-        syscall1(SYS_SETGID, (long)u.gid);
-        syscall1(SYS_SETUID, (long)u.uid);
+        if (syscall1(SYS_SETGID, (long)u.gid) < 0 ||
+            syscall1(SYS_SETUID, (long)u.uid) < 0) {
+            write_str("su: credential switch failed\n");
+            syscall1(SYS_EXIT, 1);
+        }
+        set_identity_env(&u);
         if (cmd_idx >= 0) {
-            if (try_exec_external(&argv[cmd_idx]) < 0) {
-                write_str(argv[cmd_idx]);
+            char cmdline[256];
+            char *cmd_argv[32];
+            int cmd_argc;
+            str_copy(cmdline, argv[cmd_idx], sizeof(cmdline));
+            cmd_argc = split_words_shell(cmdline, cmd_argv, 32);
+            if (cmd_argc <= 0) {
+                syscall1(SYS_EXIT, 0);
+            }
+            if (is_builtin_applet_name(cmd_argv[0])) {
+                int rc = applet_main(cmd_argv[0], cmd_argc, cmd_argv);
+                syscall1(SYS_EXIT, rc);
+            }
+            if (try_exec_external(cmd_argv) < 0) {
+                write_str(cmd_argv[0]);
                 write_str(": command not found\n");
                 syscall1(SYS_EXIT, 127);
             }
@@ -1082,25 +1263,9 @@ static int applet_sudo(int argc, char **argv) {
         return 1;
     }
 
-    long uid = syscall0(SYS_GETUID);
-    char uname[32];
-    if (lookup_uid_name((unsigned)uid, uname, sizeof(uname)) < 0) {
-        str_copy(uname, "unknown", sizeof(uname));
-    }
-    struct sudo_policy pol = sudo_lookup_policy(uname, argv[1]);
-    if (!pol.allowed) {
-        write_str("sudo: user is not in sudoers\n");
+    if (syscall0(SYS_GETEUID) != 0) {
+        write_str("sudo: minimal mode active, only root may run sudo\n");
         return 1;
-    }
-    if (!pol.nopasswd) {
-        struct user_record u;
-        if (lookup_user_record(uname, &u) == 0 && u.pass[0]) {
-            char input[64];
-            if (prompt_password(input, sizeof(input)) < 0 || !verify_password(u.pass, input)) {
-                write_str("sudo: authentication failure\n");
-                return 1;
-            }
-        }
     }
 
     long pid = syscall0(SYS_FORK);
@@ -1109,8 +1274,19 @@ static int applet_sudo(int argc, char **argv) {
         return 1;
     }
     if (pid == 0) {
+        struct user_record root_user;
+        if (lookup_user_record("root", &root_user) == 0) {
+            set_identity_env(&root_user);
+        }
         syscall1(SYS_SETGID, 0);
         syscall1(SYS_SETUID, 0);
+        {
+            const char *cmd_name = base_name(argv[1]);
+            if (is_builtin_applet_name(cmd_name)) {
+                int rc = applet_main(cmd_name, argc - 1, &argv[1]);
+                syscall1(SYS_EXIT, rc);
+            }
+        }
         if (try_exec_external(&argv[1]) < 0) {
             write_str(argv[1]);
             write_str(": command not found\n");
@@ -1128,7 +1304,7 @@ static int applet_sudo(int argc, char **argv) {
 static const char *builtin_names[] = {
     "help", "echo", "uname", "clear", "reboot", "shutdown", "exit",
     "zsh", "sh", "busybox", "cd", "pwd", "ls", "cat", "touch",
-    "mkdir", "rm", "rmdir", "write", "su", "sudo",
+    "mkdir", "rm", "rmdir", "write", "su", "sudo", "whoami", "id",
     "sysctl", "installer", "installer-tui", NULL
 };
 
@@ -1456,7 +1632,7 @@ static int run_shell(const char *prompt) {
         }
 
         if (str_cmp(args[0], "help") == 0) {
-            write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write su sudo\n");
+            write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write su sudo whoami id\n");
             write_str("shell: Up/Down=history, TAB=live completion, Backspace, redirects < > >>\n");
         } else if (str_cmp(args[0], "echo") == 0) {
             applet_echo(argc, args);
@@ -1484,6 +1660,10 @@ static int run_shell(const char *prompt) {
             applet_su(argc, args);
         } else if (str_cmp(args[0], "sudo") == 0) {
             applet_sudo(argc, args);
+        } else if (str_cmp(args[0], "whoami") == 0) {
+            applet_whoami();
+        } else if (str_cmp(args[0], "id") == 0) {
+            applet_id();
         } else if (str_cmp(args[0], "reboot") == 0) {
             applet_reboot();
         } else if (str_cmp(args[0], "shutdown") == 0 ||
@@ -1574,6 +1754,14 @@ static int applet_main(const char *name, int argc, char **argv) {
     if (str_cmp(name, "sudo") == 0) {
         return applet_sudo(argc, argv);
     }
+    if (str_cmp(name, "whoami") == 0) {
+        applet_whoami();
+        return 0;
+    }
+    if (str_cmp(name, "id") == 0) {
+        applet_id();
+        return 0;
+    }
 
     write_str("busybox: unsupported applet: ");
     write_str(name);
@@ -1598,6 +1786,44 @@ void _start(void) {
     }
 
     const char *name = base_name(use_argv[0]);
+    const char *exec_name = NULL;
+    {
+        char **envp = &use_argv[use_argc + 1];
+        while (*envp) {
+            envp++;
+        }
+        uint64_t *auxv = (uint64_t *)(envp + 1);
+        while (auxv[0] != AT_NULL) {
+            if (auxv[0] == AT_EXECFN) {
+                const char *execfn = (const char *)(uintptr_t)auxv[1];
+                if (execfn && *execfn) {
+                    exec_name = base_name(execfn);
+                }
+                break;
+            }
+            auxv += 2;
+        }
+    }
+
+    /* Prefer execfn applet name for copied busybox applets.
+     * This avoids falling back to shell when argv[0] is ambiguous. */
+    if (exec_name && *exec_name) {
+        if ((use_argc == 1 && str_cmp(exec_name, "busybox") != 0) ||
+            str_cmp(name, "busybox") == 0 ||
+            str_cmp(name, "sh") == 0 ||
+            str_cmp(name, "zsh") == 0) {
+            name = exec_name;
+        }
+    }
+
+    {
+        struct user_record self_user;
+        long uid = syscall0(SYS_GETUID);
+        if (uid >= 0 && lookup_uid_record((unsigned)uid, &self_user) == 0) {
+            set_identity_env(&self_user);
+        }
+    }
+
     int rc = applet_main(name, use_argc, use_argv);
     syscall1(SYS_EXIT, rc);
     __builtin_unreachable();

@@ -252,7 +252,7 @@ void unlock_new_inode(struct inode *inode) {
 int generic_permission(struct inode *inode, int mask) {
     uid_t uid = current ? current->cred->fsuid : 0;
     gid_t gid = current ? current->cred->fsgid : 0;
-    mode_t mode = inode->i_mode;
+    mode_t bits;
     
     /* Root can do anything */
     if (uid == 0) {
@@ -261,21 +261,24 @@ int generic_permission(struct inode *inode, int mask) {
     
     /* Check owner permissions */
     if (uid == inode->i_uid) {
-        mode >>= 6;
+        bits = (inode->i_mode >> 6) & 0x7;
     }
     /* Check group permissions */
     else if (gid == inode->i_gid) {
-        mode >>= 3;
+        bits = (inode->i_mode >> 3) & 0x7;
     }
     /* Check other permissions */
+    else {
+        bits = inode->i_mode & 0x7;
+    }
     
-    if ((mask & MAY_READ) && !(mode & S_IROTH)) {
+    if ((mask & MAY_READ) && !(bits & 0x4)) {
         return -EACCES;
     }
-    if ((mask & MAY_WRITE) && !(mode & S_IWOTH)) {
+    if ((mask & MAY_WRITE) && !(bits & 0x2)) {
         return -EACCES;
     }
-    if ((mask & MAY_EXEC) && !(mode & S_IXOTH)) {
+    if ((mask & MAY_EXEC) && !(bits & 0x1)) {
         return -EACCES;
     }
     

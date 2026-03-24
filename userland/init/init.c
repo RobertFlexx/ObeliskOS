@@ -15,6 +15,8 @@
 #define SYS_EXECVE      59
 #define SYS_GETPID      39
 #define SYS_REBOOT      169
+#define SYS_SETUID      105
+#define SYS_SETGID      106
 
 /* Inline syscall wrappers */
 static inline long syscall0(long num) {
@@ -103,6 +105,14 @@ static int execve(const char *path, char *const argv[], char *const envp[]) {
     return (int)syscall3(SYS_EXECVE, (long)path, (long)argv, (long)envp);
 }
 
+static int setuid(unsigned uid) {
+    return (int)syscall1(SYS_SETUID, (long)uid);
+}
+
+static int setgid(unsigned gid) {
+    return (int)syscall1(SYS_SETGID, (long)gid);
+}
+
 /* read */
 static long read(int fd, void *buf, unsigned long count) {
     return syscall3(SYS_READ, fd, (long)buf, count);
@@ -185,8 +195,9 @@ void _start(void) {
 
     char *const envp[] = {
         "PATH=/bin:/sbin:/usr/bin",
-        "HOME=/",
-        "SHELL=/usr/bin/zsh",
+        "HOME=/home/obelisk",
+        "SHELL=/bin/sh",
+        "USER=obelisk",
         "TERM=vt100",
         NULL
     };
@@ -195,6 +206,10 @@ void _start(void) {
 
     print("Launching reliable interactive shell...\n");
     print("Tip: run '/usr/bin/zsh -i' manually to test full GNU userland.\n");
+    print("Dropping to default user: obelisk (uid/gid 1000)\n");
+    if (setgid(1000) < 0 || setuid(1000) < 0) {
+        print("init: warning: failed to drop privileges, continuing as root\n");
+    }
     if (execve("/bin/busybox", bb_argv, envp) < 0) {
         print("init: /bin/busybox failed, trying /bin/sh\n");
         if (execve("/bin/sh", sh_argv, envp) < 0) {
