@@ -64,8 +64,15 @@ For Obelisk-native D binaries today:
   - `install <file.opk>`
   - `remove <pkg>`
   - `list`, `info <pkg>`, `files <pkg>`, `owner <path>`
-- repo/network commands (`update`, `search`, repo-name install) still require
-  additional runtime bring-up in this profile
+- local repo workflows now supported:
+  - `repo` (list configured repos from `/etc/opkg/repos.conf`)
+  - `update` (cache indexes from local path / `file://` repos)
+  - `search <term>` (search cached indexes)
+  - `install <pkg>` from local cached repos
+- `doctor` (runtime capability diagnostics, including socket syscall probe)
+- HTTP/HTTPS transport is still pending in this static runtime profile; current
+  kernel/userspace runtime path does not provide complete networking support for
+  in-image `opkg` web fetch in this mode
 - `build <dir>` remains intentionally unavailable in this profile for now
 - this moves `/bin/opkg` from help-only routing to usable local package management
 

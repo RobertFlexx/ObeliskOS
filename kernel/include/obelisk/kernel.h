@@ -10,6 +10,9 @@
 #include <obelisk/errno.h>
 #include <stdarg.h>
 
+struct cpu_regs;
+typedef void (*irq_handler_fn_t)(uint8_t irq, struct cpu_regs *regs, void *ctx);
+
 /* Kernel version */
 #define OBELISK_VERSION_MAJOR   0
 #define OBELISK_VERSION_MINOR   1
@@ -121,6 +124,15 @@ void axiomfs_init(void);
 void devfs_init(void);
 void ipc_init(void);
 void sysctl_init(void);
+int net_init(void);
+void net_tick(void);
+bool net_is_ready(void);
+void pci_init(void);
+void virtio_net_init(void);
+void e1000_init(void);
+void irq_enable(uint8_t irq);
+void irq_disable(uint8_t irq);
+int irq_register_handler(uint8_t irq, irq_handler_fn_t fn, void *ctx);
 int uart_init(void);
 void uart_putc(char c);
 void uart_puts(const char *s);

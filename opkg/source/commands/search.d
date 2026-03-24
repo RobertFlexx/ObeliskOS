@@ -25,6 +25,7 @@ int cmdSearch(const(string)[] args) {
     }
 
     int matches = 0;
+    writeln("Searching cached repositories for: ", args[0]);
     foreach (entry; dirEntries(reposDir, SpanMode.shallow)) {
         if (!entry.isFile || extension(entry.name) != ".json") {
             continue;
@@ -35,7 +36,8 @@ int cmdSearch(const(string)[] args) {
             foreach (pkg; idx) {
                 auto hay = (pkg.name ~ " " ~ pkg.summary).toLower();
                 if (hay.canFind(term)) {
-                    writeln(repoName, ": ", pkg.name, " ", pkg.packageVersion, " ", pkg.arch, " - ", pkg.summary);
+                    writeln("  [", repoName, "] ", pkg.name, " ", pkg.packageVersion, " (", pkg.arch, ")");
+                    writeln("      ", pkg.summary);
                     matches++;
                 }
             }

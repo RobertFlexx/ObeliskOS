@@ -32,6 +32,9 @@
 - list/info/files/owner queries from local DB
 - repo `update` downloads each configured repo `index.json` into cache
 - repo `search` matches package name + summary from cached indexes
+- repo helpers:
+  - `opkg repo init <dir>` to create static repo skeleton
+  - `opkg repo index <dir>` to rebuild checksummed `index.json`
 
 ## On-disk state (v1)
 
@@ -71,6 +74,42 @@ OPKG_ROOT=/tmp/opkg-root OPKG_DB_ROOT=/tmp/opkg-root/var/lib/opkg ./opkg list
 OPKG_ROOT=/tmp/opkg-root OPKG_DB_ROOT=/tmp/opkg-root/var/lib/opkg ./opkg remove hello-sample
 ```
 
+## HTTP/web install proof flow
+
+Run:
+
+```bash
+./opkg/tools/demo-web-install.sh
+```
+
+This script:
+
+- builds a sample package
+- generates `index.json`
+- serves a static HTTP repo locally
+- runs `opkg update`, `opkg search`, `opkg install` over HTTP
+- verifies installed payload on disk
+
+## Build common-tool web repo packages
+
+To populate `opkg/repo-site` with installable package examples:
+
+```bash
+./opkg/tools/build-common-web-repo.sh
+```
+
+This currently builds packages for:
+
+- `hello-sample`
+- `grep` (wrapper package)
+- `sed` (wrapper package)
+
+Notes:
+
+- `nano` and `gcc` remain pending native ports/toolchain work for Obelisk runtime.
+- packages in `opkg/examples/` are intended as practical bring-up targets while
+  broader compatibility evolves.
+
 ## Repo-backed install flow (v1)
 
 1. configure `/etc/opkg/repos.conf`
@@ -89,6 +128,8 @@ Install-by-name behavior:
 
 - `docs/opk-format.md`
 - `docs/repo-format.md`
+- `docs/github-pages.md`
+- `docs/common-tools-status.md`
 - `docs/roadmap.md`
 - `docs/desktop-roadmap.md`
 - `docs/packaging-policy.md`

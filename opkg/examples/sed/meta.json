@@ -1,0 +1,12 @@
+{
+  "name": "sed",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "sed wrapper package for Obelisk",
+  "description": "Installs /usr/bin/sed wrapper that dispatches to /bin/sed.",
+  "depends": [],
+  "provides": ["sed"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "core"
+}

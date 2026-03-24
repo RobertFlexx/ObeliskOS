@@ -21,12 +21,16 @@ extern int mkdir(const char* pathname, int mode);
 extern int unlink(const char* pathname);
 extern int pipe(int* pipefd);
 extern int dup2(int oldfd, int newfd);
+extern int socket(int domain, int type, int protocol);
 extern int _exit(int status);
 
 enum O_RDONLY = 0;
 enum O_WRONLY = 1;
 enum O_CREAT = 64;
 enum O_TRUNC = 512;
+enum AF_INET = 2;
+enum SOCK_STREAM = 1;
+enum SOCK_DGRAM = 2;
 
 enum MAX_FILE = 32768;
 enum MAX_ITEMS = 512;
@@ -37,11 +41,48 @@ struct OwnerEntry {
     char[64] pkg;
 }
 
+struct RepoConfigEntry {
+    char[64] name;
+    char[256] base;
+}
+
+struct RepoIndexEntry {
+    char[128] name;
+    char[64] ver;
+    char[64] arch;
+    char[256] filename;
+    char[96] checksum;
+    char[256] summary;
+}
+
 private ulong cstrlen(const char* s) {
     ulong n = 0;
     if (s is null) return 0;
     while (s[n] != 0) n++;
     return n;
+}
+
+private int startsWith(const char* s, const char* pre) {
+    ulong i = 0;
+    if (s is null || pre is null) return 0;
+    while (pre[i] != 0) {
+        if (s[i] != pre[i]) return 0;
+        i++;
+    }
+    return 1;
+}
+
+private int containsSubstr(const char* s, const char* needle) {
+    if (s is null || needle is null) return 0;
+    if (needle[0] == 0) return 1;
+    for (ulong i = 0; s[i] != 0; i++) {
+        ulong j = 0;
+        while (needle[j] != 0 && s[i + j] != 0 && s[i + j] == needle[j]) {
+            j++;
+        }
+        if (needle[j] == 0) return 1;
+    }
+    return 0;
 }
 
 private int streq(const char* a, const char* b) {
@@ -94,6 +135,39 @@ private void normalizePath(char* s) {
             s[0] = '/';
         }
     }
+}
+
+private int pathHasTraversal(const char* s) {
+    if (s is null) return 1;
+    if (s[0] == 0) return 1;
+    if (startsWith(s, "/".ptr) != 0) return 1;
+    if (containsSubstr(s, "..".ptr) == 0) return 0;
+
+    ulong i = 0;
+    while (s[i] != 0) {
+        while (s[i] == '/') i++;
+        if (s[i] == 0) break;
+        ulong start = i;
+        while (s[i] != 0 && s[i] != '/') i++;
+        ulong len = i - start;
+        if (len == 2 && s[start] == '.' && s[start + 1] == '.') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+private int isSafePkgName(const char* name) {
+    if (name is null || name[0] == 0) return 0;
+    for (ulong i = 0; name[i] != 0; i++) {
+        auto c = name[i];
+        int ok = ((c >= 'a' && c <= 'z') ||
+                  (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') ||
+                  c == '-' || c == '_' || c == '.' || c == '+');
+        if (ok == 0) return 0;
+    }
+    return 1;
 }
 
 private int readFile(const char* path, char* dst, ulong cap) {
@@ -210,6 +284,10 @@ private int extractFilesTar(const char* tarPath, char[256]* files, int maxFiles)
 
         char[256] name = void;
         copyTarName(name.ptr, name.length, hdr.ptr);
+        if (pathHasTraversal(name.ptr) != 0) {
+            close(fd);
+            return -1;
+        }
         auto size = parseOctal(cast(const(char)*)hdr.ptr + 124, 12);
         auto typeflag = cast(char)hdr[156];
         ulong mode = parseOctal(cast(const(char)*)hdr.ptr + 100, 8);
@@ -284,6 +362,11 @@ private int unpackOpk(const char* opkPath, const char* filesTarOut, char* metaOu
 
         char[256] name = void;
         copyTarName(name.ptr, name.length, hdr.ptr);
+        if (streq(name.ptr, "meta.json".ptr) == 0 && streq(name.ptr, "files.tar".ptr) == 0) {
+            close(outfd);
+            close(fd);
+            return -1;
+        }
         auto size = parseOctal(cast(const(char)*)hdr.ptr + 124, 12);
 
         if (streq(name.ptr, "meta.json".ptr)) {
@@ -523,6 +606,108 @@ private int ensureDbDirs() {
     return 0;
 }
 
+private int parseRepoConfig(RepoConfigEntry* repos, int maxRepos) {
+    char[8192] text = void;
+    if (readFile("/etc/opkg/repos.conf".ptr, text.ptr, text.length) < 0) {
+        return 0;
+    }
+    int count = 0;
+    ulong i = 0;
+    while (text[i] != 0) {
+        while (text[i] == ' ' || text[i] == '\t' || text[i] == '\r' || text[i] == '\n') i++;
+        if (text[i] == '#') {
+            while (text[i] != 0 && text[i] != '\n') i++;
+            continue;
+        }
+        if (text[i] == 0) break;
+
+        char[64] name = void;
+        char[256] base = void;
+        ulong n = 0;
+        while (text[i] != 0 && text[i] != ' ' && text[i] != '\t' && text[i] != '\r' && text[i] != '\n' && n + 1 < name.length) {
+            name[n++] = text[i++];
+        }
+        name[n] = 0;
+        while (text[i] == ' ' || text[i] == '\t') i++;
+        ulong b = 0;
+        while (text[i] != 0 && text[i] != '\r' && text[i] != '\n' && b + 1 < base.length) {
+            base[b++] = text[i++];
+        }
+        base[b] = 0;
+        while (text[i] == '\r' || text[i] == '\n') i++;
+
+        if (name[0] == 0 || base[0] == 0) continue;
+        copyStr(repos[count].name.ptr, name.ptr, repos[count].name.length);
+        copyStr(repos[count].base.ptr, base.ptr, repos[count].base.length);
+        count++;
+        if (count >= maxRepos) break;
+    }
+    return count;
+}
+
+private int parseRepoIndexJson(const char* json, RepoIndexEntry* outEntries, int maxEntries) {
+    int count = 0;
+    ulong i = 0;
+    while (json[i] != 0 && count < maxEntries) {
+        if (json[i] != '{') {
+            i++;
+            continue;
+        }
+        ulong start = i;
+        int depth = 0;
+        while (json[i] != 0) {
+            if (json[i] == '{') depth++;
+            if (json[i] == '}') {
+                depth--;
+                if (depth == 0) {
+                    i++;
+                    break;
+                }
+            }
+            i++;
+        }
+        if (depth != 0) break;
+
+        char[4096] obj = void;
+        ulong len = i - start;
+        if (len >= obj.length) len = obj.length - 1;
+        for (ulong k = 0; k < len; k++) obj[k] = json[start + k];
+        obj[len] = 0;
+
+        if (extractJsonString(obj.ptr, "name".ptr, outEntries[count].name.ptr, outEntries[count].name.length) < 0) continue;
+        if (extractJsonString(obj.ptr, "version".ptr, outEntries[count].ver.ptr, outEntries[count].ver.length) < 0) continue;
+        if (extractJsonString(obj.ptr, "arch".ptr, outEntries[count].arch.ptr, outEntries[count].arch.length) < 0) continue;
+        if (extractJsonString(obj.ptr, "filename".ptr, outEntries[count].filename.ptr, outEntries[count].filename.length) < 0) continue;
+        extractJsonString(obj.ptr, "checksum".ptr, outEntries[count].checksum.ptr, outEntries[count].checksum.length);
+        extractJsonString(obj.ptr, "summary".ptr, outEntries[count].summary.ptr, outEntries[count].summary.length);
+        count++;
+    }
+    return count;
+}
+
+private int versionCmp(const char* a, const char* b) {
+    ulong ia = 0;
+    ulong ib = 0;
+    while (a[ia] != 0 || b[ib] != 0) {
+        ulong va = 0;
+        ulong vb = 0;
+        while (a[ia] >= '0' && a[ia] <= '9') {
+            va = va * 10 + cast(ulong)(a[ia] - '0');
+            ia++;
+        }
+        while (b[ib] >= '0' && b[ib] <= '9') {
+            vb = vb * 10 + cast(ulong)(b[ib] - '0');
+            ib++;
+        }
+        if (va < vb) return -1;
+        if (va > vb) return 1;
+        if (a[ia] == '.') ia++;
+        if (b[ib] == '.') ib++;
+        if ((a[ia] == 0 && b[ib] == 0)) break;
+    }
+    return 0;
+}
+
 private int isInstalled(const char* pkg) {
     char[320] path = void;
     copyStr(path.ptr, "/var/lib/opkg/installed/".ptr, path.length);
@@ -575,6 +760,14 @@ private int installLocal(const char* opkPath) {
         printf("opkg install: malformed package metadata\n");
         return 1;
     }
+    if (isSafePkgName(pkg.ptr) == 0) {
+        printf("opkg install: invalid package name in metadata\n");
+        return 1;
+    }
+    if (streq(arch.ptr, "x86_64".ptr) == 0 && streq(arch.ptr, "noarch".ptr) == 0) {
+        printf("opkg install: unsupported package arch: %s\n", arch.ptr);
+        return 1;
+    }
     if (isInstalled(pkg.ptr) != 0) {
         printf("opkg install: package already installed: %s\n", pkg.ptr);
         return 1;
@@ -618,7 +811,10 @@ private int installLocal(const char* opkPath) {
             ownerCount++;
         }
     }
-    saveOwners("/var/lib/opkg/fileowners.json".ptr, owners.ptr, ownerCount);
+    if (saveOwners("/var/lib/opkg/fileowners.json".ptr, owners.ptr, ownerCount) != 0) {
+        printf("opkg install: failed to update file owner database\n");
+        return 1;
+    }
 
     printf("Installed %s %s (%s)\n", pkg.ptr, ver.ptr, arch.ptr);
     return 0;
@@ -659,6 +855,10 @@ private int loadInstalledRecord(const char* pkg, char* metaOut, ulong metaCap, c
 }
 
 private int cmdRemove(const char* pkg) {
+    if (isSafePkgName(pkg) == 0) {
+        printf("opkg remove: invalid package name\n");
+        return 1;
+    }
     char[8192] meta = void;
     char[256][MAX_ITEMS] files = void;
     int fileCount = 0;
@@ -679,7 +879,10 @@ private int cmdRemove(const char* pkg) {
     }
 
     for (int i = 0; i < fileCount; i++) {
-        unlink(files[i].ptr);
+        int ur = unlink(files[i].ptr);
+        if (ur != 0) {
+            printf("opkg remove: warning: failed to remove %s (%d)\n", files[i].ptr, ur);
+        }
     }
 
     int newCount = 0;
@@ -691,7 +894,10 @@ private int cmdRemove(const char* pkg) {
             newCount++;
         }
     }
-    saveOwners("/var/lib/opkg/fileowners.json".ptr, newOwners.ptr, newCount);
+    if (saveOwners("/var/lib/opkg/fileowners.json".ptr, newOwners.ptr, newCount) != 0) {
+        printf("opkg remove: failed to update file owner database\n");
+        return 1;
+    }
 
     char[320] path = void;
     copyStr(path.ptr, "/var/lib/opkg/installed/".ptr, path.length);
@@ -802,6 +1008,222 @@ private int cmdOwner(const char* pathArg) {
     return 1;
 }
 
+private int cmdUpdate() {
+    ensureDbDirs();
+    RepoConfigEntry[32] repos = void;
+    int nrepos = parseRepoConfig(repos.ptr, repos.length);
+    if (nrepos <= 0) {
+        printf("opkg update: no repos configured in /etc/opkg/repos.conf\n");
+        return 1;
+    }
+    int ok = 0;
+    printf("Refreshing repository indexes...\n");
+    for (int i = 0; i < nrepos; i++) {
+        if (startsWith(repos[i].base.ptr, "http://".ptr) || startsWith(repos[i].base.ptr, "https://".ptr)) {
+            printf("  [fail] %s: http/https transport unavailable in static runtime profile\n", repos[i].name.ptr);
+            continue;
+        }
+        char[256] basePath = void;
+        if (startsWith(repos[i].base.ptr, "file://".ptr)) {
+            copyStr(basePath.ptr, repos[i].base.ptr + 7, basePath.length);
+        } else {
+            copyStr(basePath.ptr, repos[i].base.ptr, basePath.length);
+        }
+
+        char[320] src = void;
+        copyStr(src.ptr, basePath.ptr, src.length);
+        appendStr(src.ptr, "/index.json".ptr, src.length);
+        char[8192] idx = void;
+        if (readFile(src.ptr, idx.ptr, idx.length) < 0) {
+            printf("  [fail] %s: cannot read %s\n", repos[i].name.ptr, src.ptr);
+            continue;
+        }
+        char[320] dst = void;
+        copyStr(dst.ptr, "/var/lib/opkg/repos/".ptr, dst.length);
+        appendStr(dst.ptr, repos[i].name.ptr, dst.length);
+        appendStr(dst.ptr, ".json".ptr, dst.length);
+        if (writeFile(dst.ptr, idx.ptr) < 0) {
+            printf("  [fail] %s: cannot write cache\n", repos[i].name.ptr);
+            continue;
+        }
+        printf("  [ok] %s %s\n", repos[i].name.ptr, repos[i].base.ptr);
+        ok++;
+    }
+    if (ok == 0) {
+        printf("opkg update: no repos updated\n");
+        return 1;
+    }
+    printf("opkg update: updated %d repo(s)\n", ok);
+    return 0;
+}
+
+private int cmdSearch(const char* term) {
+    char[1024] lsout = void;
+    char*[4] lsArgs = [ cast(char*)"/bin/ls".ptr, cast(char*)"/var/lib/opkg/repos".ptr, null, null ];
+    if (runExecCapture("/bin/ls".ptr, lsArgs.ptr, lsout.ptr, lsout.length) != 0) {
+        printf("opkg search: no cached repositories, run: opkg update\n");
+        return 1;
+    }
+
+    printf("Searching cached repositories for: %s\n", term);
+    int matches = 0;
+    ulong i = 0;
+    while (lsout[i] != 0) {
+        char[128] file = void;
+        ulong j = 0;
+        while (lsout[i] == ' ' || lsout[i] == '\n' || lsout[i] == '\t' || lsout[i] == '\r') i++;
+        while (lsout[i] != 0 && lsout[i] != ' ' && lsout[i] != '\n' && lsout[i] != '\t' && lsout[i] != '\r' && j + 1 < file.length) file[j++] = lsout[i++];
+        file[j] = 0;
+        if (j == 0) break;
+        if (endsWith(file.ptr, ".json".ptr) == 0) continue;
+
+        char[320] path = void;
+        copyStr(path.ptr, "/var/lib/opkg/repos/".ptr, path.length);
+        appendStr(path.ptr, file.ptr, path.length);
+        char[MAX_FILE] idx = void;
+        if (readFile(path.ptr, idx.ptr, idx.length) < 0) continue;
+
+        RepoIndexEntry[256] entries = void;
+        int n = parseRepoIndexJson(idx.ptr, entries.ptr, entries.length);
+        file[j - 5] = 0;
+        for (int e = 0; e < n; e++) {
+            if (containsSubstr(entries[e].name.ptr, term) != 0 || containsSubstr(entries[e].summary.ptr, term) != 0) {
+                printf("  [%s] %s %s (%s)\n", file.ptr, entries[e].name.ptr, entries[e].ver.ptr, entries[e].arch.ptr);
+                if (entries[e].summary[0] != 0) printf("      %s\n", entries[e].summary.ptr);
+                matches++;
+            }
+        }
+    }
+    if (matches == 0) {
+        printf("No matching packages found for: %s\n", term);
+        return 1;
+    }
+    return 0;
+}
+
+private int installFromRepoName(const char* pkgName) {
+    if (isSafePkgName(pkgName) == 0) {
+        printf("opkg install: invalid package name\n");
+        return 1;
+    }
+    RepoConfigEntry[32] repos = void;
+    int nrepos = parseRepoConfig(repos.ptr, repos.length);
+    if (nrepos <= 0) {
+        printf("opkg install: no repos configured\n");
+        return 1;
+    }
+
+    char[1024] lsout = void;
+    char*[4] lsArgs = [ cast(char*)"/bin/ls".ptr, cast(char*)"/var/lib/opkg/repos".ptr, null, null ];
+    if (runExecCapture("/bin/ls".ptr, lsArgs.ptr, lsout.ptr, lsout.length) != 0) {
+        printf("opkg install: no cached repositories, run: opkg update\n");
+        return 1;
+    }
+
+    RepoIndexEntry best = void;
+    RepoConfigEntry bestRepo = void;
+    int found = 0;
+    ulong i = 0;
+    while (lsout[i] != 0) {
+        char[128] file = void;
+        ulong j = 0;
+        while (lsout[i] == ' ' || lsout[i] == '\n' || lsout[i] == '\t' || lsout[i] == '\r') i++;
+        while (lsout[i] != 0 && lsout[i] != ' ' && lsout[i] != '\n' && lsout[i] != '\t' && lsout[i] != '\r' && j + 1 < file.length) file[j++] = lsout[i++];
+        file[j] = 0;
+        if (j == 0) break;
+        if (endsWith(file.ptr, ".json".ptr) == 0) continue;
+
+        file[j - 5] = 0;
+        int ridx = -1;
+        for (int r = 0; r < nrepos; r++) {
+            if (streq(file.ptr, repos[r].name.ptr)) {
+                ridx = r;
+                break;
+            }
+        }
+        if (ridx < 0) continue;
+
+        char[320] cachePath = void;
+        copyStr(cachePath.ptr, "/var/lib/opkg/repos/".ptr, cachePath.length);
+        appendStr(cachePath.ptr, repos[ridx].name.ptr, cachePath.length);
+        appendStr(cachePath.ptr, ".json".ptr, cachePath.length);
+        char[MAX_FILE] idx = void;
+        if (readFile(cachePath.ptr, idx.ptr, idx.length) < 0) continue;
+        RepoIndexEntry[256] entries = void;
+        int n = parseRepoIndexJson(idx.ptr, entries.ptr, entries.length);
+        for (int e = 0; e < n; e++) {
+            if (streq(entries[e].name.ptr, pkgName) == 0) continue;
+            if (streq(entries[e].arch.ptr, "x86_64".ptr) == 0) continue;
+            if (found == 0 || versionCmp(best.ver.ptr, entries[e].ver.ptr) < 0) {
+                best = entries[e];
+                bestRepo = repos[ridx];
+                found = 1;
+            }
+        }
+    }
+
+    if (found == 0) {
+        printf("opkg install: package not found: %s\n", pkgName);
+        return 1;
+    }
+
+    if (startsWith(bestRepo.base.ptr, "http://".ptr) || startsWith(bestRepo.base.ptr, "https://".ptr)) {
+        printf("opkg install: repo install over http/https not available in static runtime profile yet\n");
+        return 1;
+    }
+
+    char[256] basePath = void;
+    if (startsWith(bestRepo.base.ptr, "file://".ptr)) {
+        copyStr(basePath.ptr, bestRepo.base.ptr + 7, basePath.length);
+    } else {
+        copyStr(basePath.ptr, bestRepo.base.ptr, basePath.length);
+    }
+    char[512] pkgPath = void;
+    copyStr(pkgPath.ptr, basePath.ptr, pkgPath.length);
+    appendStr(pkgPath.ptr, "/packages/".ptr, pkgPath.length);
+    appendStr(pkgPath.ptr, best.filename.ptr, pkgPath.length);
+
+    printf("==> Resolving %s from repo %s\n", pkgName, bestRepo.name.ptr);
+    printf("==> Installing %s\n", pkgPath.ptr);
+    return installLocal(pkgPath.ptr);
+}
+
+private int cmdRepo() {
+    RepoConfigEntry[32] repos = void;
+    int n = parseRepoConfig(repos.ptr, repos.length);
+    if (n <= 0) {
+        printf("No repositories configured in /etc/opkg/repos.conf\n");
+        return 1;
+    }
+    printf("Configured repositories:\n");
+    for (int i = 0; i < n; i++) {
+        printf("  - %s => %s\n", repos[i].name.ptr, repos[i].base.ptr);
+    }
+    return 0;
+}
+
+private int cmdDoctor() {
+    printf("opkg doctor\n");
+    printf("  runtime: static D profile\n");
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s >= 0) {
+        close(s);
+        printf("  udp socket syscall: available\n");
+        printf("  note: tcp/http transport is still not implemented in this profile\n");
+    } else {
+        printf("  udp socket syscall: unavailable (%d)\n", s);
+        printf("  web repo in-OS usage: not available until transport support is complete\n");
+    }
+
+    char[64] cfg = void;
+    if (readFile("/etc/opkg/repos.conf".ptr, cfg.ptr, cfg.length) < 0) {
+        printf("  repos.conf: missing (/etc/opkg/repos.conf)\n");
+    } else {
+        printf("  repos.conf: present\n");
+    }
+    return 0;
+}
+
 private int cmdBuild(const char* dir) {
     cast(void)dir;
     printf("opkg build: not available in this static runtime profile yet\n");
@@ -811,14 +1233,17 @@ private int cmdBuild(const char* dir) {
 private void printUsage() {
     printf("Usage: opkg <command> [args]\n\n");
     printf("Commands:\n");
-    printf("  install <file.opk>     Install local package\n");
+    printf("  install <pkg|file.opk> Install package from repo cache or local file\n");
     printf("  remove <pkg>           Remove installed package\n");
     printf("  list                   List installed packages\n");
     printf("  info <pkg>             Show package metadata\n");
     printf("  files <pkg>            List files installed by package\n");
     printf("  owner <path>           Show owning package\n");
     printf("  build <dir>            Not available in static profile yet\n");
-    printf("  update/search/repo     Reserved for full D runtime profile\n");
+    printf("  update                 Refresh local repo cache (file:// or local path)\n");
+    printf("  search <term>          Search cached repository metadata\n");
+    printf("  repo                   List configured repositories\n");
+    printf("  doctor                 Show runtime capability diagnostics\n");
 }
 
 extern(C) int opkg_main_d(int argc, char** argv) {
@@ -833,14 +1258,11 @@ extern(C) int opkg_main_d(int argc, char** argv) {
     }
     if (streq(cmd, "install".ptr)) {
         if (argc < 3) {
-            printf("usage: opkg install <file.opk>\n");
+            printf("usage: opkg install <pkg|file.opk>\n");
             return 1;
         }
-        if (endsWith(argv[2], ".opk".ptr) == 0) {
-            printf("opkg install: static D mode currently supports local .opk path only\n");
-            return 1;
-        }
-        return installLocal(argv[2]);
+        if (endsWith(argv[2], ".opk".ptr) != 0) return installLocal(argv[2]);
+        return installFromRepoName(argv[2]);
     }
     if (streq(cmd, "remove".ptr)) {
         if (argc < 3) {
@@ -878,10 +1300,16 @@ extern(C) int opkg_main_d(int argc, char** argv) {
         }
         return cmdBuild(argv[2]);
     }
-    if (streq(cmd, "update".ptr) || streq(cmd, "search".ptr) || streq(cmd, "repo".ptr)) {
-        printf("opkg: command '%s' requires full D runtime profile (pending)\n", cmd);
-        return 1;
+    if (streq(cmd, "update".ptr)) return cmdUpdate();
+    if (streq(cmd, "search".ptr)) {
+        if (argc < 3) {
+            printf("usage: opkg search <term>\n");
+            return 1;
+        }
+        return cmdSearch(argv[2]);
     }
+    if (streq(cmd, "repo".ptr)) return cmdRepo();
+    if (streq(cmd, "doctor".ptr)) return cmdDoctor();
     printf("opkg: unknown command: %s\n", cmd);
     return 1;
 }

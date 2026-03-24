@@ -85,6 +85,10 @@ C_SOURCES := \
     $(ARCH_DIR)/mm/paging.c \
     $(ARCH_DIR)/mm/physmem.c \
     $(ARCH_DIR)/process/syscall.c \
+    drivers/pci.c \
+    net/core.c \
+    net/e1000.c \
+    net/virtio_net.c \
     mm/pmm.c \
     mm/vmm.c \
     mm/kmalloc.c \

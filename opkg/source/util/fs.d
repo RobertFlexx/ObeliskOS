@@ -2,6 +2,8 @@ module util.fs;
 
 import std.file : exists, mkdirRecurse;
 import std.path : buildPath;
+import std.array : appender;
+import std.exception : enforce;
 private string trimLeadingSlash(string s) {
     size_t i = 0;
     while (i < s.length && s[i] == '/') {
@@ -37,23 +39,37 @@ bool pathExists(string path) {
 }
 
 string normalizeManifestPath(string path) {
-    import std.string : replace;
+    auto raw = trimLeadingSlash(normalizePathLite(path));
+    enforce(raw.length > 0, "invalid empty manifest path");
 
-    auto p = path;
-    while (p.length >= 2 && p[0 .. 2] == "./") {
-        p = p[2 .. $];
+    auto builder = appender!string();
+    builder.put("/");
+
+    size_t i = 0;
+    bool first = true;
+    while (i < raw.length) {
+        size_t j = i;
+        while (j < raw.length && raw[j] != '/') j++;
+        auto seg = raw[i .. j];
+
+        if (seg.length == 0 || seg == ".") {
+            // Skip.
+        } else {
+            enforce(seg != "..", "path traversal entry is not allowed");
+            foreach (c; seg) {
+                enforce(c != '\0', "manifest path contains NUL");
+            }
+            if (!first) builder.put("/");
+            builder.put(seg);
+            first = false;
+        }
+
+        i = j + 1;
     }
-    p = trimLeadingSlash(p);
-    p = "/" ~ p;
-    auto r = normalizePathLite(p);
-    while (r.length >= 3 && r[0 .. 3] == "/./") {
-        r = r[2 .. $];
-    }
-    r = replace(r, "/./", "/");
-    if (r.length > 2 && r[$ - 2 .. $] == "/.") {
-        r = r[0 .. $ - 2];
-    }
-    return normalizePathLite(r);
+
+    auto normalized = builder.data;
+    enforce(normalized.length > 1, "invalid manifest path");
+    return normalized;
 }
 
 string buildDbRoot(string rootPath) {
@@ -72,7 +88,7 @@ void ensureDbDirs(string dbRoot) {
 
 string ensureAbsoluteInsideRoot(string rootPath, string relPath) {
     auto root = normalizePathLite(rootPath.length == 0 ? "/" : rootPath);
-    auto rel = trimLeadingSlash(relPath);
+    auto rel = trimLeadingSlash(normalizeManifestPath(relPath));
     auto result = root == "/" ? ("/" ~ rel) : buildPath(root, rel);
     return normalizePathLite(result);
 }

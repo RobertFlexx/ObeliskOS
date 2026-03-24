@@ -17,9 +17,11 @@ int cmdList(const(string)[] args) {
             writeln("No packages installed.");
             return 0;
         }
+        writeln("Installed packages:");
         foreach (name; pkgs) {
             auto rec = loadInstalledRecord(dbRoot, name);
-            writeln(rec.metadata.name, " ", rec.metadata.versionString, " ", rec.metadata.arch, " - ", rec.metadata.summary);
+            writeln("  - ", rec.metadata.name, " ", rec.metadata.versionString, " (", rec.metadata.arch, ")");
+            writeln("      ", rec.metadata.summary);
         }
         return 0;
     } catch (Exception e) {

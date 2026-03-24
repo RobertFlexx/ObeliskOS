@@ -37,6 +37,8 @@ struct idt_ptr {
 
 static struct idt_entry idt[IDT_ENTRIES] __aligned(16);
 static struct idt_ptr idt_desc;
+static irq_handler_fn_t irq_handlers[IRQ_COUNT];
+static void *irq_handler_ctx[IRQ_COUNT];
 
 extern void isr_stub_0(void);
 extern void isr_stub_1(void);
@@ -268,6 +270,8 @@ void exception_handler(struct cpu_regs *regs) {
 void irq_handler(struct cpu_regs *regs) {
     uint64_t irq;
     static uint64_t irq0_count = 0;
+    irq_handler_fn_t fn;
+    void *ctx;
     if (!regs) {
         panic("irq_handler: null register frame");
     }
@@ -277,20 +281,36 @@ void irq_handler(struct cpu_regs *regs) {
         return;
     }
     irq = regs->vector - IRQ_BASE;
+    fn = irq_handlers[irq];
+    ctx = irq_handler_ctx[irq];
 
     if (irq == 0) {
         irq0_count++;
+        net_tick();
         if (irq0_count == 1 || (irq0_count % 5000) == 0) {
             printk(KERN_DEBUG "IRQ 0 received (count=%lu)\n", irq0_count);
         }
-    } else {
+    } else if (!fn) {
         printk(KERN_DEBUG "IRQ %lu received\n", irq);
+    }
+
+    if (fn) {
+        fn((uint8_t)irq, regs, ctx);
     }
 
     if (irq >= 8) {
         outb(0xA0, 0x20);
     }
     outb(0x20, 0x20);
+}
+
+int irq_register_handler(uint8_t irq, irq_handler_fn_t fn, void *ctx) {
+    if (irq >= IRQ_COUNT || !fn) {
+        return -EINVAL;
+    }
+    irq_handlers[irq] = fn;
+    irq_handler_ctx[irq] = ctx;
+    return 0;
 }
 
 static void pic_init(void) {
@@ -350,6 +370,8 @@ void idt_init(void) {
     int i;
     printk(KERN_INFO "Initializing IDT...\n");
     memset(idt, 0, sizeof(idt));
+    memset(irq_handlers, 0, sizeof(irq_handlers));
+    memset(irq_handler_ctx, 0, sizeof(irq_handler_ctx));
 
     for (i = 0; i < 32; i++) {
         uint8_t gate = (i == 3) ? IDT_USER_INTERRUPT : IDT_INTERRUPT_GATE;

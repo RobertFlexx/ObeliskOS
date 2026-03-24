@@ -80,7 +80,7 @@ rootfs: userland
 	@cp $(USERLAND_DIR)/axiomd/policy/access.pro $(ROOTFS_DIR)/etc/axiomd/policy/access.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/allocation.pro $(ROOTFS_DIR)/etc/axiomd/policy/allocation.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/inheritance.pro $(ROOTFS_DIR)/etc/axiomd/policy/inheritance.pro
-	@for tool in busybox sh zsh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar; do \
+	@for tool in busybox sh zsh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar; do \
 		if [ -f "$(USERLAND_OUT_DIR)/$$tool" ]; then \
 			cp "$(USERLAND_OUT_DIR)/$$tool" "$(ROOTFS_DIR)/bin/$$tool"; \
 		fi; \
@@ -104,7 +104,7 @@ rootfs: userland
 			fi; \
 		done; \
 	fi
-	@for app in sh zsh busybox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe; do \
+	@for app in sh zsh busybox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe ping nslookup; do \
 		if [ -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 			cp "$(ROOTFS_DIR)/bin/$$app" "$(ROOTFS_DIR)/usr/bin/$$app"; \
 		fi; \
@@ -112,6 +112,21 @@ rootfs: userland
 	@if [ -d "$(ROOTFS_OVERLAY_DIR)" ]; then \
 		echo "Applying rootfs overlay from $(ROOTFS_OVERLAY_DIR)..."; \
 		cp -a "$(ROOTFS_OVERLAY_DIR)/." "$(ROOTFS_DIR)/"; \
+	fi
+	@mkdir -p "$(ROOTFS_DIR)/var/cache/opkg/repo/packages"
+	@if [ -d "opkg/examples/samplepkg" ]; then \
+		echo "Preparing bundled opkg demo repository..."; \
+		if [ ! -x "opkg/opkg" ]; then \
+			(cd opkg && dub build); \
+		fi; \
+		./opkg/opkg build opkg/examples/samplepkg "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/hello-sample-1.0.0-x86_64.opk"; \
+		if [ -d "opkg/examples/grep" ]; then \
+			./opkg/opkg build opkg/examples/grep "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/grep-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/sed" ]; then \
+			./opkg/opkg build opkg/examples/sed "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/sed-1.0.0-x86_64.opk"; \
+		fi; \
+		./opkg/opkg repo index "$(ROOTFS_DIR)/var/cache/opkg/repo"; \
 	fi
 	@if [ "$(IMPORT_HOST_USERLAND)" = "1" ] && [ -x "$(HOST_USERLAND_IMPORT_SCRIPT)" ]; then \
 		"$(HOST_USERLAND_IMPORT_SCRIPT)" "$(ROOTFS_DIR)" "$(HOST_ZSH_BIN)" $(HOST_COREUTILS_BINS); \

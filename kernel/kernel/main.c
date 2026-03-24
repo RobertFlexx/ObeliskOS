@@ -19,6 +19,7 @@
 #include <fs/vfs.h>
 #include <ipc/msgqueue.h>
 #include <sysctl/sysctl.h>
+#include <net/e1000.h>
 
 /* Kernel banner */
 static const char *banner =
@@ -125,6 +126,18 @@ static void memory_init(void) {
     kmalloc_init();
     
     printk(KERN_INFO "Memory subsystem initialized.\n");
+}
+
+/* Initialize networking (phase 1 hardware bring-up) */
+static void network_init_all(void) {
+    printk(KERN_INFO "Initializing networking hardware...\n");
+    net_init();
+    pci_init();
+    virtio_net_init();
+    if (!net_is_ready()) {
+        e1000_init();
+    }
+    printk(KERN_INFO "Networking hardware initialization complete.\n");
 }
 
 /* Initialize CPU and interrupts */
@@ -318,19 +331,22 @@ void __noreturn kernel_main(uint32_t magic, uint64_t multiboot_addr) {
     /* Phase 3: Memory management */
     memory_init();
     
-    /* Phase 4: Process management */
+    /* Phase 4: Networking */
+    network_init_all();
+
+    /* Phase 5: Process management */
     process_init_all();
     
-    /* Phase 5: Filesystems */
+    /* Phase 6: Filesystems */
     fs_init_all();
     
-    /* Phase 6: IPC */
+    /* Phase 7: IPC */
     ipc_init_all();
     
-    /* Phase 7: sysctl */
+    /* Phase 8: sysctl */
     sysctl_init_all();
     
-    /* Phase 8: Late initialization */
+    /* Phase 9: Late initialization */
     late_init();
     
     /* Print system information */

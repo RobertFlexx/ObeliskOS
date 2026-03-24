@@ -29,6 +29,14 @@ Each entry includes:
 `filename` is relative to `packages/`.
 `checksum` is required in v1 and must be `sha256:<64-lower-hex>`.
 
+Index generation helper:
+
+- `opkg repo index <repo-dir>`
+  - scans `<repo-dir>/packages/*.opk`
+  - extracts metadata from each package
+  - computes `sha256` for each package
+  - writes `<repo-dir>/index.json`
+
 ## Local repo config
 
 `/etc/opkg/repos.conf` (v1 proposal):
@@ -73,3 +81,12 @@ Downloaded package cache:
   - downloads `<base-url>/packages/<filename>`
   - verifies `sha256` checksum from index
   - installs via the same local `.opk` install path
+
+## Repository management commands
+
+- `opkg repo`
+  - lists configured repositories from `repos.conf`
+- `opkg repo init <dir>`
+  - creates a static repo skeleton (`packages/`, `index.json`, `README.txt`)
+- `opkg repo index <dir>`
+  - rebuilds `index.json` from package files in `packages/`

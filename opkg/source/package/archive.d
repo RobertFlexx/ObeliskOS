@@ -33,6 +33,20 @@ private void runTar(string[] args, string errorPrefix) {
     }
 }
 
+private void verifyPayloadArchiveMembers(string payloadTarPath) {
+    auto listOut = execute(["tar", "-tf", payloadTarPath]);
+    enforce(listOut.status == 0, "failed to inspect files.tar");
+    foreach (line; splitLines(listOut.output)) {
+        auto t = line.strip();
+        if (t.length == 0 || t[$ - 1] == '/') {
+            continue;
+        }
+        // normalizeManifestPath throws on traversal entries like "../".
+        auto normalizedPath = normalizeManifestPath(t);
+        cast(void)normalizedPath;
+    }
+}
+
 int packOpkV1(string sourceDir, string outOpkPath) {
     auto metaPath = buildPath(sourceDir, "meta.json");
     auto filesTarPath = buildPath(sourceDir, "files.tar");
@@ -63,6 +77,7 @@ OpkUnpacked unpackOpkV1(string opkPath) {
     auto filesTarPath = buildPath(work, "files.tar");
     enforce(exists(metaPath), "malformed package: missing meta.json");
     enforce(exists(filesTarPath), "malformed package: missing files.tar");
+    verifyPayloadArchiveMembers(filesTarPath);
 
     auto meta = parseMetaJson(readText(metaPath));
     auto listOut = execute(["tar", "-tf", filesTarPath]);
@@ -86,7 +101,11 @@ OpkUnpacked unpackOpkV1(string opkPath) {
 }
 
 void extractPayloadToRoot(string payloadTarPath, string rootPath) {
-    runTar(["tar", "-xf", payloadTarPath, "-C", rootPath], "failed to extract package payload");
+    verifyPayloadArchiveMembers(payloadTarPath);
+    runTar(
+        ["tar", "--no-same-owner", "--no-same-permissions", "-xf", payloadTarPath, "-C", rootPath],
+        "failed to extract package payload"
+    );
 }
 
 void cleanupUnpacked(ref OpkUnpacked pkg) {

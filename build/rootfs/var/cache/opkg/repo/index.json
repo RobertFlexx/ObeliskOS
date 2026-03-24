@@ -1,0 +1,29 @@
+[
+  {
+    "name": "sed",
+    "version": "1.0.0",
+    "arch": "x86_64",
+    "filename": "sed-1.0.0-x86_64.opk",
+    "checksum": "sha256:92792a36d5c862e432c3bcade9488f50895cf852b8faad07e5905e458b1067a7",
+    "depends": [],
+    "summary": "sed wrapper package for Obelisk"
+  },
+  {
+    "name": "grep",
+    "version": "1.0.0",
+    "arch": "x86_64",
+    "filename": "grep-1.0.0-x86_64.opk",
+    "checksum": "sha256:cc35821be409505458dd4bf25a2bd4ff7e39232eb7d8cfb83c942009ca7792d9",
+    "depends": [],
+    "summary": "grep wrapper package for Obelisk"
+  },
+  {
+    "name": "hello-sample",
+    "version": "1.0.0",
+    "arch": "x86_64",
+    "filename": "hello-sample-1.0.0-x86_64.opk",
+    "checksum": "sha256:9e71a004d1a32278c3bfa0f7585e7e5896eb0ada3505ee44cd5c7f824e97c01a",
+    "depends": [],
+    "summary": "Sample package for opkg v1 testing"
+  }
+]

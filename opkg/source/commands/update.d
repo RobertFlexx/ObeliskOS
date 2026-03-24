@@ -24,13 +24,14 @@ int cmdUpdate(const(string)[] args) {
 
     auto repoStateDir = buildPath(dbRoot, "repos");
     int okCount = 0;
+    writeln("Refreshing repository indexes...");
     foreach (repo; repos) {
         try {
             fetchRepoIndex(repo, repoStateDir);
-            writeln("updated ", repo.name, " (", repo.baseUrl, ")");
+            writeln("  [ok] ", repo.name, "  ", repo.baseUrl);
             okCount++;
         } catch (Exception e) {
-            writeln("opkg update: failed ", repo.name, ": ", e.msg);
+            writeln("  [fail] ", repo.name, ": ", e.msg);
         }
     }
     if (okCount == 0) {

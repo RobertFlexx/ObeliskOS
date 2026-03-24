@@ -58,5 +58,7 @@ void printUsage() {
     writeln("  files <pkg>            List files installed by package");
     writeln("  owner <path>           Show owning package for file path");
     writeln("  repo                   Show configured repositories");
+    writeln("  repo init <dir>        Initialize static HTTP repository layout");
+    writeln("  repo index <dir>       Generate index.json from packages/*.opk");
     writeln("  build <dir> [out.opk]  Build .opk from package directory");
 }

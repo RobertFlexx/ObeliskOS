@@ -246,6 +246,46 @@ int pipe(int pipefd[2]) {
     return ob_syscall1(22, (long)pipefd);
 }
 
+/* Create socket */
+int socket(int domain, int type, int protocol) {
+    return ob_syscall3(41, domain, type, protocol);
+}
+
+/* Connect socket */
+int connect(int sockfd, const void *addr, int addrlen) {
+    return ob_syscall3(42, sockfd, (long)addr, addrlen);
+}
+
+/* Accept connection */
+int accept(int sockfd, void *addr, int *addrlen) {
+    return ob_syscall3(43, sockfd, (long)addr, (long)addrlen);
+}
+
+/* Send data */
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen) {
+    return ob_syscall6(44, sockfd, (long)buf, len, flags, (long)dest_addr, addrlen);
+}
+
+/* Receive data */
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, int *addrlen) {
+    return ob_syscall6(45, sockfd, (long)buf, len, flags, (long)src_addr, (long)addrlen);
+}
+
+/* Bind socket */
+int bind(int sockfd, const void *addr, int addrlen) {
+    return ob_syscall3(49, sockfd, (long)addr, addrlen);
+}
+
+/* Listen on socket */
+int listen(int sockfd, int backlog) {
+    return ob_syscall2(50, sockfd, backlog);
+}
+
+/* Shutdown socket */
+int shutdown(int sockfd, int how) {
+    return ob_syscall2(48, sockfd, how);
+}
+
 /* Send signal */
 int kill(int pid, int sig) {
     return ob_syscall2(62, pid, sig);

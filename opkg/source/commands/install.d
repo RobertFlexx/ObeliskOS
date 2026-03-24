@@ -52,6 +52,7 @@ private bool parseChecksumSha256(string field, out string hex) {
 private int installLocalOpkFile(string targetPath) {
     auto root = opkgRootPath();
     auto dbRoot = opkgDbRootPath();
+    auto arch = opkgArch();
     ensureDbDirs(dbRoot);
 
     auto pkg = unpackOpkV1(targetPath);
@@ -59,6 +60,14 @@ private int installLocalOpkFile(string targetPath) {
 
     if (isInstalled(dbRoot, pkg.metadata.name)) {
         writeln("opkg install: package already installed: ", pkg.metadata.name);
+        return 1;
+    }
+
+    if (pkg.metadata.arch != arch && pkg.metadata.arch != "noarch") {
+        writeln(
+            "opkg install: package architecture mismatch: ",
+            pkg.metadata.arch, " (system: ", arch, ")"
+        );
         return 1;
     }
 
@@ -83,7 +92,7 @@ private int installLocalOpkFile(string targetPath) {
         owners[path] = pkg.metadata.name;
     }
     saveFileOwners(dbRoot, owners);
-    writeln("Installed ", pkg.metadata.name, " ", pkg.metadata.versionString, " (", pkg.metadata.arch, ")");
+    writeln("==> Installed ", pkg.metadata.name, " ", pkg.metadata.versionString, " (", pkg.metadata.arch, ")");
     return 0;
 }
 
@@ -154,6 +163,8 @@ private int installFromRepoName(string pkgName) {
     }
 
     auto url = bestRepo.baseUrl ~ "/packages/" ~ bestEntry.filename;
+    writeln("==> Resolving ", pkgName, " from repo ", bestRepo.name);
+    writeln("==> Downloading ", url);
     char[] data;
     try {
         data = get(url);
@@ -176,6 +187,7 @@ private int installFromRepoName(string pkgName) {
         return 1;
     }
 
+    writeln("==> Verified checksum sha256:", expectedSha);
     return installLocalOpkFile(cachedOpkPath);
 }
 

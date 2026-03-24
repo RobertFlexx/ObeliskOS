@@ -45,8 +45,10 @@ TRAVERSEPROBE := $(OUTDIR)/traverseprobe
 MKSTATPROBE := $(OUTDIR)/mkstatprobe
 OPKG := $(OUTDIR)/opkg
 DPROBE := $(OUTDIR)/dprobe
+PING := $(OUTDIR)/ping
+NSLOOKUP := $(OUTDIR)/nslookup
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP)
 
 CFLAGS := \
 	-ffreestanding \
@@ -163,6 +165,14 @@ $(OPKG): $(BUILDDIR)/bin/opkg/opkg.o $(BUILDDIR)/bin/opkg/opkg_d.o $(LIBC) | $(O
 $(DPROBE): $(BUILDDIR)/bin/dprobe/dprobe.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $^
+
+$(PING): $(BUILDDIR)/bin/ping/ping.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(NSLOOKUP): $(BUILDDIR)/bin/nslookup/nslookup.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
 clean:
 	@echo "  CLEAN"

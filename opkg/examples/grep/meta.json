@@ -1,0 +1,12 @@
+{
+  "name": "grep",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "grep wrapper package for Obelisk",
+  "description": "Installs /usr/bin/grep wrapper that dispatches to /bin/grep.",
+  "depends": [],
+  "provides": ["grep"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "core"
+}

@@ -19,6 +19,7 @@
 #include <mm/pmm.h>
 #include <obelisk/limits.h>
 #include <sysctl/sysctl.h>
+#include <net/net.h>
 
 /* Forward declarations of syscall handlers */
 static int64_t sys_read(int fd, void *buf, size_t count);
@@ -78,6 +79,14 @@ static int64_t sys_kill(pid_t pid, int sig);
 static int64_t sys_uname(void *buf);
 static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg);
 static int64_t sys_sysctl(void *args);
+static int64_t sys_socket(int domain, int type, int protocol);
+static int64_t sys_connect(int sockfd, const void *addr, int addrlen);
+static int64_t sys_accept(int sockfd, void *addr, int *addrlen);
+static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
+static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, int *addrlen);
+static int64_t sys_bind(int sockfd, const void *addr, int addrlen);
+static int64_t sys_listen(int sockfd, int backlog);
+static int64_t sys_shutdown(int sockfd, int how);
 static int resolve_user_path(const char *path, char *out, size_t out_size);
 static int resolve_user_at_path(int dirfd, const char *path, char *out, size_t out_size);
 
@@ -111,6 +120,13 @@ struct termios_compat {
     uint8_t  c_cc[32];
 };
 
+struct sockaddr_in_compat {
+    uint16_t sin_family;
+    uint16_t sin_port;
+    uint32_t sin_addr;
+    uint8_t sin_zero[8];
+} __packed;
+
 #define TCGETS      0x5401UL
 #define TCSETS      0x5402UL
 #define TCSETSW     0x5403UL
@@ -123,6 +139,22 @@ struct termios_compat {
 #define F_SETFL     4
 
 #define IS_STDIO_FD(fd) ((fd) == 0 || (fd) == 1 || (fd) == 2)
+#define AF_INET     2
+#define SOCK_DGRAM  2
+#define SOCK_RAW    3
+#define IPPROTO_ICMP 1
+#define IPPROTO_UDP 17
+#define SOCKET_FD_BASE  4096
+#define SOCKET_MAX      64
+
+struct ksocket {
+    bool used;
+    pid_t owner_pid;
+    int domain;
+    int type;
+    int protocol;
+    uint16_t bound_port;
+};
 
 struct getdents64_ctx {
     struct dir_context ctx;
@@ -164,10 +196,39 @@ typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t
 
 static syscall_fn_t syscall_table[NR_SYSCALLS];
 static struct cpu_regs *current_syscall_regs = NULL;
+static struct ksocket socket_table[SOCKET_MAX];
+
+static uint16_t bswap16(uint16_t v) {
+    return (uint16_t)((v << 8) | (v >> 8));
+}
+static uint16_t htons16(uint16_t v) { return bswap16(v); }
+static uint16_t ntohs16(uint16_t v) { return bswap16(v); }
 static void tty_flush_input(void) {
     while (uart_getc_nonblock() >= 0) {
         /* Drain pending serial input bytes after Ctrl+C. */
     }
+}
+
+static int socket_fd_to_index(int fd) {
+    int idx = fd - SOCKET_FD_BASE;
+    if (idx < 0 || idx >= SOCKET_MAX) {
+        return -1;
+    }
+    return idx;
+}
+
+static struct ksocket *socket_get_owned(int fd) {
+    int idx = socket_fd_to_index(fd);
+    if (idx < 0) {
+        return NULL;
+    }
+    if (!socket_table[idx].used) {
+        return NULL;
+    }
+    if (!current || socket_table[idx].owner_pid != current->pid) {
+        return NULL;
+    }
+    return &socket_table[idx];
 }
 
 /* Syscall statistics (for debugging/profiling) */
@@ -280,6 +341,7 @@ static void syscall_table_init(void) {
         syscall_table[i] = NULL;
         syscall_counts[i] = 0;
     }
+    memset(socket_table, 0, sizeof(socket_table));
     
     /* Register syscall handlers */
     syscall_table[SYS_READ] = (syscall_fn_t)sys_read;
@@ -339,6 +401,19 @@ static void syscall_table_init(void) {
     syscall_table[SYS_UNAME] = (syscall_fn_t)sys_uname;
     syscall_table[SYS_REBOOT] = (syscall_fn_t)sys_reboot;
     syscall_table[SYS_OBELISK_SYSCTL] = (syscall_fn_t)sys_sysctl;
+    /*
+     * Networking ABI placeholders:
+     * syscalls are explicitly wired so userspace gets deterministic
+     * "network stack unavailable" errors instead of generic ENOSYS.
+     */
+    syscall_table[SYS_SOCKET] = (syscall_fn_t)sys_socket;
+    syscall_table[SYS_CONNECT] = (syscall_fn_t)sys_connect;
+    syscall_table[SYS_ACCEPT] = (syscall_fn_t)sys_accept;
+    syscall_table[SYS_SENDTO] = (syscall_fn_t)sys_sendto;
+    syscall_table[SYS_RECVFROM] = (syscall_fn_t)sys_recvfrom;
+    syscall_table[SYS_BIND] = (syscall_fn_t)sys_bind;
+    syscall_table[SYS_LISTEN] = (syscall_fn_t)sys_listen;
+    syscall_table[SYS_SHUTDOWN] = (syscall_fn_t)sys_shutdown;
 }
 
 static int process_getcwd_path(struct process *proc, char *buf, size_t size) {
@@ -724,6 +799,11 @@ static int64_t sys_open(const char *pathname, int flags, mode_t mode) {
 static int64_t sys_close(int fd) {
     struct process *proc = current;
     struct file *file;
+    struct ksocket *sock = socket_get_owned(fd);
+    if (sock) {
+        memset(sock, 0, sizeof(*sock));
+        return 0;
+    }
     if (!proc || !proc->files) {
         return -EBADF;
     }
@@ -1795,6 +1875,275 @@ static int64_t sys_sysctl(void *args) {
         return -EFAULT;
     }
     kfree(kout);
+    return 0;
+}
+
+static int64_t sys_socket(int domain, int type, int protocol) {
+    if (domain != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    if (type != SOCK_RAW && type != SOCK_DGRAM) {
+        return -EPROTONOSUPPORT;
+    }
+    if (type == SOCK_RAW) {
+        if (protocol != 0 && protocol != IPPROTO_ICMP) {
+            return -EPROTONOSUPPORT;
+        }
+    } else if (type == SOCK_DGRAM) {
+        if (protocol != 0 && protocol != IPPROTO_UDP) {
+            return -EPROTONOSUPPORT;
+        }
+    }
+    if (!net_is_ready()) {
+        return -ENETDOWN;
+    }
+
+    for (int i = 0; i < SOCKET_MAX; i++) {
+        if (!socket_table[i].used) {
+            socket_table[i].used = true;
+            socket_table[i].owner_pid = current ? current->pid : 0;
+            socket_table[i].domain = domain;
+            socket_table[i].type = type;
+            socket_table[i].protocol = (protocol == 0) ? ((type == SOCK_RAW) ? IPPROTO_ICMP : IPPROTO_UDP) : protocol;
+            socket_table[i].bound_port = 0;
+            return SOCKET_FD_BASE + i;
+        }
+    }
+    return -EMFILE;
+}
+
+static int64_t sys_connect(int sockfd, const void *addr, int addrlen) {
+    struct ksocket *sock = socket_get_owned(sockfd);
+    (void)addr;
+    (void)addrlen;
+    if (!sock) {
+        return -EBADF;
+    }
+    if (sock->domain != AF_INET || sock->type != SOCK_RAW) {
+        return -EAFNOSUPPORT;
+    }
+    return -EOPNOTSUPP;
+}
+
+static int64_t sys_accept(int sockfd, void *addr, int *addrlen) {
+    (void)sockfd;
+    (void)addr;
+    (void)addrlen;
+    return -ENETDOWN;
+}
+
+static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen) {
+    struct ksocket *sock = socket_get_owned(sockfd);
+    struct sockaddr_in_compat sa;
+    uint8_t payload[512];
+    uint8_t dst_ip[4];
+    uint16_t dst_port;
+    uint16_t src_port;
+    int ret;
+    (void)flags;
+    if (!sock) {
+        return -EBADF;
+    }
+    if (sock->domain != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    if (!buf || len == 0 || len > sizeof(payload)) {
+        return -EMSGSIZE;
+    }
+    if (!dest_addr || addrlen < (int)sizeof(sa)) {
+        return -EINVAL;
+    }
+    if (vmm_copy_from_user(&sa, dest_addr, sizeof(sa)) < 0) {
+        return -EFAULT;
+    }
+    if (sa.sin_family != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    if (vmm_copy_from_user(payload, buf, len) < 0) {
+        return -EFAULT;
+    }
+
+    dst_ip[0] = (uint8_t)((sa.sin_addr >> 24) & 0xFF);
+    dst_ip[1] = (uint8_t)((sa.sin_addr >> 16) & 0xFF);
+    dst_ip[2] = (uint8_t)((sa.sin_addr >> 8) & 0xFF);
+    dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
+
+    if (sock->type == SOCK_RAW && sock->protocol == IPPROTO_ICMP) {
+        ret = net_send_icmp_echo(dst_ip, payload, len);
+    } else if (sock->type == SOCK_DGRAM && sock->protocol == IPPROTO_UDP) {
+        dst_port = ntohs16(sa.sin_port);
+        if (dst_port == 0) {
+            return -EINVAL;
+        }
+        if (sock->bound_port == 0) {
+            int idx = socket_fd_to_index(sockfd);
+            src_port = (uint16_t)(40000 + ((idx >= 0) ? (uint16_t)idx : 0));
+            sock->bound_port = src_port;
+        } else {
+            src_port = sock->bound_port;
+        }
+        ret = net_send_udp(dst_ip, src_port, dst_port, payload, len);
+    } else {
+        return -EAFNOSUPPORT;
+    }
+    if (ret < 0) {
+        return ret;
+    }
+    return (int64_t)len;
+}
+
+static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, int *addrlen) {
+    struct ksocket *sock = socket_get_owned(sockfd);
+    struct net_icmp_event ev;
+    struct net_udp_event uev;
+    size_t out_len;
+    int ret;
+    int max_loops = 300; /* Poll-bound receive timeout window. */
+    (void)flags;
+    if (!sock) {
+        return -EBADF;
+    }
+    if (sock->domain != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    if (!buf || len == 0) {
+        return -EINVAL;
+    }
+
+    if (sock->type == SOCK_RAW && sock->protocol == IPPROTO_ICMP) {
+        while (max_loops-- > 0) {
+            ret = net_recv_icmp_echo_event(&ev);
+            if (ret == 0) {
+                break;
+            }
+            if (ret != -EAGAIN) {
+                return ret;
+            }
+            net_tick();
+            scheduler_yield();
+        }
+        if (ret != 0) {
+            return -EAGAIN;
+        }
+
+        out_len = ev.packet_len;
+        if (out_len > len) {
+            out_len = len;
+        }
+        if (vmm_copy_to_user(buf, ev.packet, out_len) < 0) {
+            return -EFAULT;
+        }
+
+        if (src_addr && addrlen) {
+            struct sockaddr_in_compat sa;
+            int user_len;
+            if (vmm_copy_from_user(&user_len, addrlen, sizeof(user_len)) < 0) {
+                return -EFAULT;
+            }
+            if (user_len >= (int)sizeof(sa)) {
+                memset(&sa, 0, sizeof(sa));
+                sa.sin_family = AF_INET;
+                sa.sin_addr = ((uint32_t)ev.src_ip[0] << 24) |
+                              ((uint32_t)ev.src_ip[1] << 16) |
+                              ((uint32_t)ev.src_ip[2] << 8) |
+                              (uint32_t)ev.src_ip[3];
+                if (vmm_copy_to_user(src_addr, &sa, sizeof(sa)) < 0) {
+                    return -EFAULT;
+                }
+                user_len = sizeof(sa);
+                if (vmm_copy_to_user(addrlen, &user_len, sizeof(user_len)) < 0) {
+                    return -EFAULT;
+                }
+            }
+        }
+        return (int64_t)out_len;
+    } else if (sock->type == SOCK_DGRAM && sock->protocol == IPPROTO_UDP) {
+        while (max_loops-- > 0) {
+            ret = net_recv_udp_event(sock->bound_port, &uev);
+            if (ret == 0) {
+                break;
+            }
+            if (ret != -EAGAIN) {
+                return ret;
+            }
+            net_tick();
+            scheduler_yield();
+        }
+        if (ret != 0) {
+            return -EAGAIN;
+        }
+        out_len = uev.payload_len;
+        if (out_len > len) {
+            out_len = len;
+        }
+        if (vmm_copy_to_user(buf, uev.payload, out_len) < 0) {
+            return -EFAULT;
+        }
+        if (src_addr && addrlen) {
+            struct sockaddr_in_compat sa;
+            int user_len;
+            if (vmm_copy_from_user(&user_len, addrlen, sizeof(user_len)) < 0) {
+                return -EFAULT;
+            }
+            if (user_len >= (int)sizeof(sa)) {
+                memset(&sa, 0, sizeof(sa));
+                sa.sin_family = AF_INET;
+                sa.sin_port = htons16(uev.src_port);
+                sa.sin_addr = ((uint32_t)uev.src_ip[0] << 24) |
+                              ((uint32_t)uev.src_ip[1] << 16) |
+                              ((uint32_t)uev.src_ip[2] << 8) |
+                              (uint32_t)uev.src_ip[3];
+                if (vmm_copy_to_user(src_addr, &sa, sizeof(sa)) < 0) {
+                    return -EFAULT;
+                }
+                user_len = sizeof(sa);
+                if (vmm_copy_to_user(addrlen, &user_len, sizeof(user_len)) < 0) {
+                    return -EFAULT;
+                }
+            }
+        }
+        return (int64_t)out_len;
+    }
+    return -EAFNOSUPPORT;
+}
+
+static int64_t sys_bind(int sockfd, const void *addr, int addrlen) {
+    struct ksocket *sock = socket_get_owned(sockfd);
+    struct sockaddr_in_compat sa;
+    if (!sock) {
+        return -EBADF;
+    }
+    if (sock->domain != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    if (!addr || addrlen < (int)sizeof(sa)) {
+        return -EINVAL;
+    }
+    if (vmm_copy_from_user(&sa, addr, sizeof(sa)) < 0) {
+        return -EFAULT;
+    }
+    if (sa.sin_family != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    sock->bound_port = ntohs16(sa.sin_port);
+    return 0;
+}
+
+static int64_t sys_listen(int sockfd, int backlog) {
+    struct ksocket *sock = socket_get_owned(sockfd);
+    (void)backlog;
+    if (!sock) {
+        return -EBADF;
+    }
+    return -EOPNOTSUPP;
+}
+
+static int64_t sys_shutdown(int sockfd, int how) {
+    struct ksocket *sock = socket_get_owned(sockfd);
+    (void)how;
+    if (!sock) {
+        return -EBADF;
+    }
     return 0;
 }
 
