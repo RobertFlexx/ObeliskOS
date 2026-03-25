@@ -1,0 +1,12 @@
+#!/bin/sh
+# Default XDM session script for Obelisk.
+
+if [ -f /usr/lib/obelisk/desktop/xsession-compat ]; then
+  exec /bin/sh /usr/lib/obelisk/desktop/xsession-compat
+fi
+if [ -f /usr/lib/obelisk/desktop/startxfce4-compat ]; then
+  exec /bin/sh /usr/lib/obelisk/desktop/startxfce4-compat
+fi
+
+echo "Xsession: no desktop launcher available"
+exit 1

@@ -1,10 +1,20 @@
 #!/bin/sh
 # Obelisk XFCE session compatibility wrapper.
 
-echo "xfce4-session-compat: placeholder session active (real XFCE binaries not packaged yet)"
-exec /bin/osh -i
-#!/bin/sh
-# Obelisk XFCE session compatibility wrapper.
+if [ -x /usr/bin/xfce4-session ]; then
+  exec /usr/bin/xfce4-session
+fi
+if [ -x /bin/xfce4-session ]; then
+  exec /bin/xfce4-session
+fi
+if [ -f /usr/bin/startxfce4 ]; then
+  exec /bin/sh /usr/bin/startxfce4
+fi
+if [ -f /bin/startxfce4 ]; then
+  exec /bin/sh /bin/startxfce4
+fi
 
-echo "xfce4-session-compat: placeholder session active (real XFCE binaries not packaged yet)"
-exec /bin/osh -i
+echo "xfce4-session-compat: real XFCE session binary missing"
+echo "xfce4-session-compat: expected /usr/bin/xfce4-session or /usr/bin/startxfce4"
+echo "xfce4-session-compat: install real XFCE/XDM runtime packages for GUI login"
+exit 1

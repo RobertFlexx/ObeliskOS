@@ -1,0 +1,3 @@
+#!/bin/sh
+# Obelisk XDM setup hook.
+exit 0

@@ -2,48 +2,56 @@
 
 **From Axioms, Order.**
 
-Obelisk is a standalone, Unix-like operating system project focused on a stable
-TTY/CLI environment with a policy-driven filesystem architecture.
+Obelisk is a standalone Unix-like OS focused on a practical minimal base system
+that is CLI-first and desktop-capable.
 
-## Project Philosophy
+## Official Target Profile
 
-- Keep the base system simple and auditable
-- Make policy declarative and runtime-adjustable
-- Favor `sysctl` as the default observability/control plane
-- Treat `/proc` as optional compatibility surface, not a hard dependency
-- Optimize for always-on appliance usage (including NAS-style deployments)
+Obelisk is converging on one clear daily-usable path:
+
+- minimal, stable Unix-like base system
+- official desktop environment: **XFCE**
+- official display/login manager: **XDM**
+- official package manager: **opkg**
+- package ecosystem: **binary-first `.opk` delivery**
+- single supported desktop path first (no KDE/GNOME parity work in this phase)
+
+This project values coherence and reliability over feature count.
+
+## System Philosophy
+
+- Keep the base system small, auditable, and recoverable
+- Prefer traditional Unix behavior where practical
+- Keep TTY shell as the safe fallback path
+- Treat desktop support as an extension of a stable base, not a separate OS
+- Ship practical milestones, avoid speculative mega-abstractions
 
 ## Current Architecture
 
-- **Kernel**: monolithic x86_64 kernel in C with a small assembly bootstrap
-- **AxiomFS**: policy-aware filesystem under `kernel/fs/axiomfs`
-- **sysctl tree**: kernel-managed settings and runtime state under `kernel/sysctl`
-- **Policy daemon model**: Prolog sources under `userland/axiomd`
-- **Minimal userland**:
-  - `userland/init/init.c` (`/sbin/init`)
-  - `userland/bin/sysctl/sysctl.c` (`/sbin/sysctl`)
-  - `userland/bin/installer/installer.c` (`/sbin/installer`, CLI flow)
-  - `userland/bin/installer-tui/installer_tui.c` (`/sbin/installer-tui`, TUI flow)
-  - tiny libc in `userland/libc`
+- **Kernel**: monolithic x86_64 kernel in C with assembly bootstrap paths
+- **Filesystem**: AxiomFS and VFS/devfs stack
+- **Control surface**: `sysctl`-first operational model
+- **Userland**: small libc + compact base tools + `rockbox` shell/tool multiplexer
+- **Packages**: native `opkg` and `.opk` repository flow
 
 ## Repository Layout
 
 - `kernel/` - kernel source
-- `userland/` - user programs, libc, policy daemon sources
-- `opkg/` - native package manager subsystem scaffold (D)
-- `tools/mkaxiomfs/` - toolchain helper scripts
-- `grub.cfg` - boot menu entries
+- `userland/` - user programs, libc, init/session tools
+- `opkg/` - package manager and package examples
+- `docs/` - project direction, roadmap, and release docs
+- `rootfs-overlay/` - optional rootfs overlay content
 - `Makefile` - top-level build and ISO packaging
 
 ## Build Prerequisites
 
-- `x86_64-elf-gcc` toolchain (or `CROSS_COMPILE=<prefix>` equivalent)
+- `x86_64-elf-gcc` toolchain (or `CROSS_COMPILE=<prefix>`)
 - GNU Make
 - GRUB 2 tooling (`grub-mkrescue`)
-- QEMU for testing
+- QEMU
 - `tar`
 
-To build a cross-compiler with the provided helper:
+To build a cross-compiler with the helper script:
 
 ```bash
 ./tools/mkaxiomfs/cross-compile.sh
@@ -52,13 +60,13 @@ export PATH="$HOME/opt/cross/bin:$PATH"
 
 ## Build and Run
 
-Build everything (kernel + userland + packaged rootfs + ISO):
+Build full artifact set:
 
 ```bash
 make
 ```
 
-Build only specific components:
+Component builds:
 
 ```bash
 make kernel
@@ -67,62 +75,39 @@ make rootfs
 make iso
 ```
 
-Run in QEMU:
+Run:
 
 ```bash
 make run
-```
-
-For GUI + KVM runs with a guaranteed log mirror in your terminal:
-
-```bash
+make run-gui
 make run-kvm
 ```
 
-If GRUB appears in the GUI window but kernel text does not, this is usually
-QEMU display/console routing (or VGA model) rather than a kernel panic.
-Use the project targets (`run-gui` / `run-kvm`) which force `-vga std` and
-mirror serial logs to terminal for diagnosis.
-
-Debug boot with GDB stub:
+Debug boot:
 
 ```bash
 make debug
 ```
 
-Clean build artifacts:
+Clean:
 
 ```bash
 make clean
 ```
 
-## What "Release Ready" Means Here
+## Roadmap and Policy Docs
 
-This repository is still pre-1.0 and under active development. "Release quality"
-for Obelisk currently means:
+- Main phased plan: `docs/roadmap.md`
+- Desktop/XDM path: `docs/desktop-roadmap.md`
+- Packaging policy and package waves: `docs/packaging-policy.md`
+- Release gate checklist: `docs/RELEASE_CHECKLIST.md`
+- Installer details: `docs/INSTALLER.md`
 
-- reproducible builds
-- consistent artifact packaging
-- clear documentation of current behavior and known gaps
-- no known build-system breakages in default paths
+## Release Direction
 
-See `docs/RELEASE_CHECKLIST.md` and `docs/ROADMAP.md` for planned milestones.
-Installer details are documented in `docs/INSTALLER.md`.
-Current command support/limitations are documented in `docs/USERLAND_COMMANDS.md`.
-Package ecosystem scaffolding is documented under `opkg/docs/`.
-Static D userspace bring-up notes are documented in `docs/STATIC_D_USERLAND.md`.
-<<<<<<< HEAD
-=======
+Obelisk is pre-1.0. "Release-ready" currently means:
 
-## Optional Userland Overlay
-
-You can ship extra tools (for example Rockbox-style applets or selected GNU tools) by
-placing binaries and config files in `rootfs-overlay/`. The build copies this
-overlay into the packaged root filesystem.
-
-See `rootfs-overlay/README.txt` for expected layout and notes.
-
-Current default userland direction is Rockbox-style for bring-up simplicity:
-the image includes `/bin/rockbox`, `/bin/osh`, and `/bin/sh` (`sh` remains as
-compatibility entrypoint).
->>>>>>> d049231 (fix)
+- reproducible builds and installable artifacts
+- stable boot/session fallback behavior
+- predictable package install/update/remove flow
+- documented known gaps and validation gates

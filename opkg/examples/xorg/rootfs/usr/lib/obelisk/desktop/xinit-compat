@@ -1,32 +1,46 @@
 #!/bin/sh
 # Obelisk xinit compatibility wrapper.
 
+echo "[xinit-compat] start args: $*"
+
 if [ -x /bin/xorg-smoke ]; then
-  /bin/xorg-smoke || {
+  /bin/xorg-smoke
+  if [ "$?" -ne 0 ]; then
     echo "xinit-compat: xorg-smoke failed"
+    echo "[xinit-compat] xorg-smoke failed"
     exit 1
-  }
+  fi
+fi
+
+XINIT_BIN=""
+if [ -x /usr/bin/xinit ]; then
+  XINIT_BIN=/usr/bin/xinit
+elif [ -x /bin/xinit ]; then
+  XINIT_BIN=/bin/xinit
+fi
+
+XSERVER_BIN=""
+if [ -x /usr/lib/xorg/Xorg ]; then
+  XSERVER_BIN=/usr/lib/xorg/Xorg
+elif [ -x /usr/bin/Xorg ]; then
+  XSERVER_BIN=/usr/bin/Xorg
+elif [ -x /bin/Xorg ]; then
+  XSERVER_BIN=/bin/Xorg
+fi
+
+if [ "$#" -gt 0 ] && [ -n "${XINIT_BIN}" ]; then
+  if [ -n "${XSERVER_BIN}" ]; then
+    echo "[xinit-compat] launching: ${XINIT_BIN} $* -- ${XSERVER_BIN} :0 -nolisten tcp"
+    exec "${XINIT_BIN}" "$@" -- "${XSERVER_BIN}" :0 -nolisten tcp
+  fi
+  echo "[xinit-compat] launching: ${XINIT_BIN} $*"
+  exec "${XINIT_BIN}" "$@"
 fi
 
 if [ "$#" -gt 0 ]; then
+  echo "[xinit-compat] no xinit found, exec client directly: $*"
   exec "$@"
 fi
 
-echo "xinit-compat: no client specified; starting interactive shell fallback"
-exec /bin/osh -i
-#!/bin/sh
-# Obelisk xinit compatibility wrapper.
-
-if [ -x /bin/xorg-smoke ]; then
-  /bin/xorg-smoke || {
-    echo "xinit-compat: xorg-smoke failed"
-    exit 1
-  }
-fi
-
-if [ "$#" -gt 0 ]; then
-  exec "$@"
-fi
-
-echo "xinit-compat: no client specified; starting interactive shell fallback"
-exec /bin/osh -i
+echo "xinit-compat: no client specified"
+exit 2

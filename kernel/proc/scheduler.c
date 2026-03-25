@@ -279,6 +279,9 @@ void schedule(void) {
     if (next) {
         extern void tss_set_rsp0(uint64_t);
         tss_set_rsp0((uint64_t)next->kernel_stack + next->kernel_stack_size);
+        /* Restore per-task user TLS bases for dynamic ELF/glibc binaries. */
+        wrmsr(MSR_FS_BASE, next->fs_base);
+        wrmsr(MSR_GS_BASE, next->gs_base);
     }
 
     /* Context switch */

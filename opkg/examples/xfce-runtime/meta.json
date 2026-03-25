@@ -1,0 +1,12 @@
+{
+  "name": "xfce-runtime",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "XFCE runtime scaffold package",
+  "description": "Scaffold package for real XFCE session binaries (xfce4-session/startxfce4) and core XFCE components.",
+  "depends": ["xfce", "gtk3-runtime"],
+  "provides": ["xfce-session"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "xfce"
+}

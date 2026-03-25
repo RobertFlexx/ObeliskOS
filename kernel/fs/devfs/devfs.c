@@ -607,7 +607,6 @@ static const struct file_operations fb0_fops = {
 #define INPUT_EVENT_QUEUE_CAP 256
 #define MICE_PKT_QUEUE_CAP    256
 #define CONSOLE_INPUT_QUEUE_CAP 512
-#define INPUT_WAIT_TIMEOUT_NS 500000000ULL
 
 struct input_id_compat {
     uint16_t bustype;
@@ -651,6 +650,8 @@ static bool g_kbd_lctrl;
 static bool g_kbd_rctrl;
 static bool g_kbd_capslock;
 static bool g_kbd_capslock_down;
+static bool g_kbd_lalt;
+static bool g_kbd_ralt;
 static uint8_t g_mouse_pkt[3];
 static uint8_t g_mouse_pkt_idx;
 static bool g_mouse_left;
@@ -769,6 +770,19 @@ static void console_push_esc_seq(const char *s) {
     }
 }
 
+static void ps2_kbd_reset_transient_state(void) {
+    g_kbd_e0_prefix = false;
+    g_kbd_f0_prefix = false;
+    g_kbd_lshift = false;
+    g_kbd_rshift = false;
+    g_kbd_lctrl = false;
+    g_kbd_rctrl = false;
+    g_kbd_lalt = false;
+    g_kbd_ralt = false;
+    g_kbd_capslock_down = false;
+}
+
+
 static char ps2_keycode_to_ascii(uint16_t code) {
     bool shift = g_kbd_lshift || g_kbd_rshift;
     bool upper = (shift ^ g_kbd_capslock);
@@ -834,7 +848,18 @@ static void ps2_kbd_feed_byte(uint8_t data, bool emit_events) {
     uint16_t code;
 
     /* Ignore controller/keyboard response bytes and noise. */
-    if (data == 0xFA || data == 0xFE || data == 0xEE || data == 0x00 || data == 0xFF || data == 0xAA) {
+    if (data == 0xFA || data == 0xFE || data == 0xEE) {
+        return;
+    }
+    if (data == 0x00 || data == 0xFF) {
+        /* Desync/noise: clear prefix state so next scancode decodes cleanly. */
+        g_kbd_e0_prefix = false;
+        g_kbd_f0_prefix = false;
+        return;
+    }
+    if (data == 0xAA) {
+        /* Keyboard BAT pass often follows reset; clear transient modifiers. */
+        ps2_kbd_reset_transient_state();
         return;
     }
     if (data == 0xF0 && g_kbd_use_set2) {
@@ -872,6 +897,10 @@ static void ps2_kbd_feed_byte(uint8_t data, bool emit_events) {
         g_kbd_lctrl = !released;
     } else if (code == KEY_RIGHTCTRL) {
         g_kbd_rctrl = !released;
+    } else if (code == KEY_LEFTALT) {
+        g_kbd_lalt = !released;
+    } else if (code == KEY_RIGHTALT) {
+        g_kbd_ralt = !released;
     } else if (code == KEY_CAPSLOCK) {
         if (!released) {
             if (!g_kbd_capslock_down) {
@@ -959,41 +988,27 @@ static int mice_queue_pop(uint8_t pkt[3]);
 static int wait_for_input_event(struct input_event_queue *q, struct input_event_compat *ev,
                                 struct file *file) {
     int ret;
-    uint64_t start_ns;
-    uint64_t now_ns;
     if (!q || !ev) return -EINVAL;
     ret = input_queue_pop(q, ev);
     if (ret == 0) return 0;
     if (!file || (file->f_flags & O_NONBLOCK)) return -EAGAIN;
-    start_ns = get_time_ns();
     for (;;) {
         scheduler_yield();
         ret = input_queue_pop(q, ev);
         if (ret == 0) return 0;
-        now_ns = get_time_ns();
-        if (now_ns - start_ns > INPUT_WAIT_TIMEOUT_NS) {
-            return -EAGAIN;
-        }
     }
 }
 
 static int wait_for_mice_pkt(uint8_t pkt[3], struct file *file) {
     int ret;
-    uint64_t start_ns;
-    uint64_t now_ns;
     if (!pkt) return -EINVAL;
     ret = mice_queue_pop(pkt);
     if (ret == 0) return 0;
     if (!file || (file->f_flags & O_NONBLOCK)) return -EAGAIN;
-    start_ns = get_time_ns();
     for (;;) {
         scheduler_yield();
         ret = mice_queue_pop(pkt);
         if (ret == 0) return 0;
-        now_ns = get_time_ns();
-        if (now_ns - start_ns > INPUT_WAIT_TIMEOUT_NS) {
-            return -EAGAIN;
-        }
     }
 }
 
@@ -1329,6 +1344,7 @@ static void ps2_init_devices(void) {
     }
 
     if (!ok) {
+        ps2_kbd_reset_transient_state();
         printk(KERN_WARNING "devfs: i8042 not ready, keeping input fallback path\n");
         return;
     }
@@ -1547,6 +1563,7 @@ void devfs_init(void) {
     devfs_register("event0", DEV_TYPE_CHAR, MKDEV(13, 64), 0666, &event0_fops, NULL);
     devfs_register("event1", DEV_TYPE_CHAR, MKDEV(13, 65), 0666, &event1_fops, NULL);
     devfs_register("mice", DEV_TYPE_CHAR, MKDEV(13, 63), 0666, &mice_fops, NULL);
+    ps2_kbd_reset_transient_state();
     ps2_init_devices();
     devfs_register_fb0();
     
@@ -1555,17 +1572,28 @@ void devfs_init(void) {
 
 int devfs_console_getc_nonblock(void) {
     int c = console_input_pop_char_nonblock();
-    if (c < 0 && (inb(I8042_STATUS_PORT) & I8042_STAT_OBF)) {
-        uint8_t status = inb(I8042_STATUS_PORT);
-        uint8_t data = inb(I8042_DATA_PORT);
-        if ((status & I8042_STAT_AUX) == 0U) {
-            ps2_kbd_feed_byte(data, false);
-            c = console_input_pop_char_nonblock();
-        }
-    }
     if (c >= 0) {
         return c;
     }
+
+    /* Poll fallback to catch missed IRQ bytes without consuming AUX blindly. */
+    for (int i = 0; i < 32; i++) {
+        uint8_t status = inb(I8042_STATUS_PORT);
+        if ((status & I8042_STAT_OBF) == 0U) {
+            break;
+        }
+        if ((status & I8042_STAT_AUX) != 0U) {
+            /* Drain mouse byte so keyboard stream is not blocked by AUX OBF. */
+            (void)inb(I8042_DATA_PORT);
+            continue;
+        }
+        ps2_kbd_feed_byte(inb(I8042_DATA_PORT), false);
+        c = console_input_pop_char_nonblock();
+        if (c >= 0) {
+            return c;
+        }
+    }
+
     return uart_getc_nonblock();
 }
 
@@ -1585,6 +1613,8 @@ void devfs_console_flush_input(void) {
     g_console_in_head = 0;
     g_console_in_tail = 0;
     irq_restore_flags(flags);
+    ps2_kbd_reset_transient_state();
+    i8042_flush_output();
     while (uart_getc_nonblock() >= 0) {
         /* Drain UART input too. */
     }

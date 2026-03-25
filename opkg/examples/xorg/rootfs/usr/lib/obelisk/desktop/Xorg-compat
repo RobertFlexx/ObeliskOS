@@ -10,15 +10,3 @@ fi
 
 echo "Xorg-compat: placeholder server wrapper (real Xorg binary not packaged yet)"
 exit 0
-#!/bin/sh
-# Obelisk Xorg compatibility wrapper.
-
-if [ -x /bin/xorg-smoke ]; then
-  /bin/xorg-smoke || {
-    echo "Xorg-compat: graphics/input stack not ready"
-    exit 1
-  }
-fi
-
-echo "Xorg-compat: placeholder server wrapper (real Xorg binary not packaged yet)"
-exit 0

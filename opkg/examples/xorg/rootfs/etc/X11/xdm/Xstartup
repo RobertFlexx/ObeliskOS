@@ -1,0 +1,5 @@
+#!/bin/sh
+# Obelisk XDM startup hook.
+
+mkdir -p /var/run >/dev/null 2>&1 || true
+exit 0

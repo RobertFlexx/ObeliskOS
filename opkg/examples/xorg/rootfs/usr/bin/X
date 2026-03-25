@@ -1,0 +1,15 @@
+#!/bin/sh
+# Obelisk X server launcher compatibility shim.
+
+if [ -x /usr/lib/xorg/Xorg ]; then
+  exec /usr/lib/xorg/Xorg "$@"
+fi
+if [ -x /usr/bin/Xorg ]; then
+  exec /usr/bin/Xorg "$@"
+fi
+if [ -x /bin/Xorg ]; then
+  exec /bin/Xorg "$@"
+fi
+
+echo "X: no Xorg server binary available"
+exit 127

@@ -1,30 +1,28 @@
 #!/bin/sh
 # Obelisk XFCE launcher compatibility wrapper.
 
+echo "[startxfce4-compat] start"
+
+if [ -f /usr/bin/startxfce4 ]; then
+  echo "[startxfce4-compat] exec /usr/bin/startxfce4"
+  exec /bin/sh /usr/bin/startxfce4
+fi
+if [ -f /bin/startxfce4 ]; then
+  echo "[startxfce4-compat] exec /bin/startxfce4"
+  exec /bin/sh /bin/startxfce4
+fi
 if [ -x /usr/bin/xinit ]; then
+  echo "[startxfce4-compat] exec /usr/bin/xinit xfce4-session-compat"
   exec /usr/bin/xinit /usr/lib/obelisk/desktop/xfce4-session-compat
 fi
 if [ -x /bin/xinit ]; then
+  echo "[startxfce4-compat] exec /bin/xinit xfce4-session-compat"
   exec /bin/xinit /usr/lib/obelisk/desktop/xfce4-session-compat
 fi
-if [ -x /usr/lib/obelisk/desktop/xinit-compat ]; then
-  exec /usr/lib/obelisk/desktop/xinit-compat /usr/lib/obelisk/desktop/xfce4-session-compat
+if [ -f /usr/lib/obelisk/desktop/xinit-compat ]; then
+  echo "[startxfce4-compat] exec xinit-compat xfce4-session-compat"
+  exec /bin/sh /usr/lib/obelisk/desktop/xinit-compat /usr/lib/obelisk/desktop/xfce4-session-compat
 fi
 
-echo "startxfce4-compat: no xinit implementation available"
-exit 1
-#!/bin/sh
-# Obelisk XFCE launcher compatibility wrapper.
-
-if [ -x /usr/bin/xinit ]; then
-  exec /usr/bin/xinit /usr/lib/obelisk/desktop/xfce4-session-compat
-fi
-if [ -x /bin/xinit ]; then
-  exec /bin/xinit /usr/lib/obelisk/desktop/xfce4-session-compat
-fi
-if [ -x /usr/lib/obelisk/desktop/xinit-compat ]; then
-  exec /usr/lib/obelisk/desktop/xinit-compat /usr/lib/obelisk/desktop/xfce4-session-compat
-fi
-
-echo "startxfce4-compat: no xinit implementation available"
+echo "startxfce4-compat: no xinit/startxfce4 implementation available"
 exit 1

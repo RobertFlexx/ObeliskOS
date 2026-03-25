@@ -650,12 +650,14 @@ static void do_command(char *raw)
 }
 
 /* ---- entry point ---- */
-extern "C" void _start(void)
+extern "C" __attribute__((used)) void oed_main(uint64_t *sp)
 {
-    uint64_t *sp;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(sp));
-    int argc = (int)sp[0];
-    char **argv = (char **)&sp[1];
+    int argc = 0;
+    char **argv = nullptr;
+    if (sp) {
+        argc = (int)sp[0];
+        argv = (char **)&sp[1];
+    }
 
     if (argc >= 2 && argv[1] && argv[1][0]) {
         scopy(g_path, argv[1], sizeof(g_path));
@@ -680,4 +682,13 @@ extern "C" void _start(void)
         }
         do_command(cmd);
     }
+}
+
+extern "C" __attribute__((naked, noreturn)) void _start(void)
+{
+    __asm__ volatile(
+        "movq %rsp, %rdi\n"
+        "andq $-16, %rsp\n"
+        "callq oed_main\n"
+        "ud2\n");
 }

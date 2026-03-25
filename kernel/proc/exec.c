@@ -66,6 +66,8 @@ struct elf64_phdr {
 #define MAX_ARG_PAGES   32
 #define MAX_ARG_STRLEN  4096
 #define MAX_ARGC        256
+#define ET_DYN_MAIN_BIAS    0x0000555555554000ULL
+#define ET_DYN_INTERP_BIAS  0x00007ffff7dc0000ULL
 
 #ifndef CONFIG_EXPERIMENTAL_DYNAMIC_ELF
 #define CONFIG_EXPERIMENTAL_DYNAMIC_ELF 0
@@ -96,10 +98,32 @@ struct elf64_phdr {
 #define AT_GID          13
 #define AT_EGID         14
 #define AT_PLATFORM     15
+#define AT_HWCAP        16
 #define AT_CLKTCK       17
 #define AT_SECURE       23
 #define AT_RANDOM       25
+#define AT_HWCAP2       26
 #define AT_EXECFN       31
+#define AT_SYSINFO_EHDR 33
+
+#define HWCAP_X86_64_BASELINE 0x2ULL
+#define HWCAP2_X86_64_BASELINE 0x2ULL
+
+#define DT_NULL         0
+#define DT_NEEDED       1
+#define DT_STRTAB       5
+#define DT_SYMTAB       6
+#define DT_STRSZ        10
+#define DT_RELA         7
+#define DT_RELASZ       8
+#define DT_RELAENT      9
+#define DT_DEBUG        21
+#define DT_FLAGS        30
+#define DT_FLAGS_1      0x6ffffffb
+#define DT_GNU_HASH     0x6ffffef5
+#define DT_RELR         0x24
+#define DT_RELRSZ       0x23
+#define DT_RELRENT      0x25
 
 struct exec_image_info {
     uint64_t entry;
@@ -113,6 +137,14 @@ struct auxv_pair {
     uint64_t type;
     uint64_t value;
 };
+
+struct elf64_dyn {
+    int64_t d_tag;
+    union {
+        uint64_t d_val;
+        uint64_t d_ptr;
+    } d_un;
+} __packed;
 
 static int read_user_memory(struct process *proc, uint64_t uaddr, void *dst, size_t len) {
     uint8_t *p = (uint8_t *)dst;
@@ -150,7 +182,85 @@ static bool path_contains_ld_linux(const char *filename) {
             return true;
         }
     }
+    const char *probe = "xdm";
+    size_t plen = strlen(probe);
+    if (flen >= plen) {
+        for (size_t i = 0; i + plen <= flen; i++) {
+            if (strncmp(filename + i, probe, plen) == 0) {
+                return true;
+            }
+        }
+    }
+    probe = "xinit";
+    plen = strlen(probe);
+    if (flen >= plen) {
+        for (size_t i = 0; i + plen <= flen; i++) {
+            if (strncmp(filename + i, probe, plen) == 0) {
+                return true;
+            }
+        }
+    }
     return false;
+}
+
+static void exec_debug_dump_dynamic(struct process *proc, struct file *src_file,
+                                    const struct elf64_hdr *hdr, const struct exec_image_info *img,
+                                    const char *label, const char *filename) {
+    if (!proc || !hdr || !img || !path_contains_ld_linux(filename)) {
+        return;
+    }
+    if (hdr->e_phentsize != sizeof(struct elf64_phdr) || hdr->e_phnum == 0) {
+        printk(KERN_INFO "exec: %s dynamic dump skipped (bad phdr table)\n", label);
+        return;
+    }
+
+    for (uint16_t i = 0; i < hdr->e_phnum; i++) {
+        struct elf64_phdr phdr;
+        uint64_t phdr_addr = img->phdr + (uint64_t)i * sizeof(struct elf64_phdr);
+        if (read_user_memory(proc, phdr_addr, &phdr, sizeof(phdr)) < 0) {
+            break;
+        }
+        if (phdr.p_type != PT_DYNAMIC || phdr.p_memsz < sizeof(struct elf64_dyn)) {
+            continue;
+        }
+        uint64_t dyn_vaddr = img->load_bias + phdr.p_vaddr;
+        size_t max_dyn = (size_t)(phdr.p_memsz / sizeof(struct elf64_dyn));
+        if (max_dyn > 96) {
+            max_dyn = 96;
+        }
+        printk(KERN_INFO "exec: %s PT_DYNAMIC vaddr=0x%lx entries=%zu\n", label, dyn_vaddr, max_dyn);
+        if (src_file && phdr.p_filesz >= sizeof(struct elf64_dyn)) {
+            struct elf64_dyn src_dyn0;
+            off_t dyn_off = phdr.p_offset;
+            if (vfs_read(src_file, &src_dyn0, sizeof(src_dyn0), &dyn_off) == sizeof(src_dyn0)) {
+                printk(KERN_INFO "exec: %s PT_DYNAMIC file[0] tag=0x%lx val=0x%lx\n",
+                       label, (uint64_t)src_dyn0.d_tag, src_dyn0.d_un.d_val);
+            }
+        }
+        for (size_t di = 0; di < max_dyn; di++) {
+            struct elf64_dyn dyn;
+            if (read_user_memory(proc, dyn_vaddr + di * sizeof(struct elf64_dyn), &dyn, sizeof(dyn)) < 0) {
+                printk(KERN_INFO "exec: %s dyn[%zu] unreadable\n", label, di);
+                break;
+            }
+            if ((uint64_t)dyn.d_tag == DT_NULL) {
+                printk(KERN_INFO "exec: %s dyn[%zu] DT_NULL\n", label, di);
+                break;
+            }
+            if ((uint64_t)dyn.d_tag == DT_STRTAB || (uint64_t)dyn.d_tag == DT_SYMTAB ||
+                (uint64_t)dyn.d_tag == DT_STRSZ || (uint64_t)dyn.d_tag == DT_RELA ||
+                (uint64_t)dyn.d_tag == DT_RELASZ || (uint64_t)dyn.d_tag == DT_RELAENT ||
+                (uint64_t)dyn.d_tag == DT_GNU_HASH || (uint64_t)dyn.d_tag == DT_DEBUG ||
+                (uint64_t)dyn.d_tag == DT_FLAGS || (uint64_t)dyn.d_tag == DT_FLAGS_1 ||
+                (uint64_t)dyn.d_tag == DT_RELR || (uint64_t)dyn.d_tag == DT_RELRSZ ||
+                (uint64_t)dyn.d_tag == DT_RELRENT || (uint64_t)dyn.d_tag == DT_NEEDED) {
+                printk(KERN_INFO "exec: %s dyn[%zu] tag=0x%lx val=0x%lx\n",
+                       label, di, (uint64_t)dyn.d_tag, dyn.d_un.d_val);
+            }
+        }
+        return;
+    }
+    printk(KERN_INFO "exec: %s PT_DYNAMIC not found\n", label);
 }
 
 static void exec_debug_dump_stack(struct process *proc, uint64_t sp, int argc, int envc, const char *filename) {
@@ -438,6 +548,38 @@ static int load_elf_segments(struct process *proc, struct file *file,
             brk_start = end;
         }
     }
+
+    /* Defensive refresh for PT_DYNAMIC bytes.
+     * Ensures loader metadata is present exactly at p_vaddr+p_offset mapping,
+     * even when segments use non-trivial file/virtual alignment. */
+    for (int i = 0; i < hdr->e_phnum; i++) {
+        off_t offset = hdr->e_phoff + (i * sizeof(phdr));
+        ret = vfs_read(file, &phdr, sizeof(phdr), &offset);
+        if (ret != sizeof(phdr)) {
+            return -EIO;
+        }
+        if (phdr.p_type != PT_DYNAMIC || phdr.p_filesz == 0) {
+            continue;
+        }
+        uint64_t dyn_vaddr = phdr.p_vaddr + load_bias;
+        uint64_t copied = 0;
+        while (copied < phdr.p_filesz) {
+            uint64_t dst_vaddr = dyn_vaddr + copied;
+            uint64_t phys = mmu_resolve(proc->mm->pt, dst_vaddr);
+            if (!phys) {
+                return -EFAULT;
+            }
+            size_t page_off = (size_t)(dst_vaddr & (PAGE_SIZE - 1));
+            size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), phdr.p_filesz - copied);
+            void *dst = (uint8_t *)PHYS_TO_VIRT(phys) + page_off;
+            off_t read_off = phdr.p_offset + copied;
+            int n = vfs_read(file, dst, chunk, &read_off);
+            if (n != (int)chunk) {
+                return (n < 0) ? n : -EIO;
+            }
+            copied += chunk;
+        }
+    }
     
     /* Set up heap */
     proc->mm->brk_start = ALIGN_UP(brk_start, PAGE_SIZE);
@@ -579,10 +721,13 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     auxv[auxc++] = (struct auxv_pair){ AT_GID,    (proc && proc->cred) ? proc->cred->gid  : 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_EGID,   (proc && proc->cred) ? proc->cred->egid : 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_PLATFORM, platform_ptr };
+    auxv[auxc++] = (struct auxv_pair){ AT_HWCAP, HWCAP_X86_64_BASELINE };
     auxv[auxc++] = (struct auxv_pair){ AT_CLKTCK, 100 };
     auxv[auxc++] = (struct auxv_pair){ AT_SECURE, 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_RANDOM, random_ptr };
+    auxv[auxc++] = (struct auxv_pair){ AT_HWCAP2, HWCAP2_X86_64_BASELINE };
     auxv[auxc++] = (struct auxv_pair){ AT_EXECFN, execfn_ptr };
+    auxv[auxc++] = (struct auxv_pair){ AT_SYSINFO_EHDR, 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_NULL,   0 };
 
     /* Keep final initial %rsp 16-byte aligned. */
@@ -686,26 +831,50 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     off_t offset = 0;
     EXEC_LOG("exec: reading ELF header\n");
     ret = vfs_read(file, &hdr, sizeof(hdr), &offset);
-    if (ret != sizeof(hdr)) {
-        printk(KERN_ERR "exec: failed reading ELF header ret=%d expected=%lu\n",
-               ret, sizeof(hdr));
-        vfs_close(file);
-        return -EIO;
-    }
-    EXEC_LOG("exec: ELF header read complete\n");
-    
-    /* Validate ELF */
-    ret = validate_elf(&hdr);
     if (ret < 0) {
+        printk(KERN_ERR "exec: failed reading executable header ret=%d\n", ret);
+        vfs_close(file);
+        return ret;
+    }
+    if (ret != sizeof(hdr)) {
         char shebang[128];
-        off_t soff = 0;
-        int n = vfs_read(file, shebang, sizeof(shebang) - 1, &soff);
+        int n = ret;
+        if (n > (int)sizeof(shebang) - 1) {
+            n = (int)sizeof(shebang) - 1;
+        }
+        memcpy(shebang, &hdr, (size_t)n);
         if (n > 2) {
             shebang[n] = '\0';
-            if (shebang[0] == '#' && shebang[1] == '!') {
+            int shebang_off = 0;
+            if (n >= 3 &&
+                (uint8_t)shebang[0] == 0xEF &&
+                (uint8_t)shebang[1] == 0xBB &&
+                (uint8_t)shebang[2] == 0xBF) {
+                shebang_off = 3;
+            }
+            while (shebang_off < n &&
+                   (shebang[shebang_off] == ' ' || shebang[shebang_off] == '\t' ||
+                    shebang[shebang_off] == '\r' || shebang[shebang_off] == '\n')) {
+                shebang_off++;
+            }
+            bool shebang_ok = false;
+            int shebang_i = shebang_off;
+            if ((shebang_off + 1) < n &&
+                shebang[shebang_off] == '#' &&
+                shebang[shebang_off + 1] == '!') {
+                shebang_ok = true;
+                shebang_i = shebang_off + 2;
+            } else if ((shebang_off + 1) < n &&
+                       shebang[shebang_off] == '!' &&
+                       shebang[shebang_off + 1] == '/') {
+                /* Accept !/bin/sh as a tolerant shebang fallback. */
+                shebang_ok = true;
+                shebang_i = shebang_off + 1;
+            }
+            if (shebang_ok) {
                 char interp[PATH_MAX];
                 char optarg[64];
-                int i = 2, ip = 0, op = 0;
+                int i = shebang_i, ip = 0, op = 0;
                 bool has_optarg = false;
                 while (shebang[i] == ' ' || shebang[i] == '\t') i++;
                 while (shebang[i] && shebang[i] != ' ' && shebang[i] != '\t' &&
@@ -724,30 +893,83 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
                 optarg[op] = '\0';
                 has_optarg = (op > 0);
                 if (ip > 0) {
-                    int argc = 0;
-                    while (argv && argv[argc] && argc < MAX_ARGC) argc++;
-                    if (argc < MAX_ARGC) {
-                        int extra = has_optarg ? 3 : 2; /* interp [optarg] script */
-                        int new_argc = extra + ((argc > 1) ? (argc - 1) : 0);
-                        char **sh_argv = kmalloc(sizeof(char *) * (new_argc + 1));
-                        if (!sh_argv) {
-                            vfs_close(file);
-                            return -ENOMEM;
-                        }
-                        int k = 0;
-                        sh_argv[k++] = interp;
-                        if (has_optarg) sh_argv[k++] = optarg;
-                        sh_argv[k++] = (char *)filename;
-                        for (int j = 1; j < argc; j++) {
-                            sh_argv[k++] = argv[j];
-                        }
-                        sh_argv[k] = NULL;
-                        vfs_close(file);
-                        EXEC_LOG("exec: shebang '%s' via %s\n", filename, interp);
-                        ret = do_execve(interp, sh_argv, envp);
-                        kfree(sh_argv);
-                        return ret;
-                    }
+                    (void)optarg;
+                    (void)has_optarg;
+                    vfs_close(file);
+                    EXEC_LOG("exec: short-header script '%s' detected (interp=%s), returning ENOEXEC for shell fallback\n",
+                             filename, interp);
+                    return -ENOEXEC;
+                }
+            }
+        }
+        printk(KERN_ERR "exec: unsupported executable header ret=%d expected=%lu\n",
+               ret, sizeof(hdr));
+        vfs_close(file);
+        return -ENOEXEC;
+    }
+    EXEC_LOG("exec: ELF header read complete\n");
+    
+    /* Validate ELF */
+    ret = validate_elf(&hdr);
+    if (ret < 0) {
+        char shebang[128];
+        off_t soff = 0;
+        int n = vfs_read(file, shebang, sizeof(shebang) - 1, &soff);
+        if (n > 2) {
+            shebang[n] = '\0';
+            int shebang_off = 0;
+            if (n >= 3 &&
+                (uint8_t)shebang[0] == 0xEF &&
+                (uint8_t)shebang[1] == 0xBB &&
+                (uint8_t)shebang[2] == 0xBF) {
+                shebang_off = 3;
+            }
+            while (shebang_off < n &&
+                   (shebang[shebang_off] == ' ' || shebang[shebang_off] == '\t' ||
+                    shebang[shebang_off] == '\r' || shebang[shebang_off] == '\n')) {
+                shebang_off++;
+            }
+            bool shebang_ok = false;
+            int shebang_i = shebang_off;
+            if ((shebang_off + 1) < n &&
+                shebang[shebang_off] == '#' &&
+                shebang[shebang_off + 1] == '!') {
+                shebang_ok = true;
+                shebang_i = shebang_off + 2;
+            } else if ((shebang_off + 1) < n &&
+                       shebang[shebang_off] == '!' &&
+                       shebang[shebang_off + 1] == '/') {
+                shebang_ok = true;
+                shebang_i = shebang_off + 1;
+            }
+            if (shebang_ok) {
+                char interp[PATH_MAX];
+                char optarg[64];
+                int i = shebang_i, ip = 0, op = 0;
+                bool has_optarg = false;
+                while (shebang[i] == ' ' || shebang[i] == '\t') i++;
+                while (shebang[i] && shebang[i] != ' ' && shebang[i] != '\t' &&
+                       shebang[i] != '\n' && ip < (int)sizeof(interp) - 1) {
+                    interp[ip++] = shebang[i++];
+                }
+                interp[ip] = '\0';
+                while (shebang[i] == ' ' || shebang[i] == '\t') i++;
+                while (shebang[i] && shebang[i] != '\n' && shebang[i] != '\r' &&
+                       op < (int)sizeof(optarg) - 1) {
+                    optarg[op++] = shebang[i++];
+                }
+                while (op > 0 && (optarg[op - 1] == ' ' || optarg[op - 1] == '\t')) {
+                    op--;
+                }
+                optarg[op] = '\0';
+                has_optarg = (op > 0);
+                if (ip > 0) {
+                    (void)optarg;
+                    (void)has_optarg;
+                    vfs_close(file);
+                    EXEC_LOG("exec: script '%s' detected (interp=%s), returning ENOEXEC for shell fallback\n",
+                             filename, interp);
+                    return -ENOEXEC;
                 }
             }
         }
@@ -815,7 +1037,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     
     /* Load ELF segments */
     if (use_interp) {
-        ret = load_elf_segments(proc, file, &hdr, &main_img, 0x400000);
+        ret = load_elf_segments(proc, file, &hdr, &main_img, ET_DYN_MAIN_BIAS);
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
@@ -823,7 +1045,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
             vfs_close(file);
             return ret;
         }
-        ret = load_elf_segments(proc, interp_file, &interp_hdr, &interp_img, 0x70000000ULL);
+        ret = load_elf_segments(proc, interp_file, &interp_hdr, &interp_img, ET_DYN_INTERP_BIAS);
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
@@ -832,11 +1054,19 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
             return ret;
         }
         EXEC_LOG("exec: segments loaded for %s and interpreter %s\n", filename, interp_path);
+        if (path_contains_ld_linux(filename)) {
+            printk(KERN_INFO "exec: main image base=0x%lx entry=0x%lx phdr=0x%lx phnum=%lu phent=%lu\n",
+                   main_img.load_bias, main_img.entry, main_img.phdr, main_img.phnum, main_img.phent);
+            printk(KERN_INFO "exec: interp image base=0x%lx entry=0x%lx phdr=0x%lx phnum=%lu phent=%lu\n",
+                   interp_img.load_bias, interp_img.entry, interp_img.phdr, interp_img.phnum, interp_img.phent);
+            exec_debug_dump_dynamic(proc, file, &hdr, &main_img, "main", filename);
+            exec_debug_dump_dynamic(proc, interp_file, &interp_hdr, &interp_img, "interp", filename);
+        }
         stack_img = main_img;
         stack_img.load_bias = interp_img.load_bias; /* AT_BASE points to interpreter base. */
         user_entry = interp_img.entry;
     } else {
-        ret = load_elf_segments(proc, file, &hdr, &img, 0x400000);
+        ret = load_elf_segments(proc, file, &hdr, &img, ET_DYN_MAIN_BIAS);
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
@@ -858,6 +1088,10 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         }
         vfs_close(file);
         return ret;
+    }
+    if (path_contains_ld_linux(filename)) {
+        printk(KERN_INFO "exec: final rsp=0x%lx (mod16=%lu) entry=0x%lx at_base=0x%lx\n",
+               sp, sp & 0xFULL, user_entry, stack_img.load_bias);
     }
     
     /* Close file */
@@ -896,6 +1130,10 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     /* Switch to new address space */
     mmu_switch(new_mm->pt);
     EXEC_LOG("exec: switching to user mode entry=0x%lx sp=0x%lx\n", user_entry, sp);
+    if (path_contains_ld_linux(filename)) {
+        printk(KERN_INFO "exec: user transition begin entry=0x%lx sp=0x%lx for %s\n",
+               user_entry, sp, filename);
+    }
     
     /* Jump to user mode */
     extern void user_mode_enter(uint64_t entry, uint64_t stack);

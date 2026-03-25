@@ -601,11 +601,6 @@ private int unpackOpk(const char* opkPath, const char* filesTarOut, char* metaOu
 
         char[256] name = void;
         copyTarName(name.ptr, name.length, hdr.ptr);
-        if (streq(name.ptr, "meta.json".ptr) == 0 && streq(name.ptr, "files.tar".ptr) == 0) {
-            close(outfd);
-            close(fd);
-            return -1;
-        }
         auto size = parseOctal(cast(const(char)*)hdr.ptr + 124, 12);
 
         if (streq(name.ptr, "meta.json".ptr)) {
@@ -636,6 +631,8 @@ private int unpackOpk(const char* opkPath, const char* filesTarOut, char* metaOu
             }
             gotFilesTar = 1;
         } else {
+            // Accept tar metadata members (e.g. PAX headers) and ignore
+            // any non-opkg payload entries rather than rejecting package.
             if (skipBytes(fd, size) < 0) {
                 close(outfd);
                 close(fd);
@@ -1063,6 +1060,8 @@ private int saveOwners(const char* path, OwnerEntry* owners, int n) {
 
 private int ensureDbDirs() {
     mkdir("/var".ptr, 493);
+    mkdir("/var/cache".ptr, 493);
+    mkdir("/var/cache/opkg".ptr, 493);
     mkdir("/var/lib".ptr, 493);
     mkdir("/var/lib/opkg".ptr, 493);
     mkdir("/var/lib/opkg/installed".ptr, 493);
@@ -1232,7 +1231,7 @@ private int installLocal(const char* opkPath) {
     ensureDbDirs();
 
     char[256] filesTar = void;
-    copyStr(filesTar.ptr, "/tmp/opkg-files.tar".ptr, filesTar.length);
+    copyStr(filesTar.ptr, "/var/cache/opkg/opkg-files.tar".ptr, filesTar.length);
     char[MAX_FILE] meta = void;
     if (unpackOpk(opkPath, filesTar.ptr, meta.ptr, meta.length) < 0) {
         printf("opkg install: malformed package (missing meta.json/files.tar)\n");
@@ -1615,28 +1614,41 @@ private int findBestRepoPackage(const char* pkgName, RepoIndexEntry* outEntry, R
     if (nrepos <= 0) return -1;
 
     int found = 0;
-    for (int ridx = 0; ridx < nrepos; ridx++) {
-        char[320] cachePath = void;
-        copyStr(cachePath.ptr, "/var/lib/opkg/repos/".ptr, cachePath.length);
-        appendStr(cachePath.ptr, repos[ridx].name.ptr, cachePath.length);
-        appendStr(cachePath.ptr, ".json".ptr, cachePath.length);
-        char[MAX_FILE] idx = void;
-        if (readFile(cachePath.ptr, idx.ptr, idx.length) < 0) {
-            continue;
-        }
-        RepoIndexEntry[256] entries = void;
-        int n = parseRepoIndexJson(idx.ptr, entries.ptr, entries.length);
-        for (int e = 0; e < n; e++) {
-            if (streq(entries[e].name.ptr, pkgName) == 0) continue;
-            if (streq(entries[e].arch.ptr, "x86_64".ptr) == 0 && streq(entries[e].arch.ptr, "noarch".ptr) == 0) continue;
-            if (found == 0 || versionCmp(outEntry.ver.ptr, entries[e].ver.ptr) < 0) {
-                *outEntry = entries[e];
-                *outRepo = repos[ridx];
-                found = 1;
+    int hadCache = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        found = 0;
+        hadCache = 0;
+        for (int ridx = 0; ridx < nrepos; ridx++) {
+            char[320] cachePath = void;
+            copyStr(cachePath.ptr, "/var/lib/opkg/repos/".ptr, cachePath.length);
+            appendStr(cachePath.ptr, repos[ridx].name.ptr, cachePath.length);
+            appendStr(cachePath.ptr, ".json".ptr, cachePath.length);
+            char[MAX_FILE] idx = void;
+            if (readFile(cachePath.ptr, idx.ptr, idx.length) < 0) {
+                continue;
+            }
+            hadCache = 1;
+            RepoIndexEntry[256] entries = void;
+            int n = parseRepoIndexJson(idx.ptr, entries.ptr, entries.length);
+            for (int e = 0; e < n; e++) {
+                if (streq(entries[e].name.ptr, pkgName) == 0) continue;
+                if (streq(entries[e].arch.ptr, "x86_64".ptr) == 0 && streq(entries[e].arch.ptr, "noarch".ptr) == 0) continue;
+                if (found == 0 || versionCmp(outEntry.ver.ptr, entries[e].ver.ptr) < 0) {
+                    *outEntry = entries[e];
+                    *outRepo = repos[ridx];
+                    found = 1;
+                }
             }
         }
+        if (found != 0) return 0;
+        if (pass == 0 && hadCache == 0) {
+            /* Lazy refresh so install/install-profile works out-of-box on first boot. */
+            cast(void)cmdUpdate();
+            continue;
+        }
+        break;
     }
-    return found != 0 ? 0 : -1;
+    return -1;
 }
 
 private int installFetchedRepoEntry(RepoIndexEntry* ent, RepoConfigEntry* repo) {
@@ -2022,22 +2034,36 @@ private int installFirstAvailable(const char** names, int n) {
     return -1;
 }
 
+private void installOptionalFirstAvailable(const char** names, int n) {
+    if (installFirstAvailable(names, n) < 0) {
+        if (n > 0 && names !is null) {
+            printf("opkg profile: optional package group not found (first candidate: %s)\n", names[0]);
+        }
+    }
+}
+
 private int cmdInstallProfile(const char* profile) {
     if (streq(profile, "xorg".ptr)) {
         const(char)*[3] xorgCandidates = [ "xorg".ptr, "xorg-base".ptr, "xorg-server".ptr ];
+        const(char)*[3] desktopCandidates = [ "desktop-base".ptr, "x11-runtime".ptr, "desktop-runtime".ptr ];
         if (installFirstAvailable(xorgCandidates.ptr, xorgCandidates.length) < 0) {
             printf("opkg profile: no xorg package found in cached repositories\n");
             return 1;
         }
+        installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
         return 0;
     }
     if (streq(profile, "xfce".ptr)) {
         const(char)*[3] xorgCandidates = [ "xorg".ptr, "xorg-base".ptr, "xorg-server".ptr ];
-        const(char)*[3] xfceCandidates = [ "xfce".ptr, "xfce4".ptr, "xfce-desktop".ptr ];
+        const(char)*[3] desktopCandidates = [ "desktop-base".ptr, "x11-runtime".ptr, "desktop-runtime".ptr ];
+        const(char)*[3] gtkCandidates = [ "gtk3-runtime".ptr, "gtk-runtime".ptr, "gtk-stack".ptr ];
+        const(char)*[4] xfceCandidates = [ "xfce".ptr, "xfce-runtime".ptr, "xfce4".ptr, "xfce-desktop".ptr ];
         if (installFirstAvailable(xorgCandidates.ptr, xorgCandidates.length) < 0) {
             printf("opkg profile: xfce requires xorg package in repositories\n");
             return 1;
         }
+        installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
+        installOptionalFirstAvailable(gtkCandidates.ptr, gtkCandidates.length);
         if (installFirstAvailable(xfceCandidates.ptr, xfceCandidates.length) < 0) {
             printf("opkg profile: no xfce package found in cached repositories\n");
             return 1;
@@ -2046,12 +2072,16 @@ private int cmdInstallProfile(const char* profile) {
     }
     if (streq(profile, "xdm".ptr)) {
         const(char)*[3] xorgCandidates = [ "xorg".ptr, "xorg-base".ptr, "xorg-server".ptr ];
-        const(char)*[3] xfceCandidates = [ "xfce".ptr, "xfce4".ptr, "xfce-desktop".ptr ];
+        const(char)*[3] desktopCandidates = [ "desktop-base".ptr, "x11-runtime".ptr, "desktop-runtime".ptr ];
+        const(char)*[3] gtkCandidates = [ "gtk3-runtime".ptr, "gtk-runtime".ptr, "gtk-stack".ptr ];
+        const(char)*[4] xfceCandidates = [ "xfce".ptr, "xfce-runtime".ptr, "xfce4".ptr, "xfce-desktop".ptr ];
         const(char)*[4] xdmCandidates = [ "xdm".ptr, "x11-xdm".ptr, "xorg-xdm".ptr, "display-manager".ptr ];
         if (installFirstAvailable(xorgCandidates.ptr, xorgCandidates.length) < 0) {
             printf("opkg profile: xdm requires xorg package in repositories\n");
             return 1;
         }
+        installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
+        installOptionalFirstAvailable(gtkCandidates.ptr, gtkCandidates.length);
         if (installFirstAvailable(xfceCandidates.ptr, xfceCandidates.length) < 0) {
             printf("opkg profile: xdm requires xfce package in repositories\n");
             return 1;

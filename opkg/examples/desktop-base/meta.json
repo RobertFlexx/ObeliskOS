@@ -1,0 +1,12 @@
+{
+  "name": "desktop-base",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "Desktop baseline runtime scaffold",
+  "description": "Scaffold package for first GUI login. Use it to ship baseline desktop shared libs and runtime assets.",
+  "depends": ["xorg"],
+  "provides": ["desktop-runtime"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "desktop"
+}

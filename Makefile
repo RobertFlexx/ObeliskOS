@@ -25,7 +25,7 @@ GRUB_CFG := grub.cfg
 
 # QEMU settings
 QEMU := qemu-system-x86_64
-QEMU_MEMORY := 512M
+QEMU_MEMORY := 1024M
 QEMU_BASE_FLAGS := -m $(QEMU_MEMORY)
 QEMU_NET_FLAGS ?= -nic user,model=e1000
 QEMU_DISPLAY ?= gtk,gl=off,zoom-to-fit=off
@@ -36,7 +36,9 @@ QEMU_SERIAL_FLAGS := -nographic -monitor none -chardev stdio,mux=on,signal=off,i
 
 # Host userland import settings (optional host tools)
 IMPORT_HOST_USERLAND ?= 0
-EXPERIMENTAL_DYNAMIC_ELF ?= 0
+# Dynamic ELF is enabled by default to support packaged desktop runtimes.
+EXPERIMENTAL_DYNAMIC_ELF ?= 1
+BUNDLE_DESKTOP_RUNTIME ?= 0
 HOST_COREUTILS_BINS ?= ls cat cp mv rm mkdir rmdir ln chmod chown pwd uname date head tail wc sort uniq cut tr tee sleep true false env printenv id whoami users
 HOST_USERLAND_IMPORT_SCRIPT := $(TOOLS_DIR)/import-host-userland.sh
 
@@ -82,7 +84,7 @@ rootfs: userland
 	@cp $(USERLAND_DIR)/axiomd/policy/access.pro $(ROOTFS_DIR)/etc/axiomd/policy/access.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/allocation.pro $(ROOTFS_DIR)/etc/axiomd/policy/allocation.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/inheritance.pro $(ROOTFS_DIR)/etc/axiomd/policy/inheritance.pro
-	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session oed ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
+	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session oed runtime-abi-probe loader-elf-probe ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
 		if [ -f "$(USERLAND_OUT_DIR)/$$tool" ]; then \
 			cp "$(USERLAND_OUT_DIR)/$$tool" "$(ROOTFS_DIR)/bin/$$tool"; \
 		fi; \
@@ -100,13 +102,13 @@ rootfs: userland
 		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/sudo"; \
 	fi
 	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ]; then \
-		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc sort uniq cut tr tee sleep true false env printenv find time; do \
+		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date echo head tail wc sort uniq cut tr tee sleep true false env printenv find time; do \
 			if [ ! -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 				cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/$$app"; \
 			fi; \
 		done; \
 	fi
-	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session oed find time; do \
+	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date echo head tail wc cut true false env printenv stat opkg dprobe execprobe traverseprobe mkstatprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session oed runtime-abi-probe loader-elf-probe find time; do \
 		if [ -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 			cp "$(ROOTFS_DIR)/bin/$$app" "$(ROOTFS_DIR)/usr/bin/$$app"; \
 		fi; \
@@ -114,6 +116,14 @@ rootfs: userland
 	@if [ -d "$(ROOTFS_OVERLAY_DIR)" ]; then \
 		echo "Applying rootfs overlay from $(ROOTFS_OVERLAY_DIR)..."; \
 		cp -a "$(ROOTFS_OVERLAY_DIR)/." "$(ROOTFS_DIR)/"; \
+	fi
+	@if [ "$(BUNDLE_DESKTOP_RUNTIME)" = "1" ]; then \
+		echo "Bundling desktop runtime into live rootfs..."; \
+		for pkg in desktop-base gtk3-runtime xfce-runtime xorg xfce xdm; do \
+			if [ -d "opkg/examples/$$pkg/rootfs" ]; then \
+				cp -a "opkg/examples/$$pkg/rootfs/." "$(ROOTFS_DIR)/"; \
+			fi; \
+		done; \
 	fi
 	@mkdir -p "$(ROOTFS_DIR)/etc/ssl/certs"
 	@if [ -f "/etc/ssl/certs/ca-certificates.crt" ]; then \
@@ -139,6 +149,18 @@ rootfs: userland
 		fi; \
 		if [ -d "opkg/examples/xfce" ]; then \
 			./opkg/opkg build opkg/examples/xfce "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xfce-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/desktop-base" ]; then \
+			./opkg/opkg build opkg/examples/desktop-base "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/desktop-base-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/gtk3-runtime" ]; then \
+			./opkg/opkg build opkg/examples/gtk3-runtime "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/gtk3-runtime-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/xfce-runtime" ]; then \
+			./opkg/opkg build opkg/examples/xfce-runtime "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xfce-runtime-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/xdm" ]; then \
+			./opkg/opkg build opkg/examples/xdm "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xdm-1.0.0-x86_64.opk"; \
 		fi; \
 		./opkg/opkg repo index "$(ROOTFS_DIR)/var/cache/opkg/repo"; \
 	fi

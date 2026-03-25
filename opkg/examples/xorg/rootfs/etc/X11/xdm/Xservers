@@ -1,0 +1,1 @@
+:0 local /usr/bin/Xorg :0 -nolisten tcp

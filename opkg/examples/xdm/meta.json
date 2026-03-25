@@ -1,0 +1,12 @@
+{
+  "name": "xdm",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "XDM display manager scaffold package",
+  "description": "Scaffold package for a real xdm binary and runtime files. Depends on xorg + xfce runtime path.",
+  "depends": ["xorg", "xfce-runtime"],
+  "provides": ["display-manager"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "desktop"
+}

@@ -18,6 +18,12 @@ enum SYS_SETUID = 105;
 enum SYS_SETGID = 106;
 
 enum O_RDONLY = 0x0000;
+enum O_WRONLY = 0x0001;
+enum O_CREAT = 0x0040;
+enum O_TRUNC = 0x0200;
+enum O_APPEND = 0x0400;
+
+enum XDM_FAILURE_SUPPRESS_THRESHOLD = 3;
 
 enum C_RESET = "\x1b[0m";
 enum C_BOLD = "\x1b[1m";
@@ -34,6 +40,7 @@ ssize_t read(int fd, void* buf, size_t count);
 ssize_t write(int fd, const void* buf, size_t count);
 int open(const char* pathname, int flags, int mode);
 int close(int fd);
+int mkdir(const char* pathname, int mode);
 int fork();
 int execve(const char* pathname, char** argv, char** envp);
 int waitpid(int pid, int* status, int options);
@@ -67,6 +74,20 @@ struct Service {
     int restartOnFailure;
 }
 
+struct BootState {
+    char[16] configuredDesktopMode;
+    char[16] lastAttemptedDesktopMode;
+    int lastGraphicalSuccess; /* 1=yes, 0=no, -1=unknown */
+    uint consecutiveGraphicalFailures;
+}
+
+enum BOOT_STATE_PATH = "/var/lib/obelisk/boot-state.json";
+enum BOOT_STATE_DIR = "/var/lib/obelisk";
+enum BOOT_LOG_PATH = "/var/log/desktop-session.log";
+enum BOOT_LOG_DIR = "/var/log";
+enum FORCE_TTY_SENTINEL = "/etc/obelisk/force-tty";
+enum REENABLE_XDM_SENTINEL = "/etc/obelisk/re-enable-xdm";
+
 private size_t cstrlen(const char* s) {
     size_t n = 0;
     while (s !is null && s[n] != 0) n++;
@@ -94,6 +115,41 @@ private void cstrcpy(char* dst, const char* src, size_t cap) {
         i++;
     }
     dst[i] = 0;
+}
+
+private void cstrappend(char* dst, const char* src, size_t cap) {
+    size_t dlen = cstrlen(dst);
+    if (dlen >= cap) return;
+    cstrcpy(dst + dlen, src, cap - dlen);
+}
+
+private const(char)* cstrstr(const(char)* hay, const(char)* needle) {
+    if (hay is null || needle is null || needle[0] == 0) return hay;
+    size_t nlen = cstrlen(needle);
+    size_t hlen = cstrlen(hay);
+    if (nlen > hlen) return null;
+    for (size_t i = 0; i + nlen <= hlen; i++) {
+        if (cstrncmp(hay + i, needle, nlen) == 0) {
+            return hay + i;
+        }
+    }
+    return null;
+}
+
+private void u32ToStr(uint v, char* outBuf, size_t cap) {
+    if (cap == 0) return;
+    char[16] tmp = void;
+    int i = 15;
+    tmp[i] = 0;
+    if (v == 0) {
+        tmp[--i] = '0';
+    } else {
+        while (v > 0 && i > 0) {
+            tmp[--i] = cast(char)('0' + (v % 10));
+            v /= 10;
+        }
+    }
+    cstrcpy(outBuf, tmp.ptr + i, cap);
 }
 
 private int parseU32(const char* s, uint* outVal) {
@@ -180,6 +236,162 @@ private int readSmallFile(const char* path, char* outBuf, size_t cap) {
     outBuf[off] = 0;
     close(fd);
     return cast(int)off;
+}
+
+private int pathExists(const char* path) {
+    int fd = open(path, O_RDONLY, 0);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
+
+private void ensureBootPaths() {
+    cast(void)mkdir("/var".ptr, 493);
+    cast(void)mkdir("/var/lib".ptr, 493);
+    cast(void)mkdir("/var/lib/obelisk".ptr, 493);
+    cast(void)mkdir("/var/log".ptr, 493);
+}
+
+private void writeAllBestEffort(int fd, const char* s) {
+    const(char)* p = s;
+    size_t left = cstrlen(s);
+    while (left > 0) {
+        auto n = write(fd, p, left);
+        if (n <= 0) return;
+        p += n;
+        left -= cast(size_t)n;
+    }
+}
+
+private void appendBootLog(const char* msg) {
+    ensureBootPaths();
+    int fd = open(BOOT_LOG_PATH.ptr, O_WRONLY | O_CREAT | O_APPEND, 420);
+    if (fd < 0) return;
+    writeAllBestEffort(fd, msg);
+    writeAllBestEffort(fd, "\n".ptr);
+    close(fd);
+}
+
+private int jsonExtractString(const char* json, const char* key, char* outBuf, size_t cap) {
+    char[96] needle = void;
+    needle[0] = 0;
+    cstrappend(needle.ptr, "\"".ptr, needle.length);
+    cstrappend(needle.ptr, key, needle.length);
+    cstrappend(needle.ptr, "\"".ptr, needle.length);
+    auto p = cstrstr(json, needle.ptr);
+    if (p is null) return -1;
+    while (*p != 0 && *p != ':') p++;
+    if (*p != ':') return -1;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p != '"') return -1;
+    p++;
+    size_t i = 0;
+    while (*p != 0 && *p != '"' && i + 1 < cap) {
+        outBuf[i++] = *p++;
+    }
+    outBuf[i] = 0;
+    return (*p == '"') ? 0 : -1;
+}
+
+private int jsonExtractU32(const char* json, const char* key, uint* outVal) {
+    char[96] needle = void;
+    needle[0] = 0;
+    cstrappend(needle.ptr, "\"".ptr, needle.length);
+    cstrappend(needle.ptr, key, needle.length);
+    cstrappend(needle.ptr, "\"".ptr, needle.length);
+    auto p = cstrstr(json, needle.ptr);
+    if (p is null) return -1;
+    while (*p != 0 && *p != ':') p++;
+    if (*p != ':') return -1;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    uint v = 0;
+    if (*p < '0' || *p > '9') return -1;
+    while (*p >= '0' && *p <= '9') {
+        v = (v * 10) + cast(uint)(*p - '0');
+        p++;
+    }
+    *outVal = v;
+    return 0;
+}
+
+private int jsonExtractBool(const char* json, const char* key, int* outVal) {
+    char[96] needle = void;
+    needle[0] = 0;
+    cstrappend(needle.ptr, "\"".ptr, needle.length);
+    cstrappend(needle.ptr, key, needle.length);
+    cstrappend(needle.ptr, "\"".ptr, needle.length);
+    auto p = cstrstr(json, needle.ptr);
+    if (p is null) return -1;
+    while (*p != 0 && *p != ':') p++;
+    if (*p != ':') return -1;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    if (cstrncmp(p, "true".ptr, 4) == 0) {
+        *outVal = 1;
+        return 0;
+    }
+    if (cstrncmp(p, "false".ptr, 5) == 0) {
+        *outVal = 0;
+        return 0;
+    }
+    return -1;
+}
+
+private void bootStateDefaults(BootState* st, const Config* cfg) {
+    cstrcpy(st.configuredDesktopMode.ptr, cfg.desktopMode.ptr, st.configuredDesktopMode.length);
+    cstrcpy(st.lastAttemptedDesktopMode.ptr, "none".ptr, st.lastAttemptedDesktopMode.length);
+    st.lastGraphicalSuccess = -1;
+    st.consecutiveGraphicalFailures = 0;
+}
+
+private void loadBootState(BootState* st, const Config* cfg) {
+    char[1024] buf = void;
+    bootStateDefaults(st, cfg);
+    if (readSmallFile(BOOT_STATE_PATH.ptr, buf.ptr, buf.length) < 0) {
+        return;
+    }
+    cast(void)jsonExtractString(buf.ptr, "configured_desktop_mode".ptr, st.configuredDesktopMode.ptr, st.configuredDesktopMode.length);
+    cast(void)jsonExtractString(buf.ptr, "last_attempted_desktop_mode".ptr, st.lastAttemptedDesktopMode.ptr, st.lastAttemptedDesktopMode.length);
+    {
+        int b = 0;
+        if (jsonExtractBool(buf.ptr, "last_graphical_boot_success".ptr, &b) == 0) {
+            st.lastGraphicalSuccess = b;
+        }
+    }
+    {
+        uint v = 0;
+        if (jsonExtractU32(buf.ptr, "consecutive_graphical_failures".ptr, &v) == 0) {
+            st.consecutiveGraphicalFailures = v;
+        }
+    }
+}
+
+private void saveBootState(const BootState* st) {
+    char[32] failBuf = void;
+    char[1024] outBuf = void;
+    outBuf[0] = 0;
+    u32ToStr(st.consecutiveGraphicalFailures, failBuf.ptr, failBuf.length);
+    cstrappend(outBuf.ptr, "{\n".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "  \"configured_desktop_mode\": \"".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, st.configuredDesktopMode.ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "\",\n".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "  \"last_attempted_desktop_mode\": \"".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, st.lastAttemptedDesktopMode.ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "\",\n".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "  \"last_graphical_boot_success\": ".ptr, outBuf.length);
+    if (st.lastGraphicalSuccess > 0) cstrappend(outBuf.ptr, "true".ptr, outBuf.length);
+    else cstrappend(outBuf.ptr, "false".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, ",\n".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "  \"consecutive_graphical_failures\": ".ptr, outBuf.length);
+    cstrappend(outBuf.ptr, failBuf.ptr, outBuf.length);
+    cstrappend(outBuf.ptr, "\n}\n".ptr, outBuf.length);
+    ensureBootPaths();
+    int fd = open(BOOT_STATE_PATH.ptr, O_WRONLY | O_CREAT | O_TRUNC, 420);
+    if (fd < 0) return;
+    writeAllBestEffort(fd, outBuf.ptr);
+    close(fd);
 }
 
 private char* trim(char* s) {
@@ -366,6 +578,30 @@ private int launchCommandAs(const char* command, uid_t uid, gid_t gid, int waitI
     return 0;
 }
 
+private int launchDesktopSession(const char* mode, uid_t uid, gid_t gid) {
+    auto pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        setgid(cast(int)gid);
+        setuid(cast(int)uid);
+        char*[3] argv = [ cast(char*)"desktop-session".ptr, cast(char*)mode, null ];
+        char*[7] envp = [
+            cast(char*)"PATH=/bin:/sbin:/usr/bin".ptr,
+            cast(char*)"HOME=/home/obelisk".ptr,
+            cast(char*)"TERM=vt100".ptr,
+            cast(char*)"SHELL=/bin/osh".ptr,
+            cast(char*)"USER=obelisk".ptr,
+            cast(char*)"XDG_SESSION_TYPE=x11".ptr,
+            null
+        ];
+        execve("/bin/desktop-session".ptr, argv.ptr, envp.ptr);
+        _exit(127);
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) { }
+    return status;
+}
+
 private void runServices(const Config* cfg) {
     char[256] list = void;
     cstrcpy(list.ptr, cfg.serviceList.ptr, list.length);
@@ -398,6 +634,9 @@ private void runServices(const Config* cfg) {
 }
 
 private void launchInteractive(const Config* cfg) {
+    BootState state = void;
+    char[192] logLine = void;
+    char[32] codeBuf = void;
     uid_t uid = cfg.uid;
     gid_t gid = cfg.gid;
     if (cfg.userName[0] != 0 && cstrcmp(cfg.userName.ptr, "root".ptr) != 0) {
@@ -410,8 +649,8 @@ private void launchInteractive(const Config* cfg) {
     }
 
     statusLine(C_BLUE, "[*]".ptr, "Activating interactive session".ptr);
-    setgid(cast(int)gid);
-    setuid(cast(int)uid);
+    loadBootState(&state, cfg);
+    cstrcpy(state.configuredDesktopMode.ptr, cfg.desktopMode.ptr, state.configuredDesktopMode.length);
 
     char*[6] envp = [
         cast(char*)"PATH=/bin:/sbin:/usr/bin".ptr,
@@ -422,19 +661,72 @@ private void launchInteractive(const Config* cfg) {
         null
     ];
 
-    /* Auto-launch desktop session when installer selected xorg/xfce/xdm mode. */
-    if (cstrcmp(cfg.desktopMode.ptr, "tty".ptr) != 0) {
-        char*[3] dsArgv = [
-            cast(char*)"desktop-session".ptr,
-            cast(char*)cfg.desktopMode.ptr,
-            null
-        ];
-        statusLine(C_BLUE, "[*]".ptr, "attempting desktop auto-start".ptr);
-        if (execve("/bin/desktop-session".ptr, dsArgv.ptr, envp.ptr) < 0) {
-            statusLine(C_YELLOW, "[..]".ptr, "desktop auto-start failed; falling back to shell".ptr);
+    if (pathExists(FORCE_TTY_SENTINEL.ptr) != 0) {
+        statusLine(C_YELLOW, "[..]".ptr, "force-tty override detected; skipping desktop auto-start".ptr);
+        appendBootLog("desktop-boot: force-tty override honored".ptr);
+        cstrcpy(state.lastAttemptedDesktopMode.ptr, "tty".ptr, state.lastAttemptedDesktopMode.length);
+        saveBootState(&state);
+    } else if (cstrcmp(cfg.desktopMode.ptr, "tty".ptr) != 0) {
+        int dsStatus = -1;
+        int suppressXdm = 0;
+        if (cstrcmp(cfg.desktopMode.ptr, "xdm".ptr) == 0) {
+            if (pathExists(REENABLE_XDM_SENTINEL.ptr) != 0) {
+                state.consecutiveGraphicalFailures = 0;
+                appendBootLog("desktop-boot: re-enable sentinel present, xdm failure counter reset".ptr);
+            }
+            if (state.consecutiveGraphicalFailures >= XDM_FAILURE_SUPPRESS_THRESHOLD) {
+                suppressXdm = 1;
+            }
         }
+        if (suppressXdm != 0) {
+            statusLine(C_YELLOW, "[..]".ptr, "xdm auto-start suppressed (too many failures); starting tty shell".ptr);
+            appendBootLog("desktop-boot: xdm suppressed due to repeated failures".ptr);
+            cstrcpy(state.lastAttemptedDesktopMode.ptr, "tty".ptr, state.lastAttemptedDesktopMode.length);
+            saveBootState(&state);
+        } else {
+            statusLine(C_BLUE, "[*]".ptr, "attempting desktop auto-start".ptr);
+            logLine[0] = 0;
+            cstrappend(logLine.ptr, "desktop-boot: launching /bin/desktop-session ".ptr, logLine.length);
+            cstrappend(logLine.ptr, cfg.desktopMode.ptr, logLine.length);
+            appendBootLog(logLine.ptr);
+            cstrcpy(state.lastAttemptedDesktopMode.ptr, cfg.desktopMode.ptr, state.lastAttemptedDesktopMode.length);
+            saveBootState(&state);
+
+            dsStatus = launchDesktopSession(cfg.desktopMode.ptr, uid, gid);
+            if (dsStatus == 0) {
+                state.lastGraphicalSuccess = 1;
+                state.consecutiveGraphicalFailures = 0;
+                saveBootState(&state);
+                appendBootLog("desktop-boot: desktop-session exited with success status".ptr);
+                statusLine(C_BLUE, "[*]".ptr, "desktop session ended; returning to tty shell".ptr);
+            } else {
+                state.lastGraphicalSuccess = 0;
+                if (state.consecutiveGraphicalFailures < 9999) {
+                    state.consecutiveGraphicalFailures++;
+                }
+                saveBootState(&state);
+
+                logLine[0] = 0;
+                cstrappend(logLine.ptr, "desktop-boot: desktop-session failed status=".ptr, logLine.length);
+                u32ToStr(cast(uint)(dsStatus < 0 ? -dsStatus : dsStatus), codeBuf.ptr, codeBuf.length);
+                cstrappend(logLine.ptr, codeBuf.ptr, logLine.length);
+                cstrappend(logLine.ptr, ", fallback=tty".ptr, logLine.length);
+                appendBootLog(logLine.ptr);
+
+                statusLine(C_YELLOW, "[..]".ptr, "desktop auto-start failed; falling back to tty shell".ptr);
+                if (cstrcmp(cfg.desktopMode.ptr, "xdm".ptr) == 0 &&
+                    state.consecutiveGraphicalFailures >= XDM_FAILURE_SUPPRESS_THRESHOLD) {
+                    statusLine(C_YELLOW, "[..]".ptr, "xdm auto-start will remain suppressed until re-enabled".ptr);
+                }
+            }
+        }
+    } else {
+        cstrcpy(state.lastAttemptedDesktopMode.ptr, "tty".ptr, state.lastAttemptedDesktopMode.length);
+        saveBootState(&state);
     }
 
+    setgid(cast(int)gid);
+    setuid(cast(int)uid);
     char*[3] argv = [ cast(char*)cfg.shellArg0.ptr, cast(char*)cfg.shellArg1.ptr, null ];
     if (execve(cfg.shellPath.ptr, argv.ptr, envp.ptr) < 0) {
         statusLine(C_RED, "[!!]".ptr, "primary shell failed, trying /sbin/init-legacy".ptr);

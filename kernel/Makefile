@@ -5,7 +5,7 @@
 
 # Architecture
 ARCH := x86_64
-EXPERIMENTAL_DYNAMIC_ELF ?= 0
+EXPERIMENTAL_DYNAMIC_ELF ?= 1
 
 # Toolchain
 ifeq ($(CROSS_COMPILE),)

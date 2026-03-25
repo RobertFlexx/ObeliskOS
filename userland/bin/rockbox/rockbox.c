@@ -1615,6 +1615,8 @@ static void applet_find(int argc, char **argv) {
 
 static int run_external(char **args);
 static int run_shell(const char *prompt);
+static int run_script_file(const char *path);
+static int execute_command_line(const char *prompt, char *line_orig);
 static int try_exec_external(char **args);
 static void report_exec_failure(const char *cmd, int ret);
 static char *trim_ws_inplace(char *s);
@@ -3225,7 +3227,13 @@ static int execute_simple_command(const char *prompt, char *line) {
                str_cmp(args[0], "sh") == 0 ||
                str_cmp(args[0], "rockbox") == 0 ||
                str_cmp(args[0], "busybox") == 0) {
-        rc = run_shell("osh$ ");
+        if (argc > 2 && args[1] && str_cmp(args[1], "-c") == 0) {
+            rc = execute_command_line("osh$ ", args[2]);
+        } else if (argc > 1 && args[1] && args[1][0] != '-') {
+            rc = run_script_file(args[1]);
+        } else {
+            rc = run_shell("osh$ ");
+        }
     } else if (str_cmp(args[0], "exit") == 0) {
         restore_redirections(saved_in, saved_out);
         return -1000;
@@ -3240,7 +3248,6 @@ static int execute_simple_command(const char *prompt, char *line) {
 static int run_shell(const char *prompt) {
     char line[256];
     char line_orig[256];
-    char seg[256];
     static char history[16][256];
     int hist_count = 0;
     int hist_pos = -1;
@@ -3265,31 +3272,109 @@ static int run_shell(const char *prompt) {
             }
         }
 
-        const char *cursor = line_orig;
+        {
+            int rc = execute_command_line(prompt, line_orig);
+            if (rc == -1000) {
+                return 0;
+            }
+        }
+    }
+}
+
+static int execute_command_line(const char *prompt, char *line_orig) {
+    char seg[256];
+    const char *cursor = line_orig;
+    enum chain_op prev = CHAIN_SEQ;
+    int last_status = 0;
+    while (1) {
+        enum chain_op next = parse_next_segment(&cursor, seg, sizeof(seg));
+        char *trimmed = trim_ws_inplace(seg);
+        int should_run = 1;
+        if (prev == CHAIN_AND) {
+            should_run = (last_status == 0);
+        } else if (prev == CHAIN_OR) {
+            should_run = (last_status != 0);
+        }
+        if (*trimmed && should_run) {
+            int rc = execute_simple_command(prompt, trimmed);
+            if (rc == -1000) {
+                return rc;
+            }
+            last_status = rc;
+        }
+        prev = next;
+        if (next == CHAIN_NONE) {
+            break;
+        }
+    }
+    return last_status;
+}
+
+static int run_script_file(const char *path) {
+    char filebuf[8192];
+    int n = read_small_file(path, filebuf, sizeof(filebuf));
+    if (n < 0) {
+        print_errno("sh", n);
+        return 1;
+    }
+
+    int last_status = 0;
+    char *line = filebuf;
+    int first_line = 1;
+    while (*line) {
+        char *next = line;
+        while (*next && *next != '\n') {
+            next++;
+        }
+        if (*next == '\n') {
+            *next++ = '\0';
+        }
+        {
+            size_t ln = str_len(line);
+            while (ln > 0 && line[ln - 1] == '\r') {
+                line[--ln] = '\0';
+            }
+        }
+
+        char *trimmed = trim_ws_inplace(line);
+        if (first_line && trimmed[0] == '#' && trimmed[1] == '!') {
+            first_line = 0;
+            line = next;
+            continue;
+        }
+        first_line = 0;
+        if (*trimmed == '\0' || trimmed[0] == '#') {
+            line = next;
+            continue;
+        }
+
+        const char *cursor = trimmed;
         enum chain_op prev = CHAIN_SEQ;
-        int last_status = 0;
+        char seg[256];
         while (1) {
-            enum chain_op next = parse_next_segment(&cursor, seg, sizeof(seg));
-            char *trimmed = trim_ws_inplace(seg);
+            enum chain_op next_op = parse_next_segment(&cursor, seg, sizeof(seg));
+            char *seg_trim = trim_ws_inplace(seg);
             int should_run = 1;
             if (prev == CHAIN_AND) {
                 should_run = (last_status == 0);
             } else if (prev == CHAIN_OR) {
                 should_run = (last_status != 0);
             }
-            if (*trimmed && should_run) {
-                int rc = execute_simple_command(prompt, trimmed);
+            if (*seg_trim && should_run) {
+                int rc = execute_simple_command("osh$ ", seg_trim);
                 if (rc == -1000) {
                     return 0;
                 }
                 last_status = rc;
             }
-            prev = next;
-            if (next == CHAIN_NONE) {
+            prev = next_op;
+            if (next_op == CHAIN_NONE) {
                 break;
             }
         }
+        line = next;
     }
+    return last_status;
 }
 
 static int applet_main(const char *name, int argc, char **argv) {
@@ -3300,6 +3385,14 @@ static int applet_main(const char *name, int argc, char **argv) {
         return run_shell("osh$ ");
     }
     if (str_cmp(name, "osh") == 0 || str_cmp(name, "sh") == 0 || str_cmp(name, "ash") == 0) {
+        if (argc > 2 && argv[1] && str_cmp(argv[1], "-c") == 0) {
+            char line_buf[256];
+            str_copy(line_buf, argv[2], sizeof(line_buf));
+            return execute_command_line("osh$ ", line_buf);
+        }
+        if (argc > 1 && argv[1] && argv[1][0] != '-') {
+            return run_script_file(argv[1]);
+        }
         return run_shell("osh$ ");
     }
     if (str_cmp(name, "echo") == 0) {
@@ -3418,17 +3511,23 @@ static int applet_main(const char *name, int argc, char **argv) {
     return 1;
 }
 
-void _start(void) {
-    uint64_t *stack_ptr;
-    __asm__ volatile("movq %%rsp, %0" : "=r"(stack_ptr));
+static __attribute__((used)) uint8_t rockbox_fallback_stack[4096];
 
-    int argc = (int)stack_ptr[0];
-    char **argv = (char **)&stack_ptr[1];
+static __attribute__((used)) void rockbox_main_from_stack(uint64_t *stack_ptr) {
+    int argc = 0;
+    char **argv = NULL;
     char *fallback_argv[] = { "rockbox", NULL };
-    char **use_argv = argv;
-    int use_argc = argc;
+    char **use_argv;
+    int use_argc;
 
-    if (use_argc <= 0 || !use_argv || !use_argv[0]) {
+    if (stack_ptr) {
+        argc = (int)stack_ptr[0];
+        argv = (char **)&stack_ptr[1];
+    }
+    use_argv = argv;
+    use_argc = argc;
+
+    if (!stack_ptr || use_argc <= 0 || !use_argv || !use_argv[0]) {
         /* Kernel bring-up path may not provide full argv yet. */
         use_argv = fallback_argv;
         use_argc = 1;
@@ -3478,4 +3577,17 @@ void _start(void) {
     int rc = applet_main(name, use_argc, use_argv);
     syscall1(SYS_EXIT, rc);
     __builtin_unreachable();
+}
+
+__attribute__((naked, noreturn)) void _start(void) {
+    __asm__ volatile(
+        "movq %rsp, %rdi\n"
+        "testq %rdi, %rdi\n"
+        "jnz 1f\n"
+        "leaq rockbox_fallback_stack+4096(%rip), %rsp\n"
+        "xorq %rdi, %rdi\n"
+        "1:\n"
+        "andq $-16, %rsp\n"
+        "callq rockbox_main_from_stack\n"
+        "ud2\n");
 }

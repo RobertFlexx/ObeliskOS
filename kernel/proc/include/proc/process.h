@@ -121,6 +121,8 @@ struct process {
     /* Identity */
     pid_t pid;                      /* Process ID */
     pid_t tgid;                     /* Thread group ID */
+    pid_t pgid;                     /* Process group ID */
+    pid_t sid;                      /* Session ID */
     char comm[16];                  /* Process name */
     char exec_path[PATH_MAX];       /* Best-effort executable path */
     
@@ -133,6 +135,8 @@ struct process {
     struct cpu_context context;     /* Saved CPU context */
     void *kernel_stack;             /* Kernel stack */
     size_t kernel_stack_size;       /* Kernel stack size */
+    uint64_t fs_base;               /* User FS base (TLS) */
+    uint64_t gs_base;               /* User GS base */
     
     /* Memory management */
     struct address_space *mm;       /* Address space */

@@ -1,15 +1,29 @@
 #!/bin/sh
-# Obelisk generic X session compatibility wrapper for display managers.
+# Obelisk generic X session wrapper for display managers.
 
-if [ -x /usr/bin/startxfce4 ]; then
-  exec /usr/bin/startxfce4
+echo "[xsession-compat] start"
+
+if [ -x /usr/bin/xfce4-session ]; then
+  echo "[xsession-compat] exec /usr/bin/xfce4-session"
+  exec /usr/bin/xfce4-session
 fi
-if [ -x /bin/startxfce4 ]; then
-  exec /bin/startxfce4
+if [ -x /bin/xfce4-session ]; then
+  echo "[xsession-compat] exec /bin/xfce4-session"
+  exec /bin/xfce4-session
 fi
-if [ -x /usr/lib/obelisk/desktop/startxfce4-compat ]; then
-  exec /usr/lib/obelisk/desktop/startxfce4-compat
+if [ -f /usr/bin/startxfce4 ]; then
+  echo "[xsession-compat] exec /usr/bin/startxfce4"
+  exec /bin/sh /usr/bin/startxfce4
+fi
+if [ -f /bin/startxfce4 ]; then
+  echo "[xsession-compat] exec /bin/startxfce4"
+  exec /bin/sh /bin/startxfce4
+fi
+if [ -f /usr/lib/obelisk/desktop/startxfce4-compat ]; then
+  echo "[xsession-compat] exec startxfce4-compat"
+  exec /bin/sh /usr/lib/obelisk/desktop/startxfce4-compat
 fi
 
 echo "xsession-compat: no XFCE launcher available"
-exec /bin/osh -i
+echo "xsession-compat: install real XFCE/XDM runtime packages for GUI session startup"
+exit 1

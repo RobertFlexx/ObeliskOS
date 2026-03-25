@@ -1,28 +1,33 @@
 #!/bin/sh
 # Obelisk XDM compatibility wrapper.
-#
-# Until a real xdm package lands, this wrapper provides a deterministic
-# "display manager style" entrypoint for desktop-session xdm mode.
+# Launches XFCE session via standard Xsession compatibility chain.
+
+echo "[xdm-compat] start"
 
 if [ -x /bin/xorg-smoke ]; then
-  /bin/xorg-smoke || {
+  /bin/xorg-smoke
+  if [ "$?" -ne 0 ]; then
     echo "xdm-compat: xorg-smoke failed"
+    echo "[xdm-compat] xorg-smoke failed"
     exit 1
-  }
+  fi
 fi
 
-if [ -x /usr/bin/startxfce4 ]; then
-  exec /usr/bin/startxfce4
-fi
-if [ -x /bin/startxfce4 ]; then
-  exec /bin/startxfce4
-fi
-if [ -x /usr/lib/obelisk/desktop/startxfce4-compat ]; then
-  exec /usr/lib/obelisk/desktop/startxfce4-compat
-fi
-if [ -x /usr/lib/obelisk/desktop/xsession-compat ]; then
-  exec /usr/lib/obelisk/desktop/xsession-compat
+# Prefer full session startup path (xinit/startxfce4) when present.
+if [ -f /usr/lib/obelisk/desktop/startxfce4-compat ]; then
+  echo "[xdm-compat] exec startxfce4-compat"
+  exec /bin/sh /usr/lib/obelisk/desktop/startxfce4-compat
 fi
 
-echo "xdm-compat: no XFCE session launcher available"
+# Fallback to display-manager style session script.
+if [ -f /etc/X11/xdm/Xsession ]; then
+  echo "[xdm-compat] exec /etc/X11/xdm/Xsession"
+  exec /bin/sh /etc/X11/xdm/Xsession
+fi
+if [ -f /usr/lib/obelisk/desktop/xsession-compat ]; then
+  echo "[xdm-compat] exec xsession-compat"
+  exec /bin/sh /usr/lib/obelisk/desktop/xsession-compat
+fi
+
+echo "xdm-compat: no session launcher available"
 exit 1

@@ -200,6 +200,10 @@ pid_t do_fork(uint32_t flags, uint64_t stack, struct cpu_regs *regs) {
     child->cwd = parent->cwd;
     child->root = parent->root;
     child->umask = parent->umask;
+    child->fs_base = parent->fs_base;
+    child->gs_base = parent->gs_base;
+    child->pgid = parent->pgid;
+    child->sid = parent->sid;
     
     /* Set up child context */
     setup_child_context(child, parent, stack, regs);

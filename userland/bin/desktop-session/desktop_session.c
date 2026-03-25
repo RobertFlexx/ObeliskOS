@@ -30,6 +30,16 @@ static int file_exists(const char *path) {
     return 1;
 }
 
+static int is_script_launcher(const char *path) {
+    if (!path) return 0;
+    if (strcmp(path, "/usr/lib/obelisk/desktop/xdm-compat") == 0) return 1;
+    if (strcmp(path, "/usr/lib/obelisk/desktop/startxfce4-compat") == 0) return 1;
+    if (strcmp(path, "/usr/lib/obelisk/desktop/xfce4-session-compat") == 0) return 1;
+    if (strcmp(path, "/usr/lib/obelisk/desktop/xinit-compat") == 0) return 1;
+    if (strcmp(path, "/usr/lib/obelisk/desktop/Xorg-compat") == 0) return 1;
+    return 0;
+}
+
 static int run_wait(const char *path, char *const argv[]) {
     int pid = fork();
     int st = 0;
@@ -49,6 +59,44 @@ static int run_wait(const char *path, char *const argv[]) {
     }
     while (waitpid(pid, &st, 0) < 0) { }
     return st == 0 ? 0 : -1;
+}
+
+static const char *find_xserver_bin(void) {
+    if (file_exists("/usr/lib/xorg/Xorg")) return "/usr/lib/xorg/Xorg";
+    if (file_exists("/usr/bin/Xorg")) return "/usr/bin/Xorg";
+    if (file_exists("/bin/Xorg")) return "/bin/Xorg";
+    if (file_exists("/usr/bin/X")) return "/usr/bin/X";
+    if (file_exists("/bin/X")) return "/bin/X";
+    return 0;
+}
+
+static void try_exec_direct_xfce(char *const envp[]) {
+    const char *xinit = 0;
+    const char *client = 0;
+    const char *xserver = find_xserver_bin();
+
+    if (file_exists("/usr/bin/xinit")) xinit = "/usr/bin/xinit";
+    else if (file_exists("/bin/xinit")) xinit = "/bin/xinit";
+
+    if (file_exists("/usr/bin/xfce4-session")) client = "/usr/bin/xfce4-session";
+    else if (file_exists("/bin/xfce4-session")) client = "/bin/xfce4-session";
+    else if (file_exists("/usr/bin/startxfce4")) client = "/usr/bin/startxfce4";
+    else if (file_exists("/bin/startxfce4")) client = "/bin/startxfce4";
+
+    if (xinit && client && xserver) {
+        char *args[] = {
+            (char *)xinit,
+            (char *)client,
+            "--",
+            (char *)xserver,
+            ":0",
+            "-nolisten",
+            "tcp",
+            0
+        };
+        printf("desktop-session: launching direct XFCE stack via %s\n", xinit);
+        execve(xinit, args, envp);
+    }
 }
 
 static enum target_mode pick_target(void) {
@@ -77,7 +125,7 @@ static int require_profile(enum target_mode target) {
             return -1;
         }
     }
-    if (target == TARGET_XORG || target == TARGET_XFCE) {
+    if (target == TARGET_XORG || target == TARGET_XFCE || target == TARGET_XDM) {
         if (!file_exists("/var/lib/opkg/installed/xorg.json") &&
             !file_exists("/var/lib/opkg/installed/xorg-base.json") &&
             !file_exists("/var/lib/opkg/installed/xorg-server.json")) {
@@ -90,9 +138,9 @@ static int require_profile(enum target_mode target) {
 
 static const char *find_xdm_launcher(void) {
     static const char *cand[] = {
+        "/usr/lib/obelisk/desktop/xdm-compat",
         "/usr/bin/xdm",
-        "/bin/xdm",
-        "/usr/lib/obelisk/desktop/xdm-compat"
+        "/bin/xdm"
     };
     int i;
     for (i = 0; i < (int)(sizeof(cand) / sizeof(cand[0])); i++) {
@@ -213,7 +261,6 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
     }
 
     if (target == TARGET_XDM) {
-        char *args[] = { (char *)launcher, 0 };
         char *envp[] = {
             "PATH=/bin:/sbin:/usr/bin",
             "HOME=/home/obelisk",
@@ -223,11 +270,23 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
             "XDG_SESSION_TYPE=x11",
             0
         };
-        execve(launcher, args, envp);
+        /* Prefer direct launch to avoid dependence on shell-script grammar. */
+        try_exec_direct_xfce(envp);
+        if (strcmp(launcher, "/usr/bin/xdm") == 0 || strcmp(launcher, "/bin/xdm") == 0) {
+            char *args[] = { (char *)launcher, "-nodaemon", "-config", "/etc/X11/xdm/xdm-config", 0 };
+            execve(launcher, args, envp);
+        } else {
+            if (is_script_launcher(launcher)) {
+                char *args[] = { "/bin/sh", (char *)launcher, 0 };
+                execve("/bin/sh", args, envp);
+            } else {
+                char *args[] = { (char *)launcher, 0 };
+                execve(launcher, args, envp);
+            }
+        }
         printf("desktop-session: failed to exec %s\n", launcher);
         _exit(5);
     } else if (target == TARGET_XFCE) {
-        char *args[] = { (char *)launcher, 0 };
         char *envp[] = {
             "PATH=/bin:/sbin:/usr/bin",
             "HOME=/home/obelisk",
@@ -237,7 +296,15 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
             "XDG_SESSION_TYPE=x11",
             0
         };
-        execve(launcher, args, envp);
+        /* Prefer direct launch to avoid dependence on shell-script grammar. */
+        try_exec_direct_xfce(envp);
+        if (is_script_launcher(launcher)) {
+            char *args[] = { "/bin/sh", (char *)launcher, 0 };
+            execve("/bin/sh", args, envp);
+        } else {
+            char *args[] = { (char *)launcher, 0 };
+            execve(launcher, args, envp);
+        }
         printf("desktop-session: failed to exec %s\n", launcher);
         _exit(5);
     } else {
@@ -256,7 +323,6 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
             printf("desktop-session: failed to exec %s\n", launcher);
             _exit(5);
         } else {
-            char *args[] = { (char *)launcher, 0 };
             char *envp[] = {
                 "PATH=/bin:/sbin:/usr/bin",
                 "HOME=/home/obelisk",
@@ -266,7 +332,13 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
                 "XDG_SESSION_TYPE=x11",
                 0
             };
-            execve(launcher, args, envp);
+            if (is_script_launcher(launcher)) {
+                char *args[] = { "/bin/sh", (char *)launcher, 0 };
+                execve("/bin/sh", args, envp);
+            } else {
+                char *args[] = { (char *)launcher, 0 };
+                execve(launcher, args, envp);
+            }
             printf("desktop-session: failed to exec %s\n", launcher);
             _exit(5);
         }

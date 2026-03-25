@@ -53,8 +53,10 @@ FBINFO := $(OUTDIR)/fbinfo
 XORG_SMOKE := $(OUTDIR)/xorg-smoke
 DESKTOP_SESSION := $(OUTDIR)/desktop-session
 OED := $(OUTDIR)/oed
+RUNTIME_ABI_PROBE := $(OUTDIR)/runtime-abi-probe
+LOADER_ELF_PROBE := $(OUTDIR)/loader-elf-probe
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED) $(RUNTIME_ABI_PROBE) $(LOADER_ELF_PROBE)
 
 CFLAGS := \
 	-ffreestanding \
@@ -203,6 +205,14 @@ $(DESKTOP_SESSION): $(BUILDDIR)/bin/desktop-session/desktop_session.o $(LIBC) | 
 $(OED): $(BUILDDIR)/bin/oed/oed.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(RUNTIME_ABI_PROBE): $(BUILDDIR)/bin/runtime-abi-probe/runtime_abi_probe.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(LOADER_ELF_PROBE): $(BUILDDIR)/bin/loader-elf-probe/loader_elf_probe.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
 clean:
 	@echo "  CLEAN"

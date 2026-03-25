@@ -1,0 +1,9 @@
+! Minimal Obelisk xdm configuration
+DisplayManager.errorLogFile: /var/log/xdm-errors.log
+DisplayManager.pidFile: /var/run/xdm.pid
+DisplayManager.servers: /etc/X11/xdm/Xservers
+DisplayManager*resources: /etc/X11/xdm/Xresources
+DisplayManager*setup: /etc/X11/xdm/Xsetup
+DisplayManager*startup: /etc/X11/xdm/Xstartup
+DisplayManager*session: /etc/X11/xdm/Xsession
+DisplayManager*authComplain: false

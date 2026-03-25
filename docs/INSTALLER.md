@@ -47,6 +47,25 @@ Profile packages now install launcher compatibility wrappers under
 later) take precedence automatically without replacing package payloads.
 `desktop-session xdm` is also supported and will use `xdm` or `xdm-compat`.
 
+## Safe Graphical Boot Policy (Implemented)
+
+When `desktop_mode=xdm` is configured, `obeliskd` now uses a safe one-shot
+desktop launch policy:
+
+- attempts `desktop-session xdm` once
+- if launch fails, falls back to TTY shell immediately
+- records state in `/var/lib/obelisk/boot-state.json`
+- suppresses auto-XDM after repeated failures (threshold: 3)
+
+Manual recovery controls:
+
+- force TTY boot: create `/etc/obelisk/force-tty`
+- explicit re-enable hint for suppressed XDM: create `/etc/obelisk/re-enable-xdm`
+
+Desktop launch diagnostics are appended to:
+
+- `/var/log/desktop-session.log`
+
 ## Preparing a GitHub Pages Repo
 
 If you are building custom Obelisk-native packages (for example: `xorg`,

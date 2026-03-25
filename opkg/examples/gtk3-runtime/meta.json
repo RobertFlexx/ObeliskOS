@@ -1,0 +1,12 @@
+{
+  "name": "gtk3-runtime",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "GTK runtime scaffold for XFCE",
+  "description": "Scaffold package for GTK3 and related runtime shared libraries required by XFCE session components.",
+  "depends": ["desktop-base"],
+  "provides": ["gtk-runtime"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "desktop"
+}

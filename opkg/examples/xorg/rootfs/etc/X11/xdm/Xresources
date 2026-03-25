@@ -1,0 +1,6 @@
+! Minimal XDM resources for Obelisk
+xlogin*background: #101010
+xlogin*foreground: #d0d0d0
+xlogin*hiColor: #4ea1ff
+xlogin*shdColor: #303030
+xlogin*greeting: Obelisk Login

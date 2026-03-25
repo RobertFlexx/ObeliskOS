@@ -241,6 +241,8 @@ struct process *process_create(const char *name, uint32_t flags) {
     }
     
     proc->tgid = proc->pid;
+    proc->pgid = proc->pid;
+    proc->sid = proc->pid;
     
     /* Set name */
     strncpy(proc->comm, name, sizeof(proc->comm) - 1);

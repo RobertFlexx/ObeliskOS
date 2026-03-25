@@ -56,6 +56,11 @@ static int64_t sys_setresuid(uid_t ruid, uid_t euid, uid_t suid);
 static int64_t sys_setresgid(gid_t rgid, gid_t egid, gid_t sgid);
 static int64_t sys_setfsuid(uid_t fsuid);
 static int64_t sys_setfsgid(gid_t fsgid);
+static int64_t sys_setpgid(pid_t pid, pid_t pgid);
+static int64_t sys_getpgrp(void);
+static int64_t sys_setsid(void);
+static int64_t sys_getpgid(pid_t pid);
+static int64_t sys_getsid(pid_t pid);
 static int64_t sys_chdir(const char *path);
 static int64_t sys_getcwd(char *buf, size_t size);
 static int64_t sys_mkdir(const char *pathname, mode_t mode);
@@ -72,6 +77,9 @@ static int64_t sys_faccessat(int dirfd, const char *pathname, int mode);
 static int64_t sys_dup(int oldfd);
 static int64_t sys_dup2(int oldfd, int newfd);
 static int64_t sys_pipe(int pipefd[2]);
+static int64_t sys_poll(void *fds, uint64_t nfds, int timeout);
+static int64_t sys_select(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout);
+static int64_t sys_nanosleep(const void *req, void *rem);
 static int64_t sys_ioctl(int fd, unsigned long request, void *arg);
 static int64_t sys_fcntl(int fd, int cmd, uint64_t arg);
 static int64_t sys_getdents64(int fd, void *dirp, size_t count);
@@ -87,6 +95,8 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
 static int64_t sys_bind(int sockfd, const void *addr, int addrlen);
 static int64_t sys_listen(int sockfd, int backlog);
 static int64_t sys_shutdown(int sockfd, int how);
+static int64_t sys_socketpair(int domain, int type, int protocol, int *sv);
+static int64_t sys_arch_prctl(int code, uint64_t addr);
 static int resolve_user_path(const char *path, char *out, size_t out_size);
 static int resolve_user_at_path(int dirfd, const char *path, char *out, size_t out_size);
 
@@ -141,6 +151,27 @@ struct sockaddr_in_compat {
     uint8_t sin_zero[8];
 } __packed;
 
+struct sockaddr_un_compat {
+    uint16_t sun_family;
+    char sun_path[108];
+} __packed;
+
+struct pollfd_compat {
+    int fd;
+    int16_t events;
+    int16_t revents;
+} __packed;
+
+struct timespec_compat {
+    int64_t tv_sec;
+    int64_t tv_nsec;
+} __packed;
+
+struct timeval_compat {
+    int64_t tv_sec;
+    int64_t tv_usec;
+} __packed;
+
 #define TCGETS      0x5401UL
 #define TCSETS      0x5402UL
 #define TCSETSW     0x5403UL
@@ -172,6 +203,7 @@ struct sockaddr_in_compat {
 #define F_SETFL     4
 
 #define IS_STDIO_FD(fd) ((fd) == 0 || (fd) == 1 || (fd) == 2)
+#define AF_UNIX     1
 #define AF_INET     2
 #define SOCK_STREAM 1
 #define SOCK_DGRAM  2
@@ -179,8 +211,17 @@ struct sockaddr_in_compat {
 #define IPPROTO_ICMP 1
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
-#define SOCKET_FD_BASE  4096
+#define SOCKET_FD_BASE  512
 #define SOCKET_MAX      64
+#define UNIX_PATH_MAX   108
+#define UNIX_RX_BUF     4096
+#define UNIX_PENDING_MAX 8
+
+#define POLLIN      0x0001
+#define POLLPRI     0x0002
+#define POLLOUT     0x0004
+#define POLLERR     0x0008
+#define POLLHUP     0x0010
 
 struct ksocket {
     bool used;
@@ -193,6 +234,17 @@ struct ksocket {
     uint16_t remote_port;
     int tcp_conn_id;
     bool connected;
+    bool peer_closed;
+    int peer_fd;
+    bool listening;
+    bool bound;
+    char unix_path[UNIX_PATH_MAX];
+    int pending_fds[UNIX_PENDING_MAX];
+    uint8_t pending_head;
+    uint8_t pending_tail;
+    uint8_t rx_buf[UNIX_RX_BUF];
+    size_t rx_head;
+    size_t rx_len;
 };
 
 struct getdents64_ctx {
@@ -229,6 +281,11 @@ static int filldir_getdents64(struct dir_context *dctx, const char *name, int na
 #define LINUX_REBOOT_CMD_HALT      0xCDEF0123U
 #define LINUX_REBOOT_CMD_POWER_OFF 0x4321FEDCU
 #define LINUX_REBOOT_CMD_CAD_ON    0x89ABCDEFU
+
+#define ARCH_SET_GS 0x1001
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+#define ARCH_GET_GS 0x1004
 
 /* Syscall table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
@@ -268,9 +325,108 @@ static struct ksocket *socket_get_owned(int fd) {
     return &socket_table[idx];
 }
 
+static struct ksocket *socket_get_any(int fd) {
+    int idx = socket_fd_to_index(fd);
+    if (idx < 0) {
+        return NULL;
+    }
+    if (!socket_table[idx].used) {
+        return NULL;
+    }
+    return &socket_table[idx];
+}
+
+static int socket_alloc_slot(pid_t owner_pid) {
+    for (int i = 0; i < SOCKET_MAX; i++) {
+        if (!socket_table[i].used) {
+            memset(&socket_table[i], 0, sizeof(socket_table[i]));
+            socket_table[i].used = true;
+            socket_table[i].owner_pid = owner_pid;
+            socket_table[i].tcp_conn_id = -1;
+            socket_table[i].peer_fd = -1;
+            return SOCKET_FD_BASE + i;
+        }
+    }
+    return -EMFILE;
+}
+
+static size_t unix_socket_readable(const struct ksocket *sock) {
+    return sock ? sock->rx_len : 0;
+}
+
+static size_t unix_socket_writable(const struct ksocket *sock) {
+    if (!sock || sock->peer_fd < 0) {
+        return 0;
+    }
+    struct ksocket *peer = socket_get_any(sock->peer_fd);
+    if (!peer || !peer->used) {
+        return 0;
+    }
+    if (peer->rx_len >= UNIX_RX_BUF) {
+        return 0;
+    }
+    return UNIX_RX_BUF - peer->rx_len;
+}
+
+static int unix_socket_queue_pending(struct ksocket *listener, int fd) {
+    uint8_t next = (uint8_t)((listener->pending_head + 1U) % UNIX_PENDING_MAX);
+    if (next == listener->pending_tail) {
+        return -EAGAIN;
+    }
+    listener->pending_fds[listener->pending_head] = fd;
+    listener->pending_head = next;
+    return 0;
+}
+
+static int unix_socket_pop_pending(struct ksocket *listener) {
+    int fd;
+    if (listener->pending_head == listener->pending_tail) {
+        return -EAGAIN;
+    }
+    fd = listener->pending_fds[listener->pending_tail];
+    listener->pending_tail = (uint8_t)((listener->pending_tail + 1U) % UNIX_PENDING_MAX);
+    return fd;
+}
+
+static int unix_socket_rx_push(struct ksocket *sock, const uint8_t *data, size_t len) {
+    if (!sock || !data) {
+        return -EINVAL;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    size_t space = UNIX_RX_BUF - sock->rx_len;
+    if (space == 0) {
+        return -EAGAIN;
+    }
+    size_t n = (len < space) ? len : space;
+    size_t write_idx = (sock->rx_head + sock->rx_len) % UNIX_RX_BUF;
+    for (size_t i = 0; i < n; i++) {
+        sock->rx_buf[(write_idx + i) % UNIX_RX_BUF] = data[i];
+    }
+    sock->rx_len += n;
+    return (int)n;
+}
+
+static int unix_socket_rx_pop(struct ksocket *sock, uint8_t *out, size_t len) {
+    if (!sock || !out) {
+        return -EINVAL;
+    }
+    if (sock->rx_len == 0) {
+        return 0;
+    }
+    size_t n = (len < sock->rx_len) ? len : sock->rx_len;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = sock->rx_buf[(sock->rx_head + i) % UNIX_RX_BUF];
+    }
+    sock->rx_head = (sock->rx_head + n) % UNIX_RX_BUF;
+    sock->rx_len -= n;
+    return (int)n;
+}
+
 /* Syscall statistics (for debugging/profiling) */
 static uint64_t syscall_counts[NR_SYSCALLS];
-static int loader_trace_budget = 4096;
+static int loader_trace_budget = 20000;
 static int tty_kd_mode = KD_TEXT;
 static int tty_kb_mode = K_XLATE;
 
@@ -390,6 +546,7 @@ static void syscall_table_init(void) {
     syscall_table[SYS_CLOSE] = (syscall_fn_t)sys_close;
     syscall_table[SYS_STAT] = (syscall_fn_t)sys_stat;
     syscall_table[SYS_FSTAT] = (syscall_fn_t)sys_fstat;
+    syscall_table[SYS_POLL] = (syscall_fn_t)sys_poll;
     syscall_table[SYS_ACCESS] = (syscall_fn_t)sys_access;
     syscall_table[SYS_LSEEK] = (syscall_fn_t)sys_lseek;
     syscall_table[SYS_MPROTECT] = (syscall_fn_t)sys_mprotect;
@@ -411,10 +568,15 @@ static void syscall_table_init(void) {
     syscall_table[SYS_GETEGID] = (syscall_fn_t)sys_getegid;
     syscall_table[SYS_SETUID] = (syscall_fn_t)sys_setuid;
     syscall_table[SYS_SETGID] = (syscall_fn_t)sys_setgid;
+    syscall_table[SYS_SETPGID] = (syscall_fn_t)sys_setpgid;
+    syscall_table[SYS_GETPGRP] = (syscall_fn_t)sys_getpgrp;
+    syscall_table[SYS_SETSID] = (syscall_fn_t)sys_setsid;
     syscall_table[SYS_SETREUID] = (syscall_fn_t)sys_setreuid;
     syscall_table[SYS_SETREGID] = (syscall_fn_t)sys_setregid;
     syscall_table[SYS_SETRESUID] = (syscall_fn_t)sys_setresuid;
     syscall_table[SYS_SETRESGID] = (syscall_fn_t)sys_setresgid;
+    syscall_table[SYS_GETPGID] = (syscall_fn_t)sys_getpgid;
+    syscall_table[SYS_GETSID] = (syscall_fn_t)sys_getsid;
     syscall_table[SYS_SETFSUID] = (syscall_fn_t)sys_setfsuid;
     syscall_table[SYS_SETFSGID] = (syscall_fn_t)sys_setfsgid;
     syscall_table[SYS_CHDIR] = (syscall_fn_t)sys_chdir;
@@ -433,6 +595,8 @@ static void syscall_table_init(void) {
     syscall_table[SYS_DUP] = (syscall_fn_t)sys_dup;
     syscall_table[SYS_DUP2] = (syscall_fn_t)sys_dup2;
     syscall_table[SYS_PIPE] = (syscall_fn_t)sys_pipe;
+    syscall_table[SYS_SELECT] = (syscall_fn_t)sys_select;
+    syscall_table[SYS_NANOSLEEP] = (syscall_fn_t)sys_nanosleep;
     syscall_table[SYS_IOCTL] = (syscall_fn_t)sys_ioctl;
     syscall_table[SYS_FCNTL] = (syscall_fn_t)sys_fcntl;
     syscall_table[SYS_GETDENTS64] = (syscall_fn_t)sys_getdents64;
@@ -448,11 +612,15 @@ static void syscall_table_init(void) {
     syscall_table[SYS_SOCKET] = (syscall_fn_t)sys_socket;
     syscall_table[SYS_CONNECT] = (syscall_fn_t)sys_connect;
     syscall_table[SYS_ACCEPT] = (syscall_fn_t)sys_accept;
+    syscall_table[SYS_SOCKETPAIR] = (syscall_fn_t)sys_socketpair;
     syscall_table[SYS_SENDTO] = (syscall_fn_t)sys_sendto;
     syscall_table[SYS_RECVFROM] = (syscall_fn_t)sys_recvfrom;
     syscall_table[SYS_BIND] = (syscall_fn_t)sys_bind;
     syscall_table[SYS_LISTEN] = (syscall_fn_t)sys_listen;
     syscall_table[SYS_SHUTDOWN] = (syscall_fn_t)sys_shutdown;
+    syscall_table[SYS_PPOLL] = (syscall_fn_t)sys_poll;
+    syscall_table[SYS_PSELECT6] = (syscall_fn_t)sys_select;
+    syscall_table[SYS_ARCH_PRCTL] = (syscall_fn_t)sys_arch_prctl;
 }
 
 static int process_getcwd_path(struct process *proc, char *buf, size_t size) {
@@ -624,13 +792,15 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
     uint64_t arg6 = regs->r9;
     
     int trace_loader = 0;
-    if (loader_trace_budget > 0 && current && current->pid == 2) {
+    if (loader_trace_budget > 0 && current) {
         const char *comm = current->comm;
-        if ((comm && (strcmp(comm, "osh") == 0 || strcmp(comm, "rockbox") == 0 || strncmp(comm, "ld-linux", 8) == 0)) ||
-            syscall_num == SYS_EXECVE) {
+        if ((comm && (strcmp(comm, "xdm") == 0 ||
+                      strncmp(comm, "ld-linux", 8) == 0)) ||
+            syscall_num == SYS_EXECVE ||
+            syscall_num == SYS_ARCH_PRCTL) {
             trace_loader = 1;
             loader_trace_budget--;
-            printk(KERN_INFO,
+            printk(KERN_INFO
                    "syscall-trace: comm=%s nr=%lu a1=0x%lx a2=0x%lx a3=0x%lx a4=0x%lx\n",
                    comm ? comm : "?", syscall_num, arg1, arg2, arg3, arg4);
         }
@@ -641,7 +811,7 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
     int64_t ret = handler(arg1, arg2, arg3, arg4, arg5, arg6);
     current_syscall_regs = NULL;
     if (trace_loader) {
-        printk(KERN_INFO, "syscall-trace: nr=%lu ret=%ld\n", syscall_num, ret);
+        printk(KERN_INFO "syscall-trace: nr=%lu ret=%ld\n", syscall_num, ret);
     }
     return ret;
 }
@@ -653,11 +823,17 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
 static int64_t sys_read(int fd, void *buf, size_t count) {
     struct process *proc = current;
     struct file *file = NULL;
+    struct ksocket *sock = NULL;
     uint8_t kbuf[256];
     size_t done = 0;
 
     if (!buf) {
         return -EFAULT;
+    }
+
+    sock = socket_get_owned(fd);
+    if (sock) {
+        return sys_recvfrom(fd, buf, count, 0, NULL, NULL);
     }
 
     if (proc && proc->files && fd >= 0 && fd < (int)proc->files->max_fds) {
@@ -749,11 +925,23 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
 static int64_t sys_write(int fd, const void *buf, size_t count) {
     struct process *proc = current;
     struct file *file = NULL;
+    struct ksocket *sock = NULL;
     uint8_t kbuf[256];
     size_t done = 0;
 
     if (!buf) {
         return -EFAULT;
+    }
+
+    sock = socket_get_owned(fd);
+    if (sock) {
+        if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+            return sys_sendto(fd, buf, count, 0, NULL, 0);
+        }
+        if (sock->type == SOCK_STREAM && sock->connected) {
+            return sys_sendto(fd, buf, count, 0, NULL, 0);
+        }
+        return -EDESTADDRREQ;
     }
 
     if (proc && proc->files && fd >= 0 && fd < (int)proc->files->max_fds) {
@@ -866,6 +1054,16 @@ static int64_t sys_close(int fd) {
     struct file *file;
     struct ksocket *sock = socket_get_owned(fd);
     if (sock) {
+        if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM && sock->peer_fd >= 0) {
+            struct ksocket *peer = socket_get_any(sock->peer_fd);
+            if (peer && peer->used) {
+                peer->peer_closed = true;
+                if (peer->peer_fd == fd) {
+                    peer->peer_fd = -1;
+                    peer->connected = false;
+                }
+            }
+        }
         if (sock->type == SOCK_STREAM && sock->protocol == IPPROTO_TCP && sock->tcp_conn_id >= 0) {
             (void)net_tcp_close(sock->tcp_conn_id);
         }
@@ -1314,6 +1512,80 @@ static int64_t sys_setfsgid(gid_t fsgid) {
     return old;
 }
 
+static int64_t sys_setpgid(pid_t pid, pid_t pgid) {
+    struct process *caller = current;
+    struct process *target;
+    if (!caller) {
+        return -ESRCH;
+    }
+    if (pid == 0) {
+        target = caller;
+    } else {
+        target = process_find(pid);
+    }
+    if (!target) {
+        return -ESRCH;
+    }
+    if (target != caller) {
+        return -EPERM;
+    }
+    if (pgid == 0) {
+        pgid = target->pid;
+    }
+    if (pgid < 0) {
+        return -EINVAL;
+    }
+    target->pgid = pgid;
+    return 0;
+}
+
+static int64_t sys_getpgrp(void) {
+    struct process *p = current;
+    if (!p) {
+        return 0;
+    }
+    return p->pgid;
+}
+
+static int64_t sys_setsid(void) {
+    struct process *p = current;
+    if (!p) {
+        return -ESRCH;
+    }
+    if (p->pid == p->pgid) {
+        return -EPERM;
+    }
+    p->sid = p->pid;
+    p->pgid = p->pid;
+    return p->sid;
+}
+
+static int64_t sys_getpgid(pid_t pid) {
+    struct process *p;
+    if (pid == 0) {
+        p = current;
+    } else {
+        p = process_find(pid);
+    }
+    if (!p) {
+        return -ESRCH;
+    }
+    return p->pgid;
+}
+
+static int64_t sys_getsid(pid_t pid) {
+    struct process *p;
+    if (pid == 0) {
+        p = current;
+    } else {
+        p = process_find(pid);
+    }
+    if (!p) {
+        return -ESRCH;
+    }
+    return p->sid;
+}
+
 static int64_t sys_chdir(const char *path) {
     struct process *proc = current;
     char resolved[PATH_MAX];
@@ -1660,8 +1932,220 @@ static int64_t sys_dup2(int oldfd, int newfd) {
 }
 
 static int64_t sys_pipe(int pipefd[2]) {
-    (void)pipefd;
-    return -ENOSYS;
+    return sys_socketpair(AF_UNIX, SOCK_STREAM, 0, pipefd);
+}
+
+static int64_t sys_nanosleep(const void *req, void *rem) {
+    struct timespec_compat ts;
+    uint64_t ms;
+    if (!req) {
+        return -EINVAL;
+    }
+    if (vmm_copy_from_user(&ts, req, sizeof(ts)) < 0) {
+        return -EFAULT;
+    }
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL) {
+        return -EINVAL;
+    }
+    ms = (uint64_t)ts.tv_sec * 1000ULL;
+    ms += (uint64_t)(ts.tv_nsec / 1000000LL);
+    if (ms == 0 && ts.tv_nsec > 0) {
+        ms = 1;
+    }
+    if (ms > 0) {
+        scheduler_sleep_timeout(current, ms);
+    }
+    if (rem) {
+        struct timespec_compat zero = {0, 0};
+        if (vmm_copy_to_user(rem, &zero, sizeof(zero)) < 0) {
+            return -EFAULT;
+        }
+    }
+    return 0;
+}
+
+static int poll_check_single_fd(int fd, int16_t events, int16_t *revents) {
+    struct process *proc = current;
+    struct file *file = NULL;
+    struct ksocket *sock = socket_get_owned(fd);
+    int16_t out = 0;
+
+    if (revents) {
+        *revents = 0;
+    }
+    if (fd < 0) {
+        out = POLLERR;
+        if (revents) *revents = out;
+        return (out != 0);
+    }
+
+    if (sock) {
+        if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+            if ((events & (POLLIN | POLLPRI)) && unix_socket_readable(sock) > 0) {
+                out |= POLLIN;
+            }
+            if ((events & POLLOUT) && unix_socket_writable(sock) > 0) {
+                out |= POLLOUT;
+            }
+            if (sock->peer_closed && sock->rx_len == 0) {
+                out |= POLLHUP;
+            }
+        } else if (sock->type == SOCK_STREAM) {
+            if ((events & POLLOUT) && sock->connected) {
+                out |= POLLOUT;
+            }
+        } else {
+            if (events & POLLOUT) {
+                out |= POLLOUT;
+            }
+        }
+        if (revents) *revents = out;
+        return (out != 0);
+    }
+
+    if (IS_STDIO_FD(fd)) {
+        if (events & (POLLIN | POLLPRI)) {
+            out |= POLLIN;
+        }
+        if (events & POLLOUT) {
+            out |= POLLOUT;
+        }
+        if (revents) *revents = out;
+        return (out != 0);
+    }
+
+    if (!proc || !proc->files || fd >= (int)proc->files->max_fds) {
+        out = POLLERR;
+        if (revents) *revents = out;
+        return 1;
+    }
+    file = fd_get(proc->files, fd);
+    if (!file) {
+        out = POLLERR;
+        if (revents) *revents = out;
+        return 1;
+    }
+    if (events & (POLLIN | POLLPRI)) out |= POLLIN;
+    if (events & POLLOUT) out |= POLLOUT;
+    if (revents) *revents = out;
+    return (out != 0);
+}
+
+static int64_t sys_poll(void *fds, uint64_t nfds, int timeout) {
+    struct pollfd_compat pf;
+    uint64_t waited = 0;
+    bool infinite = (timeout < 0);
+    if (!fds && nfds > 0) {
+        return -EFAULT;
+    }
+    if (nfds > 1024) {
+        return -EINVAL;
+    }
+    for (;;) {
+        int ready = 0;
+        for (uint64_t i = 0; i < nfds; i++) {
+            if (vmm_copy_from_user(&pf, (const void *)((uintptr_t)fds + (i * sizeof(pf))), sizeof(pf)) < 0) {
+                return -EFAULT;
+            }
+            pf.revents = 0;
+            if (poll_check_single_fd(pf.fd, pf.events, &pf.revents)) {
+                ready++;
+            }
+            if (vmm_copy_to_user((void *)((uintptr_t)fds + (i * sizeof(pf))), &pf, sizeof(pf)) < 0) {
+                return -EFAULT;
+            }
+        }
+        if (ready > 0 || timeout == 0) {
+            return ready;
+        }
+        if (!infinite && waited >= (uint64_t)timeout) {
+            return 0;
+        }
+        scheduler_sleep_timeout(current, 1);
+        waited++;
+    }
+}
+
+#define FDSET_WORD_BITS 64
+#define FDSET_MAX_WORDS 16
+
+static bool fdset_test_bit(const uint64_t *bits, int fd) {
+    return (bits[fd / FDSET_WORD_BITS] & (1ULL << (fd % FDSET_WORD_BITS))) != 0;
+}
+
+static void fdset_set_bit(uint64_t *bits, int fd) {
+    bits[fd / FDSET_WORD_BITS] |= (1ULL << (fd % FDSET_WORD_BITS));
+}
+
+static int64_t sys_select(int nfds, void *readfds, void *writefds, void *exceptfds, void *timeout) {
+    uint64_t in_r[FDSET_MAX_WORDS], in_w[FDSET_MAX_WORDS], in_e[FDSET_MAX_WORDS];
+    uint64_t out_r[FDSET_MAX_WORDS], out_w[FDSET_MAX_WORDS], out_e[FDSET_MAX_WORDS];
+    uint64_t waited = 0;
+    uint64_t timeout_ms = 0;
+    bool infinite = true;
+    if (nfds < 0 || nfds > (FDSET_MAX_WORDS * FDSET_WORD_BITS)) {
+        return -EINVAL;
+    }
+    if (timeout) {
+        struct timeval_compat tv;
+        if (vmm_copy_from_user(&tv, timeout, sizeof(tv)) < 0) {
+            return -EFAULT;
+        }
+        if (tv.tv_sec < 0 || tv.tv_usec < 0) {
+            return -EINVAL;
+        }
+        timeout_ms = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)(tv.tv_usec / 1000ULL);
+        infinite = false;
+    }
+    memset(in_r, 0, sizeof(in_r));
+    memset(in_w, 0, sizeof(in_w));
+    memset(in_e, 0, sizeof(in_e));
+    if (readfds && vmm_copy_from_user(in_r, readfds, sizeof(in_r)) < 0) return -EFAULT;
+    if (writefds && vmm_copy_from_user(in_w, writefds, sizeof(in_w)) < 0) return -EFAULT;
+    if (exceptfds && vmm_copy_from_user(in_e, exceptfds, sizeof(in_e)) < 0) return -EFAULT;
+
+    for (;;) {
+        int ready = 0;
+        memset(out_r, 0, sizeof(out_r));
+        memset(out_w, 0, sizeof(out_w));
+        memset(out_e, 0, sizeof(out_e));
+        for (int fd = 0; fd < nfds; fd++) {
+            int16_t rev = 0;
+            int16_t events = 0;
+            if (fdset_test_bit(in_r, fd)) events |= (POLLIN | POLLPRI);
+            if (fdset_test_bit(in_w, fd)) events |= POLLOUT;
+            if (fdset_test_bit(in_e, fd)) events |= POLLERR;
+            if (events == 0) continue;
+            if (poll_check_single_fd(fd, events, &rev)) {
+                if ((rev & (POLLIN | POLLPRI)) && fdset_test_bit(in_r, fd)) {
+                    fdset_set_bit(out_r, fd);
+                    ready++;
+                }
+                if ((rev & POLLOUT) && fdset_test_bit(in_w, fd)) {
+                    fdset_set_bit(out_w, fd);
+                    ready++;
+                }
+                if ((rev & (POLLERR | POLLHUP)) && fdset_test_bit(in_e, fd)) {
+                    fdset_set_bit(out_e, fd);
+                    ready++;
+                }
+            }
+        }
+        if (ready > 0 || (!infinite && timeout_ms == 0)) {
+            if (readfds && vmm_copy_to_user(readfds, out_r, sizeof(out_r)) < 0) return -EFAULT;
+            if (writefds && vmm_copy_to_user(writefds, out_w, sizeof(out_w)) < 0) return -EFAULT;
+            if (exceptfds && vmm_copy_to_user(exceptfds, out_e, sizeof(out_e)) < 0) return -EFAULT;
+            return ready;
+        }
+        if (!infinite && waited >= timeout_ms) {
+            if (readfds && vmm_copy_to_user(readfds, out_r, sizeof(out_r)) < 0) return -EFAULT;
+            if (writefds && vmm_copy_to_user(writefds, out_w, sizeof(out_w)) < 0) return -EFAULT;
+            if (exceptfds && vmm_copy_to_user(exceptfds, out_e, sizeof(out_e)) < 0) return -EFAULT;
+            return 0;
+        }
+        scheduler_sleep_timeout(current, 1);
+        waited++;
+    }
 }
 
 static int64_t sys_ioctl(int fd, unsigned long request, void *arg) {
@@ -2031,11 +2515,29 @@ static int64_t sys_sysctl(void *args) {
 }
 
 static int64_t sys_socket(int domain, int type, int protocol) {
-    if (domain != AF_INET) {
-        return -EAFNOSUPPORT;
-    }
+    int fd;
     if (type != SOCK_RAW && type != SOCK_DGRAM && type != SOCK_STREAM) {
         return -EPROTONOSUPPORT;
+    }
+    if (domain == AF_UNIX) {
+        if (type != SOCK_STREAM) {
+            return -EPROTONOSUPPORT;
+        }
+        if (protocol != 0) {
+            return -EPROTONOSUPPORT;
+        }
+        fd = socket_alloc_slot(current ? current->pid : 0);
+        if (fd < 0) {
+            return fd;
+        }
+        struct ksocket *sock = socket_get_owned(fd);
+        sock->domain = AF_UNIX;
+        sock->type = SOCK_STREAM;
+        sock->protocol = 0;
+        return fd;
+    }
+    if (domain != AF_INET) {
+        return -EAFNOSUPPORT;
     }
     if (type == SOCK_RAW) {
         if (protocol != 0 && protocol != IPPROTO_ICMP) {
@@ -2053,25 +2555,17 @@ static int64_t sys_socket(int domain, int type, int protocol) {
     if (!net_is_ready()) {
         return -ENETDOWN;
     }
-
-    for (int i = 0; i < SOCKET_MAX; i++) {
-        if (!socket_table[i].used) {
-            socket_table[i].used = true;
-            socket_table[i].owner_pid = current ? current->pid : 0;
-            socket_table[i].domain = domain;
-            socket_table[i].type = type;
-            socket_table[i].protocol = (protocol == 0) ?
-                ((type == SOCK_RAW) ? IPPROTO_ICMP :
-                 ((type == SOCK_DGRAM) ? IPPROTO_UDP : IPPROTO_TCP)) : protocol;
-            socket_table[i].bound_port = 0;
-            socket_table[i].remote_port = 0;
-            socket_table[i].tcp_conn_id = -1;
-            socket_table[i].connected = false;
-            memset(socket_table[i].remote_ip, 0, sizeof(socket_table[i].remote_ip));
-            return SOCKET_FD_BASE + i;
-        }
+    fd = socket_alloc_slot(current ? current->pid : 0);
+    if (fd < 0) {
+        return fd;
     }
-    return -EMFILE;
+    struct ksocket *sock = socket_get_owned(fd);
+    sock->domain = domain;
+    sock->type = type;
+    sock->protocol = (protocol == 0) ?
+        ((type == SOCK_RAW) ? IPPROTO_ICMP :
+         ((type == SOCK_DGRAM) ? IPPROTO_UDP : IPPROTO_TCP)) : protocol;
+    return fd;
 }
 
 static int64_t sys_connect(int sockfd, const void *addr, int addrlen) {
@@ -2086,6 +2580,61 @@ static int64_t sys_connect(int sockfd, const void *addr, int addrlen) {
     int st;
     if (!sock) {
         return -EBADF;
+    }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        struct sockaddr_un_compat sun;
+        char path[UNIX_PATH_MAX];
+        if (!addr || addrlen < (int)sizeof(uint16_t)) {
+            return -EINVAL;
+        }
+        memset(&sun, 0, sizeof(sun));
+        if (vmm_copy_from_user(&sun, addr, MIN((size_t)addrlen, sizeof(sun))) < 0) {
+            return -EFAULT;
+        }
+        if (sun.sun_family != AF_UNIX) {
+            return -EAFNOSUPPORT;
+        }
+        strncpy(path, sun.sun_path, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+        if (path[0] == '\0') {
+            return -EINVAL;
+        }
+        struct ksocket *listener = NULL;
+        for (int i = 0; i < SOCKET_MAX; i++) {
+            struct ksocket *cand = &socket_table[i];
+            if (!cand->used || cand->domain != AF_UNIX || !cand->listening || !cand->bound) {
+                continue;
+            }
+            if (strncmp(cand->unix_path, path, sizeof(cand->unix_path)) == 0) {
+                listener = cand;
+                break;
+            }
+        }
+        if (!listener) {
+            return -ECONNREFUSED;
+        }
+        int accepted_fd = socket_alloc_slot(listener->owner_pid);
+        if (accepted_fd < 0) {
+            return accepted_fd;
+        }
+        struct ksocket *accepted = socket_get_any(accepted_fd);
+        accepted->domain = AF_UNIX;
+        accepted->type = SOCK_STREAM;
+        accepted->protocol = 0;
+        accepted->connected = true;
+        accepted->peer_fd = sockfd;
+
+        sock->connected = true;
+        sock->peer_closed = false;
+        sock->peer_fd = accepted_fd;
+
+        if (unix_socket_queue_pending(listener, accepted_fd) < 0) {
+            memset(accepted, 0, sizeof(*accepted));
+            sock->connected = false;
+            sock->peer_fd = -1;
+            return -EAGAIN;
+        }
+        return 0;
     }
     if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
@@ -2146,10 +2695,35 @@ static int64_t sys_connect(int sockfd, const void *addr, int addrlen) {
 }
 
 static int64_t sys_accept(int sockfd, void *addr, int *addrlen) {
-    (void)sockfd;
-    (void)addr;
-    (void)addrlen;
-    return -ENETDOWN;
+    struct ksocket *sock = socket_get_owned(sockfd);
+    if (!sock) {
+        return -EBADF;
+    }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        int child_fd = unix_socket_pop_pending(sock);
+        if (child_fd < 0) {
+            return child_fd;
+        }
+        if (addr && addrlen) {
+            int user_len = 0;
+            struct sockaddr_un_compat sun;
+            if (vmm_copy_from_user(&user_len, addrlen, sizeof(user_len)) == 0) {
+                if (user_len >= (int)sizeof(sun)) {
+                    memset(&sun, 0, sizeof(sun));
+                    sun.sun_family = AF_UNIX;
+                    if (vmm_copy_to_user(addr, &sun, sizeof(sun)) < 0) {
+                        return -EFAULT;
+                    }
+                    user_len = sizeof(sun);
+                    if (vmm_copy_to_user(addrlen, &user_len, sizeof(user_len)) < 0) {
+                        return -EFAULT;
+                    }
+                }
+            }
+        }
+        return child_fd;
+    }
+    return -EOPNOTSUPP;
 }
 
 static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen) {
@@ -2163,6 +2737,34 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
     (void)flags;
     if (!sock) {
         return -EBADF;
+    }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        uint8_t upayload[1024];
+        struct ksocket *peer;
+        int pushed;
+        (void)dest_addr;
+        (void)addrlen;
+        if (!sock->connected || sock->peer_fd < 0) {
+            return -ENOTCONN;
+        }
+        if (!buf || len == 0) {
+            return 0;
+        }
+        if (len > sizeof(upayload)) {
+            len = sizeof(upayload);
+        }
+        if (vmm_copy_from_user(upayload, buf, len) < 0) {
+            return -EFAULT;
+        }
+        peer = socket_get_any(sock->peer_fd);
+        if (!peer || !peer->used) {
+            return -EPIPE;
+        }
+        pushed = unix_socket_rx_push(peer, upayload, len);
+        if (pushed < 0) {
+            return pushed;
+        }
+        return pushed;
     }
     if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
@@ -2266,6 +2868,33 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
     (void)flags;
     if (!sock) {
         return -EBADF;
+    }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        uint8_t kbuf[1024];
+        int got;
+        (void)flags;
+        (void)src_addr;
+        (void)addrlen;
+        if (!buf || len == 0) {
+            return -EINVAL;
+        }
+        if (len > sizeof(kbuf)) {
+            len = sizeof(kbuf);
+        }
+        got = unix_socket_rx_pop(sock, kbuf, len);
+        if (got < 0) {
+            return got;
+        }
+        if (got == 0) {
+            if (sock->peer_closed) {
+                return 0;
+            }
+            return -EAGAIN;
+        }
+        if (vmm_copy_to_user(buf, kbuf, (size_t)got) < 0) {
+            return -EFAULT;
+        }
+        return got;
     }
     if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
@@ -2432,6 +3061,34 @@ static int64_t sys_bind(int sockfd, const void *addr, int addrlen) {
     if (!sock) {
         return -EBADF;
     }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        struct sockaddr_un_compat sun;
+        if (!addr || addrlen < (int)sizeof(uint16_t)) {
+            return -EINVAL;
+        }
+        memset(&sun, 0, sizeof(sun));
+        if (vmm_copy_from_user(&sun, addr, MIN((size_t)addrlen, sizeof(sun))) < 0) {
+            return -EFAULT;
+        }
+        if (sun.sun_family != AF_UNIX) {
+            return -EAFNOSUPPORT;
+        }
+        if (sun.sun_path[0] == '\0') {
+            return -EINVAL;
+        }
+        for (int i = 0; i < SOCKET_MAX; i++) {
+            if (!socket_table[i].used || socket_table[i].domain != AF_UNIX || !socket_table[i].bound) {
+                continue;
+            }
+            if (strncmp(socket_table[i].unix_path, sun.sun_path, sizeof(socket_table[i].unix_path)) == 0) {
+                return -EADDRINUSE;
+            }
+        }
+        strncpy(sock->unix_path, sun.sun_path, sizeof(sock->unix_path) - 1);
+        sock->unix_path[sizeof(sock->unix_path) - 1] = '\0';
+        sock->bound = true;
+        return 0;
+    }
     if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
     }
@@ -2454,6 +3111,13 @@ static int64_t sys_listen(int sockfd, int backlog) {
     if (!sock) {
         return -EBADF;
     }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        if (!sock->bound) {
+            return -EINVAL;
+        }
+        sock->listening = true;
+        return 0;
+    }
     return -EOPNOTSUPP;
 }
 
@@ -2463,12 +3127,105 @@ static int64_t sys_shutdown(int sockfd, int how) {
     if (!sock) {
         return -EBADF;
     }
+    if (sock->domain == AF_UNIX && sock->type == SOCK_STREAM) {
+        if (sock->peer_fd >= 0) {
+            struct ksocket *peer = socket_get_any(sock->peer_fd);
+            if (peer && peer->used) {
+                peer->peer_closed = true;
+                if (peer->peer_fd == sockfd) {
+                    peer->peer_fd = -1;
+                    peer->connected = false;
+                }
+            }
+        }
+        sock->peer_closed = true;
+        sock->connected = false;
+        sock->peer_fd = -1;
+        return 0;
+    }
     if (sock->type == SOCK_STREAM && sock->protocol == IPPROTO_TCP && sock->tcp_conn_id >= 0) {
         (void)net_tcp_close(sock->tcp_conn_id);
         sock->tcp_conn_id = -1;
         sock->connected = false;
     }
     return 0;
+}
+
+static int64_t sys_socketpair(int domain, int type, int protocol, int *sv) {
+    int fd0, fd1;
+    struct ksocket *a, *b;
+    int pair[2];
+    if (!sv) {
+        return -EFAULT;
+    }
+    if (domain != AF_UNIX || type != SOCK_STREAM || protocol != 0) {
+        return -EOPNOTSUPP;
+    }
+    fd0 = socket_alloc_slot(current ? current->pid : 0);
+    if (fd0 < 0) {
+        return fd0;
+    }
+    fd1 = socket_alloc_slot(current ? current->pid : 0);
+    if (fd1 < 0) {
+        struct ksocket *sa = socket_get_any(fd0);
+        if (sa) memset(sa, 0, sizeof(*sa));
+        return fd1;
+    }
+    a = socket_get_any(fd0);
+    b = socket_get_any(fd1);
+    if (!a || !b) {
+        return -EBADF;
+    }
+    a->domain = AF_UNIX;
+    a->type = SOCK_STREAM;
+    a->protocol = 0;
+    a->connected = true;
+    a->peer_fd = fd1;
+
+    b->domain = AF_UNIX;
+    b->type = SOCK_STREAM;
+    b->protocol = 0;
+    b->connected = true;
+    b->peer_fd = fd0;
+
+    pair[0] = fd0;
+    pair[1] = fd1;
+    if (vmm_copy_to_user(sv, pair, sizeof(pair)) < 0) {
+        memset(a, 0, sizeof(*a));
+        memset(b, 0, sizeof(*b));
+        return -EFAULT;
+    }
+    return 0;
+}
+
+static int64_t sys_arch_prctl(int code, uint64_t addr) {
+    struct process *p = current;
+    if (!p) {
+        return -ESRCH;
+    }
+
+    switch (code) {
+        case ARCH_SET_FS:
+            p->fs_base = addr;
+            wrmsr(MSR_FS_BASE, p->fs_base);
+            return 0;
+        case ARCH_SET_GS:
+            p->gs_base = addr;
+            wrmsr(MSR_GS_BASE, p->gs_base);
+            return 0;
+        case ARCH_GET_FS:
+            if (vmm_copy_to_user((void *)(uintptr_t)addr, &p->fs_base, sizeof(p->fs_base)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        case ARCH_GET_GS:
+            if (vmm_copy_to_user((void *)(uintptr_t)addr, &p->gs_base, sizeof(p->gs_base)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        default:
+            return -EINVAL;
+    }
 }
 
 /* ==========================================================================
