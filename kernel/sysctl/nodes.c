@@ -89,7 +89,8 @@ static int sysctl_uptime_handler(struct sysctl_node *node, void *buf,
         return -EPERM;
     }
     
-    unsigned long up = get_ticks() / 1000;  /* Convert to seconds */
+    /* get_ticks() currently returns approximate milliseconds. */
+    unsigned long up = get_ticks() / 1000;
     
     if (*len < sizeof(up)) {
         return -EINVAL;

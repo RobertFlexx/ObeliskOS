@@ -1969,7 +1969,15 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
     dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
 
     if (sock->type == SOCK_RAW && sock->protocol == IPPROTO_ICMP) {
-        ret = net_send_icmp_echo(dst_ip, payload, len);
+        int retries = 200;
+        do {
+            ret = net_send_icmp_echo(dst_ip, payload, len);
+            if (ret != -EAGAIN) {
+                break;
+            }
+            net_tick();
+            scheduler_yield();
+        } while (--retries > 0);
     } else if (sock->type == SOCK_DGRAM && sock->protocol == IPPROTO_UDP) {
         dst_port = ntohs16(sa.sin_port);
         if (dst_port == 0) {
@@ -1982,7 +1990,17 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
         } else {
             src_port = sock->bound_port;
         }
-        ret = net_send_udp(dst_ip, src_port, dst_port, payload, len);
+        {
+            int retries = 200;
+            do {
+                ret = net_send_udp(dst_ip, src_port, dst_port, payload, len);
+                if (ret != -EAGAIN) {
+                    break;
+                }
+                net_tick();
+                scheduler_yield();
+            } while (--retries > 0);
+        }
     } else {
         return -EAFNOSUPPORT;
     }
@@ -1998,7 +2016,7 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
     struct net_udp_event uev;
     size_t out_len;
     int ret;
-    int max_loops = 300; /* Poll-bound receive timeout window. */
+    int max_loops = 20000; /* Poll-bound receive timeout window. */
     (void)flags;
     if (!sock) {
         return -EBADF;

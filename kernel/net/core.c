@@ -335,7 +335,7 @@ static int send_ipv4_udp(const uint8_t dst_mac[6], const uint8_t src_ip[4], cons
     ip->checksum = 0;
     memcpy(ip->saddr, src_ip, 4);
     memcpy(ip->daddr, dst_ip, 4);
-    ip->checksum = ip_checksum(ip, sizeof(*ip));
+    ip->checksum = htons(ip_checksum(ip, sizeof(*ip)));
 
     udp->src_port = htons(src_port);
     udp->dst_port = htons(dst_port);
@@ -373,7 +373,7 @@ static int send_ipv4_icmp(const uint8_t dst_mac[6], const uint8_t src_ip[4], con
     ip->checksum = 0;
     memcpy(ip->saddr, src_ip, 4);
     memcpy(ip->daddr, dst_ip, 4);
-    ip->checksum = ip_checksum(ip, sizeof(*ip));
+    ip->checksum = htons(ip_checksum(ip, sizeof(*ip)));
 
     memcpy(body, icmp, icmp_len);
     return net_tx_raw(frame, frame_len);
@@ -441,9 +441,16 @@ int net_send_udp(const uint8_t dst_ip[4], uint16_t src_port, uint16_t dst_port,
 }
 
 static void arp_cache_update(const uint8_t ip[4], const uint8_t mac[6]) {
+    static uint32_t arp_updates;
     g_arp.valid = true;
     memcpy(g_arp.ip, ip, 4);
     memcpy(g_arp.mac, mac, 6);
+    arp_updates++;
+    if (arp_updates <= 8 || (arp_updates % 64U) == 0U) {
+        printk(KERN_INFO "net: arp cache %u.%u.%u.%u -> %02x:%02x:%02x:%02x:%02x:%02x\n",
+               ip[0], ip[1], ip[2], ip[3],
+               mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
 }
 
 static int send_arp_reply(const struct arp_hdr *req, const uint8_t dst_mac[6]) {
@@ -704,13 +711,13 @@ static int send_icmp_echo_reply(const struct eth_hdr *rx_eth,
     ip->checksum = 0;
     memcpy(ip->saddr, g_dev.ip, 4);
     memcpy(ip->daddr, rx_ip->saddr, 4);
-    ip->checksum = ip_checksum(ip, sizeof(*ip));
+    ip->checksum = htons(ip_checksum(ip, sizeof(*ip)));
 
     memcpy(icmp_out, icmp, icmp_len);
     ((struct icmp_echo_hdr *)icmp_out)->type = ICMP_ECHO_REPLY;
     ((struct icmp_echo_hdr *)icmp_out)->code = 0;
     ((struct icmp_echo_hdr *)icmp_out)->checksum = 0;
-    ((struct icmp_echo_hdr *)icmp_out)->checksum = ip_checksum(icmp_out, icmp_len);
+    ((struct icmp_echo_hdr *)icmp_out)->checksum = htons(ip_checksum(icmp_out, icmp_len));
 
     total_frame_len = sizeof(*eth) + total_ip_len;
     return net_tx_raw(frame, total_frame_len);
@@ -747,18 +754,22 @@ int net_register_device(const char *name, const uint8_t mac[6],
     g_dev.ops = ops;
     g_dev.ctx = ctx;
 
-    memset(g_dev.ip, 0, sizeof(g_dev.ip));
-    memset(g_dev.mask, 0, sizeof(g_dev.mask));
-    memset(g_dev.gw, 0, sizeof(g_dev.gw));
+    /* Start with pragmatic static defaults immediately for early usability,
+     * then let DHCP override when lease arrives. */
+    g_dev.ip[0] = 10; g_dev.ip[1] = 0; g_dev.ip[2] = 2; g_dev.ip[3] = 15;
+    g_dev.mask[0] = 255; g_dev.mask[1] = 255; g_dev.mask[2] = 255; g_dev.mask[3] = 0;
+    g_dev.gw[0] = 10; g_dev.gw[1] = 0; g_dev.gw[2] = 2; g_dev.gw[3] = 2;
     g_dhcp.state = DHCP_DISABLED;
     g_dhcp.xid = 0x0B1E0000U ^ ((uint32_t)g_dev.mac[2] << 8) ^ g_dev.mac[5];
     g_dhcp.last_event_tick = 0;
     g_dhcp.retries = 0;
 
-    printk(KERN_INFO "net: device %s registered mac=%02x:%02x:%02x:%02x:%02x:%02x (DHCP pending)\n",
+    printk(KERN_INFO "net: device %s registered mac=%02x:%02x:%02x:%02x:%02x:%02x ip=%u.%u.%u.%u (DHCP override pending)\n",
            g_dev.name,
            g_dev.mac[0], g_dev.mac[1], g_dev.mac[2],
-           g_dev.mac[3], g_dev.mac[4], g_dev.mac[5]);
+           g_dev.mac[3], g_dev.mac[4], g_dev.mac[5],
+           g_dev.ip[0], g_dev.ip[1], g_dev.ip[2], g_dev.ip[3]);
+    (void)send_arp_request(g_dev.gw);
     return 0;
 }
 
@@ -886,13 +897,16 @@ void net_tick(void) {
     if (!g_dev.present || !g_dev.ops || !g_dev.ops->poll) {
         return;
     }
-    /* Poll cadence to support environments where IRQ wiring is different. */
-    if ((g_tick_count % 10) != 0) {
-        return;
-    }
     ret = g_dev.ops->poll(g_dev.ctx);
     if (ret < 0 && (g_tick_count % 200) == 0) {
         printk(KERN_WARNING "net: device poll returned %d\n", ret);
+    }
+    if ((g_tick_count % 500) == 0) {
+        printk(KERN_INFO "net: tick=%lu tx=%lu rx=%lu drop=%lu arp=%lu ipv4=%lu udp=%lu icmp=%lu dhcp_state=%d arp_valid=%d\n",
+               g_tick_count,
+               g_dev.tx_frames, g_dev.rx_frames, g_dev.rx_drop,
+               g_dev.arp_rx, g_dev.ipv4_rx, g_dev.udp_rx, g_dev.icmp_echo_rx,
+               (int)g_dhcp.state, g_arp.valid ? 1 : 0);
     }
 }
 

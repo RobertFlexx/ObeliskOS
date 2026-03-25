@@ -142,14 +142,14 @@ static __attribute__((used)) void nslookup_main(int argc, char **argv) {
 
     n = sendto(sock, pkt, off, 0, &dst, sizeof(dst));
     if (n < 0) {
-        printf("nslookup: send failed (%ld)\n", n);
+        printf("nslookup: send failed (%d)\n", (int)n);
         close(sock);
         _exit(1);
     }
 
     n = recvfrom(sock, resp, sizeof(resp), 0, &src, &src_len);
     if (n < 0 || n < 12) {
-        printf("nslookup: receive failed (%ld)\n", n);
+        printf("nslookup: receive failed (%d)\n", (int)n);
         close(sock);
         _exit(1);
     }

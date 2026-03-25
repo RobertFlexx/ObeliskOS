@@ -11,13 +11,16 @@ typedef long ssize_t;
 extern int printf(const char *fmt, ...);
 extern void _exit(int status);
 extern int socket(int domain, int type, int protocol);
+extern int bind(int sockfd, const void *addr, int addrlen);
 extern int close(int fd);
 extern ssize_t sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen);
 extern ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_addr, int *addrlen);
 extern int getpid(void);
 extern int strcmp(const char *a, const char *b);
+extern size_t strlen(const char *s);
 
 #define AF_INET 2
+#define SOCK_DGRAM 2
 #define SOCK_RAW 3
 #define IPPROTO_ICMP 1
 
@@ -36,6 +39,8 @@ struct icmp_echo {
     uint16_t seq;
     uint8_t payload[56];
 } __attribute__((packed));
+
+static int parse_ipv4(const char *s, uint8_t ip[4]);
 
 static uint16_t bswap16(uint16_t v) {
     return (uint16_t)((v << 8) | (v >> 8));
@@ -78,6 +83,126 @@ static int parse_uint(const char *s, int *out) {
     return 0;
 }
 
+static size_t dns_encode_name(uint8_t *out, size_t cap, const char *name) {
+    size_t oi = 0;
+    size_t i = 0;
+    size_t label_start = 0;
+    size_t nlen = strlen(name);
+    if (!out || !name || cap < 2) return 0;
+    while (i <= nlen) {
+        if (name[i] == '.' || name[i] == '\0') {
+            size_t llen = i - label_start;
+            if (llen == 0 || llen > 63 || oi + 1 + llen >= cap) return 0;
+            out[oi++] = (uint8_t)llen;
+            for (size_t j = 0; j < llen; j++) out[oi++] = (uint8_t)name[label_start + j];
+            label_start = i + 1;
+        }
+        i++;
+    }
+    if (oi >= cap) return 0;
+    out[oi++] = 0;
+    return oi;
+}
+
+static int resolve_host_ipv4(const char *host, uint8_t out_ip[4]) {
+    uint8_t dns_ip[4] = {10, 0, 2, 3}; /* QEMU usernet DNS default */
+    uint8_t pkt[512];
+    uint8_t resp[512];
+    struct sockaddr_in dst, src, bind_addr;
+    int src_len = sizeof(src);
+    int sock;
+    size_t off = 0;
+    ssize_t n;
+    uint16_t qd, an;
+    size_t ri;
+
+    if (parse_ipv4(host, out_ip) == 0) {
+        return 0;
+    }
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        return -1;
+    }
+
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(53053);
+    bind_addr.sin_addr = 0;
+    for (int i = 0; i < 8; i++) bind_addr.sin_zero[i] = 0;
+    (void)bind(sock, &bind_addr, sizeof(bind_addr));
+
+    pkt[off++] = 0x12; pkt[off++] = 0x34;
+    pkt[off++] = 0x01; pkt[off++] = 0x00;
+    pkt[off++] = 0x00; pkt[off++] = 0x01;
+    pkt[off++] = 0x00; pkt[off++] = 0x00;
+    pkt[off++] = 0x00; pkt[off++] = 0x00;
+    pkt[off++] = 0x00; pkt[off++] = 0x00;
+    {
+        size_t w = dns_encode_name(pkt + off, sizeof(pkt) - off, host);
+        if (w == 0) {
+            close(sock);
+            return -1;
+        }
+        off += w;
+    }
+    pkt[off++] = 0x00; pkt[off++] = 0x01;
+    pkt[off++] = 0x00; pkt[off++] = 0x01;
+
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(53);
+    dst.sin_addr = ((uint32_t)dns_ip[0] << 24) | ((uint32_t)dns_ip[1] << 16) |
+                   ((uint32_t)dns_ip[2] << 8) | (uint32_t)dns_ip[3];
+    for (int i = 0; i < 8; i++) dst.sin_zero[i] = 0;
+
+    n = sendto(sock, pkt, off, 0, &dst, sizeof(dst));
+    if (n < 0) {
+        close(sock);
+        return -1;
+    }
+
+    n = recvfrom(sock, resp, sizeof(resp), 0, &src, &src_len);
+    if (n < 12) {
+        close(sock);
+        return -1;
+    }
+
+    qd = (uint16_t)((resp[4] << 8) | resp[5]);
+    an = (uint16_t)((resp[6] << 8) | resp[7]);
+    ri = 12;
+    for (uint16_t qi = 0; qi < qd; qi++) {
+        while (ri < (size_t)n && resp[ri] != 0) ri += (size_t)resp[ri] + 1;
+        ri++;
+        ri += 4;
+    }
+    for (uint16_t ai = 0; ai < an; ai++) {
+        uint16_t type, classv, rdlen;
+        if (ri + 12 > (size_t)n) break;
+        if ((resp[ri] & 0xC0) == 0xC0) ri += 2;
+        else {
+            while (ri < (size_t)n && resp[ri] != 0) ri += (size_t)resp[ri] + 1;
+            ri++;
+        }
+        if (ri + 10 > (size_t)n) break;
+        type = (uint16_t)((resp[ri] << 8) | resp[ri + 1]); ri += 2;
+        classv = (uint16_t)((resp[ri] << 8) | resp[ri + 1]); ri += 2;
+        ri += 4;
+        rdlen = (uint16_t)((resp[ri] << 8) | resp[ri + 1]); ri += 2;
+        if (ri + rdlen > (size_t)n) break;
+        if (type == 1 && classv == 1 && rdlen == 4) {
+            out_ip[0] = resp[ri];
+            out_ip[1] = resp[ri + 1];
+            out_ip[2] = resp[ri + 2];
+            out_ip[3] = resp[ri + 3];
+            close(sock);
+            return 0;
+        }
+        ri += rdlen;
+    }
+
+    close(sock);
+    return -1;
+}
+
 static int parse_ipv4(const char *s, uint8_t ip[4]) {
     int part = 0;
     int idx = 0;
@@ -103,7 +228,11 @@ static int parse_ipv4(const char *s, uint8_t ip[4]) {
 }
 
 static void usage(void) {
-    printf("Usage: ping [-c count] <ipv4-address>\n");
+    printf("Usage: ping [-c count] <host|ipv4-address>\n");
+    printf("Examples:\n");
+    printf("  ping 8.8.8.8\n");
+    printf("  ping -c 4 1.1.1.1\n");
+    printf("  ping google.com\n");
 }
 
 static __attribute__((used)) void ping_main(int argc, char **argv) {
@@ -123,11 +252,22 @@ static __attribute__((used)) void ping_main(int argc, char **argv) {
             }
             continue;
         }
+        if (argv[i][0] == '-' && argv[i][1] == 'c' && argv[i][2] != '\0') {
+            if (parse_uint(argv[i] + 2, &count) < 0 || count <= 0) {
+                usage();
+                _exit(1);
+            }
+            continue;
+        }
         target = argv[i];
     }
 
-    if (!target || parse_ipv4(target, dst_ip) < 0) {
+    if (!target) {
         usage();
+        _exit(1);
+    }
+    if (resolve_host_ipv4(target, dst_ip) < 0) {
+        printf("ping: cannot resolve %s\n", target);
         _exit(1);
     }
 
@@ -163,11 +303,11 @@ static __attribute__((used)) void ping_main(int argc, char **argv) {
             req.payload[j] = (uint8_t)j;
         }
         req.checksum = 0;
-        req.checksum = checksum16(&req, sizeof(req));
+        req.checksum = htons(checksum16(&req, sizeof(req)));
 
         n = sendto(sock, &req, sizeof(req), 0, &to, sizeof(to));
         if (n < 0) {
-            printf("ping: sendto failed (%ld)\n", n);
+            printf("ping: sendto failed (%d)\n", (int)n);
             continue;
         }
         sent++;
@@ -185,8 +325,8 @@ static __attribute__((used)) void ping_main(int argc, char **argv) {
             continue;
         }
 
-        printf("%ld bytes from %u.%u.%u.%u: icmp_seq=%d\n",
-               n,
+        printf("%d bytes from %u.%u.%u.%u: icmp_seq=%d\n",
+               (int)n,
                (unsigned)((from.sin_addr >> 24) & 0xFF),
                (unsigned)((from.sin_addr >> 16) & 0xFF),
                (unsigned)((from.sin_addr >> 8) & 0xFF),

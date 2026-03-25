@@ -37,6 +37,7 @@ typedef long ssize_t;
 #define SYS_SETUID  105
 #define SYS_SETGID  106
 #define SYS_REBOOT  169
+#define SYS_OBELISK_SYSCTL 400
 #define AT_NULL     0
 #define AT_EXECFN   31
 #define TIOCGWINSZ  0x5413
@@ -104,6 +105,17 @@ struct utsname {
     char machine[65];
     char domainname[65];
 };
+
+struct ob_sysctl_args {
+    const char *name;
+    void *oldval;
+    size_t *oldlenp;
+    const void *newval;
+    size_t newlen;
+};
+
+static int applet_main(const char *name, int argc, char **argv);
+static int is_builtin_applet_name(const char *name);
 
 static inline long syscall0(long num) {
     long ret;
@@ -1411,6 +1423,187 @@ static void applet_stat(int argc, char **argv) {
     }
 }
 
+static int try_exec_external(char **args);
+static void report_exec_failure(const char *cmd, int ret);
+static int wildcard_match(const char *pat, const char *s);
+
+static int read_uptime_seconds(unsigned long *out_secs) {
+    char buf[64];
+    size_t len = sizeof(buf);
+    struct ob_sysctl_args args;
+    unsigned long v = 0;
+    int i = 0;
+    if (!out_secs) {
+        return -1;
+    }
+    args.name = "system.kernel.uptime";
+    args.oldval = buf;
+    args.oldlenp = &len;
+    args.newval = NULL;
+    args.newlen = 0;
+    if (syscall1(SYS_OBELISK_SYSCTL, (long)&args) < 0) {
+        return -1;
+    }
+    while (buf[i] >= '0' && buf[i] <= '9') {
+        v = (v * 10UL) + (unsigned long)(buf[i] - '0');
+        i++;
+    }
+    *out_secs = v;
+    return 0;
+}
+
+static int applet_time_exec(int argc, char **argv) {
+    long pid;
+    int status = 0;
+    unsigned long start = 0;
+    unsigned long end = 0;
+    if (argc < 2) {
+        write_str("time: usage: time <command> [args...]\n");
+        return 1;
+    }
+    (void)read_uptime_seconds(&start);
+    pid = syscall0(SYS_FORK);
+    if (pid < 0) {
+        print_errno("fork", pid);
+        return 1;
+    }
+    if (pid == 0) {
+        if (is_builtin_applet_name(argv[1])) {
+            int rc = applet_main(argv[1], argc - 1, &argv[1]);
+            syscall1(SYS_EXIT, rc);
+        } else {
+            int erc = try_exec_external(&argv[1]);
+            if (erc < 0) {
+                report_exec_failure(argv[1], erc);
+                syscall1(SYS_EXIT, (erc == -2) ? 127 : 1);
+            }
+        }
+        __builtin_unreachable();
+    }
+    while (1) {
+        long ret = syscall4(SYS_WAIT4, pid, (long)&status, 0, 0);
+        if (ret >= 0) {
+            break;
+        }
+        if (ret == -4) {
+            continue;
+        }
+        print_errno("wait4", ret);
+        break;
+    }
+    (void)read_uptime_seconds(&end);
+    write_str("real ");
+    write_u64_dec((end >= start) ? (end - start) : 0);
+    write_str("s\n");
+    return (status == 0) ? 0 : 1;
+}
+
+static const char *find_basename(const char *path) {
+    const char *bn = base_name(path);
+    if (bn[0] == '\0' && path[0] == '/' && path[1] == '\0') {
+        return "/";
+    }
+    return bn;
+}
+
+static void applet_find_walk(const char *path, const char *name_pat) {
+    struct ob_stat st;
+    long sret;
+    long fd;
+    char buf[1024];
+    const char *bn = find_basename(path);
+    if (!path || path[0] == '\0') {
+        return;
+    }
+    if (!name_pat || wildcard_match(name_pat, bn)) {
+        write_str(path);
+        write_ch('\n');
+    }
+
+    sret = syscall2(SYS_STAT, (long)path, (long)&st);
+    if (sret < 0) {
+        return;
+    }
+    if ((st.st_mode & 0170000) != 0040000) {
+        return;
+    }
+
+    fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
+    if (fd < 0) {
+        return;
+    }
+
+    while (1) {
+        long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
+        if (nread < 0) {
+            break;
+        }
+        if (nread == 0) {
+            break;
+        }
+        long bpos = 0;
+        while (bpos < nread) {
+            struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
+            if (!(d->d_name[0] == '.' &&
+                  (d->d_name[1] == '\0' ||
+                   (d->d_name[1] == '.' && d->d_name[2] == '\0')))) {
+                char child[512];
+                size_t plen = str_len(path);
+                size_t nlen = str_len(d->d_name);
+                if (plen + 1 + nlen + 1 < sizeof(child)) {
+                    str_copy(child, path, sizeof(child));
+                    if (!(plen == 1 && child[0] == '/')) {
+                        child[plen++] = '/';
+                        child[plen] = '\0';
+                    }
+                    str_copy(child + plen, d->d_name, sizeof(child) - plen);
+                    applet_find_walk(child, name_pat);
+                }
+            }
+            if (d->d_reclen == 0) {
+                break;
+            }
+            bpos += d->d_reclen;
+        }
+    }
+    syscall1(SYS_CLOSE, fd);
+}
+
+static void applet_find(int argc, char **argv) {
+    const char *paths[16];
+    int pathc = 0;
+    const char *name_pat = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (str_cmp(argv[i], "-name") == 0) {
+            if (i + 1 >= argc) {
+                write_str("find: missing pattern after -name\n");
+                return;
+            }
+            name_pat = argv[++i];
+            continue;
+        }
+        if (str_cmp(argv[i], "-h") == 0 || str_cmp(argv[i], "--help") == 0) {
+            write_str("Usage: find [path ...] [-name pattern]\n");
+            return;
+        }
+        if (argv[i][0] == '-') {
+            write_str("find: unsupported option: ");
+            write_str(argv[i]);
+            write_ch('\n');
+            return;
+        }
+        if (pathc < (int)(sizeof(paths) / sizeof(paths[0]))) {
+            paths[pathc++] = argv[i];
+        }
+    }
+    if (pathc == 0) {
+        paths[pathc++] = ".";
+    }
+    for (int i = 0; i < pathc; i++) {
+        applet_find_walk(paths[i], name_pat);
+    }
+}
+
 static int run_external(char **args);
 static int run_shell(const char *prompt);
 static int try_exec_external(char **args);
@@ -1423,7 +1616,7 @@ static int is_builtin_applet_name(const char *name) {
         "busybox", "sh", "ash", "zsh", "echo", "uname", "pwd",
         "ls", "cat", "touch", "mkdir", "rm", "rmdir",
         "chmod", "chown", "stat", "head", "tail", "wc", "cut",
-        "true", "false", "users",
+        "true", "false", "users", "find", "time",
         "reboot", "shutdown", "poweroff", "halt", "clear",
         "su", "sudo", "whoami", "id", NULL
     };
@@ -2890,7 +3083,7 @@ static int execute_simple_command(const char *prompt, char *line) {
     }
 
     if (str_cmp(args[0], "help") == 0) {
-        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut true false users su sudo whoami id opkg\n");
+        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut find time true false users su sudo whoami id opkg\n");
         write_str("shell: quotes, $VAR expansion, && || ;, minimal pipes |, redirects < > >>, Up/Down history, TAB completion\n");
         rc = 0;
     } else if (str_cmp(args[0], "echo") == 0) {
@@ -2950,6 +3143,11 @@ static int execute_simple_command(const char *prompt, char *line) {
     } else if (str_cmp(args[0], "users") == 0) {
         applet_users();
         rc = 0;
+    } else if (str_cmp(args[0], "find") == 0) {
+        applet_find(argc, args);
+        rc = 0;
+    } else if (str_cmp(args[0], "time") == 0) {
+        rc = applet_time_exec(argc, args);
     } else if (str_cmp(args[0], "true") == 0) {
         rc = 0;
     } else if (str_cmp(args[0], "false") == 0) {
@@ -3125,6 +3323,13 @@ static int applet_main(const char *name, int argc, char **argv) {
     if (str_cmp(name, "users") == 0) {
         applet_users();
         return 0;
+    }
+    if (str_cmp(name, "find") == 0) {
+        applet_find(argc, argv);
+        return 0;
+    }
+    if (str_cmp(name, "time") == 0) {
+        return applet_time_exec(argc, argv);
     }
     if (str_cmp(name, "true") == 0) {
         return 0;

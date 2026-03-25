@@ -40,15 +40,22 @@
 #define E1000_REG_RAH0    0x5404
 
 #define E1000_CTRL_RST BIT(26)
+#define E1000_CTRL_FD BIT(0)
+#define E1000_CTRL_SLU BIT(6)
+#define E1000_CTRL_ASDE BIT(5)
 #define E1000_STATUS_LU BIT(1)
+#define E1000_RAH_AV BIT(31)
 
 #define E1000_RCTL_EN BIT(1)
+#define E1000_RCTL_UPE BIT(3)
+#define E1000_RCTL_MPE BIT(4)
 #define E1000_RCTL_BAM BIT(15)
 #define E1000_RCTL_SECRC BIT(26)
 #define E1000_RCTL_BSIZE_2048 0
 
 #define E1000_TCTL_EN BIT(1)
 #define E1000_TCTL_PSP BIT(3)
+#define E1000_TCTL_RTLC BIT(24)
 #define E1000_TCTL_CT_SHIFT 4
 #define E1000_TCTL_COLD_SHIFT 12
 
@@ -103,6 +110,8 @@ struct e1000_state {
     uint64_t rx_bytes;
     uint64_t tx_bytes;
     uint64_t rx_drops;
+    uint64_t tx_timeouts;
+    uint64_t poll_count;
 };
 
 static struct e1000_state g_e1000;
@@ -193,6 +202,18 @@ static void e1000_read_mac(struct e1000_state *s) {
     s->mac[5] = (uint8_t)((rah >> 8) & 0xFF);
 }
 
+static void e1000_program_mac(struct e1000_state *s) {
+    uint32_t ral = ((uint32_t)s->mac[0]) |
+                   ((uint32_t)s->mac[1] << 8) |
+                   ((uint32_t)s->mac[2] << 16) |
+                   ((uint32_t)s->mac[3] << 24);
+    uint32_t rah = ((uint32_t)s->mac[4]) |
+                   ((uint32_t)s->mac[5] << 8) |
+                   E1000_RAH_AV;
+    e1000_write32(s, E1000_REG_RAL0, ral);
+    e1000_write32(s, E1000_REG_RAH0, rah);
+}
+
 static int e1000_setup_rings(struct e1000_state *s) {
     s->rx_ring_phys = pmm_alloc_pages(1);
     s->tx_ring_phys = pmm_alloc_pages(1);
@@ -253,6 +274,23 @@ static int e1000_tx(void *ctx, const void *frame, size_t len) {
 
     s->tx_tail = (idx + 1) % E1000_TX_RING_SIZE;
     e1000_write32(s, E1000_REG_TDT, s->tx_tail);
+    for (int spin = 0; spin < 200000; spin++) {
+        if (desc->status & BIT(0)) { /* DD */
+            break;
+        }
+        __asm__ volatile("pause");
+    }
+    if ((desc->status & BIT(0)) == 0) {
+        s->tx_timeouts++;
+        if ((s->tx_packets % 64) == 0) {
+            uint32_t tdh = e1000_read32(s, E1000_REG_TDH);
+            uint32_t tdt = e1000_read32(s, E1000_REG_TDT);
+            uint32_t status = e1000_read32(s, E1000_REG_STATUS);
+            printk(KERN_WARNING "e1000: tx timeout idx=%u tdh=%u tdt=%u status=0x%x\n",
+                   idx, tdh, tdt, status);
+        }
+        return -EIO;
+    }
     s->tx_packets++;
     s->tx_bytes += len;
     return 0;
@@ -265,6 +303,7 @@ static int e1000_poll(void *ctx) {
     if (!s || !s->present) {
         return -ENODEV;
     }
+    s->poll_count++;
 
     rdh = e1000_read32(s, E1000_REG_RDH);
     rdt = e1000_read32(s, E1000_REG_RDT);
@@ -293,6 +332,13 @@ static int e1000_poll(void *ctx) {
     if ((s->rx_packets % 128) == 0 && s->rx_packets != 0) {
         printk(KERN_INFO "e1000: rx=%lu tx=%lu drop=%lu bytes_rx=%lu bytes_tx=%lu rdh=%u\n",
                s->rx_packets, s->tx_packets, s->rx_drops, s->rx_bytes, s->tx_bytes, rdh);
+    }
+    if ((s->poll_count % 500) == 0 && s->tx_packets > 0 && s->rx_packets == 0) {
+        uint32_t status = e1000_read32(s, E1000_REG_STATUS);
+        uint32_t rctl = e1000_read32(s, E1000_REG_RCTL);
+        uint32_t tctl = e1000_read32(s, E1000_REG_TCTL);
+        printk(KERN_WARNING "e1000: no-rx tx=%lu tx_to=%lu status=0x%x rctl=0x%x tctl=0x%x rdh=%u rdt=%u\n",
+               s->tx_packets, s->tx_timeouts, status, rctl, tctl, rdh, rdt);
     }
     return 0;
 }
@@ -336,6 +382,9 @@ void e1000_init(void) {
 
         e1000_write32(&g_e1000, E1000_REG_CTRL, e1000_read32(&g_e1000, E1000_REG_CTRL) | E1000_CTRL_RST);
         e1000_wait_reset(&g_e1000);
+        e1000_write32(&g_e1000, E1000_REG_CTRL,
+                      e1000_read32(&g_e1000, E1000_REG_CTRL) |
+                          E1000_CTRL_FD | E1000_CTRL_SLU | E1000_CTRL_ASDE);
         (void)e1000_read32(&g_e1000, E1000_REG_ICR);
         e1000_write32(&g_e1000, E1000_REG_IMS, 0);
 
@@ -352,14 +401,6 @@ void e1000_init(void) {
             continue;
         }
 
-        e1000_write32(&g_e1000, E1000_REG_RCTL,
-                      E1000_RCTL_EN | E1000_RCTL_BAM | E1000_RCTL_SECRC | E1000_RCTL_BSIZE_2048);
-        e1000_write32(&g_e1000, E1000_REG_TIPG, 0x0060200A);
-        e1000_write32(&g_e1000, E1000_REG_TCTL,
-                      E1000_TCTL_EN | E1000_TCTL_PSP |
-                          (0x10U << E1000_TCTL_CT_SHIFT) |
-                          (0x40U << E1000_TCTL_COLD_SHIFT));
-
         e1000_read_mac(&g_e1000);
         if (g_e1000.mac[0] == 0 && g_e1000.mac[1] == 0 && g_e1000.mac[2] == 0 &&
             g_e1000.mac[3] == 0 && g_e1000.mac[4] == 0 && g_e1000.mac[5] == 0) {
@@ -371,6 +412,16 @@ void e1000_init(void) {
             g_e1000.mac[4] = 0x10;
             g_e1000.mac[5] = 0x00;
         }
+        e1000_program_mac(&g_e1000);
+
+        e1000_write32(&g_e1000, E1000_REG_RCTL,
+                      E1000_RCTL_EN | E1000_RCTL_UPE | E1000_RCTL_MPE |
+                          E1000_RCTL_BAM | E1000_RCTL_SECRC | E1000_RCTL_BSIZE_2048);
+        e1000_write32(&g_e1000, E1000_REG_TIPG, 0x0060200A);
+        e1000_write32(&g_e1000, E1000_REG_TCTL,
+                      E1000_TCTL_EN | E1000_TCTL_PSP | E1000_TCTL_RTLC |
+                          (0x10U << E1000_TCTL_CT_SHIFT) |
+                          (0x40U << E1000_TCTL_COLD_SHIFT));
 
         printk(KERN_INFO "e1000: device %04x at %02x:%02x.%u mmio=0x%lx link=%s\n",
                g_e1000.device_id, g_e1000.bus, g_e1000.slot, g_e1000.function,
