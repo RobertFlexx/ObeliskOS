@@ -104,15 +104,3 @@ Installer details are documented in `docs/INSTALLER.md`.
 Current command support/limitations are documented in `docs/USERLAND_COMMANDS.md`.
 Package ecosystem scaffolding is documented under `opkg/docs/`.
 Static D userspace bring-up notes are documented in `docs/STATIC_D_USERLAND.md`.
-
-## Optional Userland Overlay
-
-You can ship extra tools (for example BusyBox, selected GNU tools, or `zsh`) by
-placing binaries and config files in `rootfs-overlay/`. The build copies this
-overlay into the packaged root filesystem.
-
-See `rootfs-overlay/README.txt` for expected layout and notes.
-
-Current default userland direction is BusyBox-style for bring-up simplicity:
-the image now includes `/bin/busybox`, `/bin/sh`, and `/bin/zsh` (zsh is
-provided via BusyBox applet compatibility in this stage).
