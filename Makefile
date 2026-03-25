@@ -82,7 +82,7 @@ rootfs: userland
 	@cp $(USERLAND_DIR)/axiomd/policy/access.pro $(ROOTFS_DIR)/etc/axiomd/policy/access.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/allocation.pro $(ROOTFS_DIR)/etc/axiomd/policy/allocation.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/inheritance.pro $(ROOTFS_DIR)/etc/axiomd/policy/inheritance.pro
-	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
+	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session oed ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
 		if [ -f "$(USERLAND_OUT_DIR)/$$tool" ]; then \
 			cp "$(USERLAND_OUT_DIR)/$$tool" "$(ROOTFS_DIR)/bin/$$tool"; \
 		fi; \
@@ -106,7 +106,7 @@ rootfs: userland
 			fi; \
 		done; \
 	fi
-	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session find time; do \
+	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session oed find time; do \
 		if [ -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 			cp "$(ROOTFS_DIR)/bin/$$app" "$(ROOTFS_DIR)/usr/bin/$$app"; \
 		fi; \

@@ -645,9 +645,12 @@ static volatile uint32_t g_mice_tail;
 static bool g_kbd_e0_prefix;
 static bool g_kbd_f0_prefix;
 static bool g_kbd_use_set2;
-static bool g_kbd_shift;
-static bool g_kbd_ctrl;
+static bool g_kbd_lshift;
+static bool g_kbd_rshift;
+static bool g_kbd_lctrl;
+static bool g_kbd_rctrl;
 static bool g_kbd_capslock;
+static bool g_kbd_capslock_down;
 static uint8_t g_mouse_pkt[3];
 static uint8_t g_mouse_pkt_idx;
 static bool g_mouse_left;
@@ -767,7 +770,7 @@ static void console_push_esc_seq(const char *s) {
 }
 
 static char ps2_keycode_to_ascii(uint16_t code) {
-    bool shift = g_kbd_shift;
+    bool shift = g_kbd_lshift || g_kbd_rshift;
     bool upper = (shift ^ g_kbd_capslock);
     switch (code) {
         case KEY_A: return upper ? 'A' : 'a';
@@ -861,12 +864,23 @@ static void ps2_kbd_feed_byte(uint8_t data, bool emit_events) {
     g_kbd_e0_prefix = false;
     g_kbd_f0_prefix = false;
     if (code == 0) return;
-    if (code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT) {
-        g_kbd_shift = !released;
-    } else if (code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL) {
-        g_kbd_ctrl = !released;
-    } else if (code == KEY_CAPSLOCK && !released) {
-        g_kbd_capslock = !g_kbd_capslock;
+    if (code == KEY_LEFTSHIFT) {
+        g_kbd_lshift = !released;
+    } else if (code == KEY_RIGHTSHIFT) {
+        g_kbd_rshift = !released;
+    } else if (code == KEY_LEFTCTRL) {
+        g_kbd_lctrl = !released;
+    } else if (code == KEY_RIGHTCTRL) {
+        g_kbd_rctrl = !released;
+    } else if (code == KEY_CAPSLOCK) {
+        if (!released) {
+            if (!g_kbd_capslock_down) {
+                g_kbd_capslock = !g_kbd_capslock;
+            }
+            g_kbd_capslock_down = true;
+        } else {
+            g_kbd_capslock_down = false;
+        }
     } else if (!released) {
         if (code == KEY_UP) {
             (void)console_input_push_char(0x1B);
@@ -923,9 +937,10 @@ static void ps2_kbd_feed_byte(uint8_t data, bool emit_events) {
         } else {
             char out = ps2_keycode_to_ascii(code);
             if (out != 0) {
-                if (g_kbd_ctrl && out >= 'a' && out <= 'z') {
+                bool ctrl = g_kbd_lctrl || g_kbd_rctrl;
+                if (ctrl && out >= 'a' && out <= 'z') {
                     out = (char)(out - 'a' + 1);
-                } else if (g_kbd_ctrl && out >= 'A' && out <= 'Z') {
+                } else if (ctrl && out >= 'A' && out <= 'Z') {
                     out = (char)(out - 'A' + 1);
                 }
                 (void)console_input_push_char(out);

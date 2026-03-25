@@ -52,8 +52,9 @@ FETCH := $(OUTDIR)/fetch
 FBINFO := $(OUTDIR)/fbinfo
 XORG_SMOKE := $(OUTDIR)/xorg-smoke
 DESKTOP_SESSION := $(OUTDIR)/desktop-session
+OED := $(OUTDIR)/oed
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED)
 
 CFLAGS := \
 	-ffreestanding \
@@ -198,6 +199,10 @@ $(XORG_SMOKE): $(BUILDDIR)/bin/xorg-smoke/xorg_smoke.o $(LIBC) | $(OUTDIR)
 $(DESKTOP_SESSION): $(BUILDDIR)/bin/desktop-session/desktop_session.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(OED): $(BUILDDIR)/bin/oed/oed.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CXX) $(LDFLAGS) -o $@ $< $(LIBC)
 
 clean:
 	@echo "  CLEAN"
