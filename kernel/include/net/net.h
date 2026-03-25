@@ -38,5 +38,10 @@ int net_recv_icmp_echo_event(struct net_icmp_event *out_event);
 int net_send_udp(const uint8_t dst_ip[4], uint16_t src_port, uint16_t dst_port,
                  const void *payload, size_t payload_len);
 int net_recv_udp_event(uint16_t local_port, struct net_udp_event *out_event);
+int net_tcp_connect(const uint8_t dst_ip[4], uint16_t dst_port, uint16_t local_port, int *out_conn_id);
+int net_tcp_is_connected(int conn_id);
+int net_tcp_send(int conn_id, const void *data, size_t len);
+int net_tcp_recv(int conn_id, void *buf, size_t len, bool *peer_closed);
+int net_tcp_close(int conn_id);
 
 #endif /* _NET_NET_H */

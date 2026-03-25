@@ -1,0 +1,4 @@
+Obelisk Xorg profile package
+
+This package represents the baseline X11 profile selection for the installer.
+It is a marker package used by opkg profile installs.

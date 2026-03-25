@@ -120,6 +120,20 @@ struct termios_compat {
     uint8_t  c_cc[32];
 };
 
+struct vt_stat_compat {
+    uint16_t v_active;
+    uint16_t v_signal;
+    uint16_t v_state;
+};
+
+struct vt_mode_compat {
+    uint8_t mode;
+    uint8_t waitv;
+    uint16_t relsig;
+    uint16_t acqsig;
+    uint16_t frsig;
+};
+
 struct sockaddr_in_compat {
     uint16_t sin_family;
     uint16_t sin_port;
@@ -132,6 +146,25 @@ struct sockaddr_in_compat {
 #define TCSETSW     0x5403UL
 #define TCSETSF     0x5404UL
 #define TIOCGWINSZ  0x5413UL
+#define TIOCSCTTY   0x540EUL
+#define TIOCNOTTY   0x5422UL
+#define TIOCGPGRP   0x540FUL
+#define TIOCSPGRP   0x5410UL
+
+#define KDSETMODE   0x4B3AUL
+#define KDGETMODE   0x4B3BUL
+#define KDGKBMODE   0x4B44UL
+#define KDSKBMODE   0x4B45UL
+#define KD_TEXT     0
+#define KD_GRAPHICS 1
+#define K_XLATE     0
+
+#define VT_OPENQRY    0x5600UL
+#define VT_GETMODE    0x5601UL
+#define VT_SETMODE    0x5602UL
+#define VT_GETSTATE   0x5603UL
+#define VT_ACTIVATE   0x5606UL
+#define VT_WAITACTIVE 0x5607UL
 
 #define F_GETFD     1
 #define F_SETFD     2
@@ -140,9 +173,11 @@ struct sockaddr_in_compat {
 
 #define IS_STDIO_FD(fd) ((fd) == 0 || (fd) == 1 || (fd) == 2)
 #define AF_INET     2
+#define SOCK_STREAM 1
 #define SOCK_DGRAM  2
 #define SOCK_RAW    3
 #define IPPROTO_ICMP 1
+#define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
 #define SOCKET_FD_BASE  4096
 #define SOCKET_MAX      64
@@ -154,6 +189,10 @@ struct ksocket {
     int type;
     int protocol;
     uint16_t bound_port;
+    uint8_t remote_ip[4];
+    uint16_t remote_port;
+    int tcp_conn_id;
+    bool connected;
 };
 
 struct getdents64_ctx {
@@ -204,9 +243,7 @@ static uint16_t bswap16(uint16_t v) {
 static uint16_t htons16(uint16_t v) { return bswap16(v); }
 static uint16_t ntohs16(uint16_t v) { return bswap16(v); }
 static void tty_flush_input(void) {
-    while (uart_getc_nonblock() >= 0) {
-        /* Drain pending serial input bytes after Ctrl+C. */
-    }
+    devfs_console_flush_input();
 }
 
 static int socket_fd_to_index(int fd) {
@@ -234,6 +271,8 @@ static struct ksocket *socket_get_owned(int fd) {
 /* Syscall statistics (for debugging/profiling) */
 static uint64_t syscall_counts[NR_SYSCALLS];
 static int loader_trace_budget = 4096;
+static int tty_kd_mode = KD_TEXT;
+static int tty_kb_mode = K_XLATE;
 
 #define EXEC_USER_MAX_ARGC    256
 #define EXEC_USER_MAX_STRLEN  4096
@@ -507,6 +546,31 @@ static int resolve_user_at_path(int dirfd, const char *path, char *out, size_t o
     return -ENOSYS;
 }
 
+static void apply_input_path_alias(char *path, size_t cap) {
+    if (!path || cap == 0) {
+        return;
+    }
+    if (strcmp(path, "/dev/input/mice") == 0) {
+        strncpy(path, "/dev/mice", cap - 1);
+        path[cap - 1] = '\0';
+        return;
+    }
+    if (strcmp(path, "/dev/input/event0") == 0) {
+        strncpy(path, "/dev/event0", cap - 1);
+        path[cap - 1] = '\0';
+        return;
+    }
+    if (strcmp(path, "/dev/input/event1") == 0) {
+        strncpy(path, "/dev/event1", cap - 1);
+        path[cap - 1] = '\0';
+        return;
+    }
+    if (strcmp(path, "/dev/input/mouse0") == 0) {
+        strncpy(path, "/dev/mice", cap - 1);
+        path[cap - 1] = '\0';
+    }
+}
+
 static bool path_ends_with(const char *s, const char *suffix) {
     size_t slen, tlen;
     if (!s || !suffix) return false;
@@ -562,7 +626,7 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
     int trace_loader = 0;
     if (loader_trace_budget > 0 && current && current->pid == 2) {
         const char *comm = current->comm;
-        if ((comm && (strcmp(comm, "zsh") == 0 || strncmp(comm, "ld-linux", 8) == 0)) ||
+        if ((comm && (strcmp(comm, "osh") == 0 || strcmp(comm, "rockbox") == 0 || strncmp(comm, "ld-linux", 8) == 0)) ||
             syscall_num == SYS_EXECVE) {
             trace_loader = 1;
             loader_trace_budget--;
@@ -632,7 +696,7 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
 
     /* Character mode for interactive shells/editors. */
     if (count == 1) {
-        char c = uart_getc();
+        char c = devfs_console_getc();
         if (c == '\r') {
             c = '\n';
         }
@@ -649,7 +713,7 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
 
     size_t i = 0;
     while (i < count) {
-        char c = uart_getc();
+        char c = devfs_console_getc();
         if (c == '\r') {
             c = '\n';
         }
@@ -781,6 +845,7 @@ static int64_t sys_open(const char *pathname, int flags, mode_t mode) {
     if (ret < 0) {
         return ret;
     }
+    apply_input_path_alias(resolved, sizeof(resolved));
 
     file = vfs_open(resolved, flags, mode);
     if (IS_ERR(file)) {
@@ -801,6 +866,9 @@ static int64_t sys_close(int fd) {
     struct file *file;
     struct ksocket *sock = socket_get_owned(fd);
     if (sock) {
+        if (sock->type == SOCK_STREAM && sock->protocol == IPPROTO_TCP && sock->tcp_conn_id >= 0) {
+            (void)net_tcp_close(sock->tcp_conn_id);
+        }
         memset(sock, 0, sizeof(*sock));
         return 0;
     }
@@ -1020,16 +1088,16 @@ static int64_t sys_execve(const char *pathname, char *const argv[], char *const 
 static int64_t sys_exit(int status) {
     struct process *p = current;
     if (p && p->pid == 2) {
-        static char *const rescue_argv[] = { "busybox", "sh", NULL };
+        static char *const rescue_argv[] = { "osh", "-i", NULL };
         static char *const rescue_envp[] = {
             "PATH=/bin:/sbin:/usr/bin",
             "HOME=/",
-            "SHELL=/bin/sh",
+            "SHELL=/bin/osh",
             "TERM=vt100",
             NULL
         };
         printk(KERN_ERR "init: pid1 attempted exit(%d), starting rescue shell\n", status);
-        if (do_execve("/bin/busybox", rescue_argv, rescue_envp) >= 0) {
+        if (do_execve("/bin/osh", rescue_argv, rescue_envp) >= 0) {
             __builtin_unreachable();
         }
         printk(KERN_ERR "init: rescue shell exec failed, continuing exit path\n");
@@ -1413,6 +1481,7 @@ static int64_t sys_openat(int dirfd, const char *pathname, int flags, mode_t mod
     if (ret < 0) {
         return ret;
     }
+    apply_input_path_alias(resolved, sizeof(resolved));
 
     file = vfs_open(resolved, flags, mode);
     if (IS_ERR(file)) {
@@ -1596,12 +1665,25 @@ static int64_t sys_pipe(int pipefd[2]) {
 }
 
 static int64_t sys_ioctl(int fd, unsigned long request, void *arg) {
-    if (!arg) {
-        return -EINVAL;
+    struct process *proc = current;
+    struct file *file = NULL;
+
+    if (proc && proc->files && fd >= 0 && !IS_STDIO_FD(fd)) {
+        file = fd_get(proc->files, fd);
+        if (!file) {
+            return -EBADF;
+        }
+        if (file->f_op && file->f_op->ioctl) {
+            int ret = file->f_op->ioctl(file, (unsigned int)request, (unsigned long)(uintptr_t)arg);
+            put_file(file);
+            return ret;
+        }
+        put_file(file);
     }
 
     switch (request) {
         case TCGETS: {
+            if (!arg) return -EINVAL;
             struct termios_compat t;
             memset(&t, 0, sizeof(t));
             /* Canonical mode, echo, signal handling. */
@@ -1616,8 +1698,21 @@ static int64_t sys_ioctl(int fd, unsigned long request, void *arg) {
         case TCSETS:
         case TCSETSW:
         case TCSETSF:
+        case TIOCSCTTY:
+        case TIOCNOTTY:
+            return 0;
+        case TIOCGPGRP: {
+            int pgrp = current ? current->pid : 1;
+            if (!arg) return -EINVAL;
+            if (vmm_copy_to_user(arg, &pgrp, sizeof(pgrp)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
+        case TIOCSPGRP:
             return 0;
         case TIOCGWINSZ: {
+            if (!arg) return -EINVAL;
             struct winsize ws;
             ws.ws_row = 25;
             ws.ws_col = 80;
@@ -1628,6 +1723,63 @@ static int64_t sys_ioctl(int fd, unsigned long request, void *arg) {
             }
             return 0;
         }
+        case KDGETMODE: {
+            if (!arg) return -EINVAL;
+            if (vmm_copy_to_user(arg, &tty_kd_mode, sizeof(tty_kd_mode)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
+        case KDSETMODE: {
+            int mode = (int)(uintptr_t)arg;
+            if (mode == KD_TEXT || mode == KD_GRAPHICS) {
+                tty_kd_mode = mode;
+                return 0;
+            }
+            return -EINVAL;
+        }
+        case KDGKBMODE: {
+            if (!arg) return -EINVAL;
+            if (vmm_copy_to_user(arg, &tty_kb_mode, sizeof(tty_kb_mode)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
+        case KDSKBMODE:
+            tty_kb_mode = (int)(uintptr_t)arg;
+            return 0;
+        case VT_OPENQRY: {
+            int vt = 1;
+            if (!arg) return -EINVAL;
+            if (vmm_copy_to_user(arg, &vt, sizeof(vt)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
+        case VT_GETSTATE: {
+            struct vt_stat_compat st;
+            if (!arg) return -EINVAL;
+            st.v_active = 1;
+            st.v_signal = 0;
+            st.v_state = 1;
+            if (vmm_copy_to_user(arg, &st, sizeof(st)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
+        case VT_GETMODE: {
+            struct vt_mode_compat vm;
+            if (!arg) return -EINVAL;
+            memset(&vm, 0, sizeof(vm));
+            if (vmm_copy_to_user(arg, &vm, sizeof(vm)) < 0) {
+                return -EFAULT;
+            }
+            return 0;
+        }
+        case VT_SETMODE:
+        case VT_ACTIVATE:
+        case VT_WAITACTIVE:
+            return 0;
         default:
             /* tty-centric compatibility path: unknown requests on stdio are ignored. */
             if (IS_STDIO_FD(fd)) {
@@ -1882,7 +2034,7 @@ static int64_t sys_socket(int domain, int type, int protocol) {
     if (domain != AF_INET) {
         return -EAFNOSUPPORT;
     }
-    if (type != SOCK_RAW && type != SOCK_DGRAM) {
+    if (type != SOCK_RAW && type != SOCK_DGRAM && type != SOCK_STREAM) {
         return -EPROTONOSUPPORT;
     }
     if (type == SOCK_RAW) {
@@ -1891,6 +2043,10 @@ static int64_t sys_socket(int domain, int type, int protocol) {
         }
     } else if (type == SOCK_DGRAM) {
         if (protocol != 0 && protocol != IPPROTO_UDP) {
+            return -EPROTONOSUPPORT;
+        }
+    } else if (type == SOCK_STREAM) {
+        if (protocol != 0 && protocol != IPPROTO_TCP) {
             return -EPROTONOSUPPORT;
         }
     }
@@ -1904,8 +2060,14 @@ static int64_t sys_socket(int domain, int type, int protocol) {
             socket_table[i].owner_pid = current ? current->pid : 0;
             socket_table[i].domain = domain;
             socket_table[i].type = type;
-            socket_table[i].protocol = (protocol == 0) ? ((type == SOCK_RAW) ? IPPROTO_ICMP : IPPROTO_UDP) : protocol;
+            socket_table[i].protocol = (protocol == 0) ?
+                ((type == SOCK_RAW) ? IPPROTO_ICMP :
+                 ((type == SOCK_DGRAM) ? IPPROTO_UDP : IPPROTO_TCP)) : protocol;
             socket_table[i].bound_port = 0;
+            socket_table[i].remote_port = 0;
+            socket_table[i].tcp_conn_id = -1;
+            socket_table[i].connected = false;
+            memset(socket_table[i].remote_ip, 0, sizeof(socket_table[i].remote_ip));
             return SOCKET_FD_BASE + i;
         }
     }
@@ -1914,15 +2076,73 @@ static int64_t sys_socket(int domain, int type, int protocol) {
 
 static int64_t sys_connect(int sockfd, const void *addr, int addrlen) {
     struct ksocket *sock = socket_get_owned(sockfd);
-    (void)addr;
-    (void)addrlen;
+    struct sockaddr_in_compat sa;
+    uint8_t dst_ip[4];
+    uint16_t dst_port;
+    uint16_t src_port;
+    int conn_id = -1;
+    int idx;
+    int loops = 30000;
+    int st;
     if (!sock) {
         return -EBADF;
     }
-    if (sock->domain != AF_INET || sock->type != SOCK_RAW) {
+    if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
     }
-    return -EOPNOTSUPP;
+    if (sock->type != SOCK_STREAM || sock->protocol != IPPROTO_TCP) {
+        return -EOPNOTSUPP;
+    }
+    if (!addr || addrlen < (int)sizeof(sa)) {
+        return -EINVAL;
+    }
+    if (vmm_copy_from_user(&sa, addr, sizeof(sa)) < 0) {
+        return -EFAULT;
+    }
+    if (sa.sin_family != AF_INET) {
+        return -EAFNOSUPPORT;
+    }
+    dst_port = ntohs16(sa.sin_port);
+    if (dst_port == 0) {
+        return -EINVAL;
+    }
+    dst_ip[0] = (uint8_t)((sa.sin_addr >> 24) & 0xFF);
+    dst_ip[1] = (uint8_t)((sa.sin_addr >> 16) & 0xFF);
+    dst_ip[2] = (uint8_t)((sa.sin_addr >> 8) & 0xFF);
+    dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
+
+    if (sock->bound_port == 0) {
+        idx = socket_fd_to_index(sockfd);
+        src_port = (uint16_t)(45000 + ((idx >= 0) ? (uint16_t)idx : 0));
+        sock->bound_port = src_port;
+    } else {
+        src_port = sock->bound_port;
+    }
+
+    st = net_tcp_connect(dst_ip, dst_port, src_port, &conn_id);
+    if (st < 0) {
+        return st;
+    }
+
+    while (loops-- > 0) {
+        st = net_tcp_is_connected(conn_id);
+        if (st == 1) {
+            sock->tcp_conn_id = conn_id;
+            sock->connected = true;
+            memcpy(sock->remote_ip, dst_ip, 4);
+            sock->remote_port = dst_port;
+            return 0;
+        }
+        if (st < 0) {
+            (void)net_tcp_close(conn_id);
+            return st;
+        }
+        net_tick();
+        scheduler_yield();
+    }
+
+    (void)net_tcp_close(conn_id);
+    return -ETIMEDOUT;
 }
 
 static int64_t sys_accept(int sockfd, void *addr, int *addrlen) {
@@ -1935,7 +2155,7 @@ static int64_t sys_accept(int sockfd, void *addr, int *addrlen) {
 static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, const void *dest_addr, int addrlen) {
     struct ksocket *sock = socket_get_owned(sockfd);
     struct sockaddr_in_compat sa;
-    uint8_t payload[512];
+    uint8_t payload[2048];
     uint8_t dst_ip[4];
     uint16_t dst_port;
     uint16_t src_port;
@@ -1950,25 +2170,24 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
     if (!buf || len == 0 || len > sizeof(payload)) {
         return -EMSGSIZE;
     }
-    if (!dest_addr || addrlen < (int)sizeof(sa)) {
-        return -EINVAL;
-    }
-    if (vmm_copy_from_user(&sa, dest_addr, sizeof(sa)) < 0) {
-        return -EFAULT;
-    }
-    if (sa.sin_family != AF_INET) {
-        return -EAFNOSUPPORT;
-    }
     if (vmm_copy_from_user(payload, buf, len) < 0) {
         return -EFAULT;
     }
 
-    dst_ip[0] = (uint8_t)((sa.sin_addr >> 24) & 0xFF);
-    dst_ip[1] = (uint8_t)((sa.sin_addr >> 16) & 0xFF);
-    dst_ip[2] = (uint8_t)((sa.sin_addr >> 8) & 0xFF);
-    dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
-
     if (sock->type == SOCK_RAW && sock->protocol == IPPROTO_ICMP) {
+        if (!dest_addr || addrlen < (int)sizeof(sa)) {
+            return -EINVAL;
+        }
+        if (vmm_copy_from_user(&sa, dest_addr, sizeof(sa)) < 0) {
+            return -EFAULT;
+        }
+        if (sa.sin_family != AF_INET) {
+            return -EAFNOSUPPORT;
+        }
+        dst_ip[0] = (uint8_t)((sa.sin_addr >> 24) & 0xFF);
+        dst_ip[1] = (uint8_t)((sa.sin_addr >> 16) & 0xFF);
+        dst_ip[2] = (uint8_t)((sa.sin_addr >> 8) & 0xFF);
+        dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
         int retries = 200;
         do {
             ret = net_send_icmp_echo(dst_ip, payload, len);
@@ -1979,6 +2198,19 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
             scheduler_yield();
         } while (--retries > 0);
     } else if (sock->type == SOCK_DGRAM && sock->protocol == IPPROTO_UDP) {
+        if (!dest_addr || addrlen < (int)sizeof(sa)) {
+            return -EINVAL;
+        }
+        if (vmm_copy_from_user(&sa, dest_addr, sizeof(sa)) < 0) {
+            return -EFAULT;
+        }
+        if (sa.sin_family != AF_INET) {
+            return -EAFNOSUPPORT;
+        }
+        dst_ip[0] = (uint8_t)((sa.sin_addr >> 24) & 0xFF);
+        dst_ip[1] = (uint8_t)((sa.sin_addr >> 16) & 0xFF);
+        dst_ip[2] = (uint8_t)((sa.sin_addr >> 8) & 0xFF);
+        dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
         dst_port = ntohs16(sa.sin_port);
         if (dst_port == 0) {
             return -EINVAL;
@@ -2001,6 +2233,19 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
                 scheduler_yield();
             } while (--retries > 0);
         }
+    } else if (sock->type == SOCK_STREAM && sock->protocol == IPPROTO_TCP) {
+        int retries = 200;
+        if (!sock->connected || sock->tcp_conn_id < 0) {
+            return -ENOTCONN;
+        }
+        do {
+            ret = net_tcp_send(sock->tcp_conn_id, payload, len);
+            if (ret != -EAGAIN) {
+                break;
+            }
+            net_tick();
+            scheduler_yield();
+        } while (--retries > 0);
     } else {
         return -EAFNOSUPPORT;
     }
@@ -2017,6 +2262,7 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
     size_t out_len;
     int ret;
     int max_loops = 20000; /* Poll-bound receive timeout window. */
+    bool peer_closed = false;
     (void)flags;
     if (!sock) {
         return -EBADF;
@@ -2121,6 +2367,61 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
             }
         }
         return (int64_t)out_len;
+    } else if (sock->type == SOCK_STREAM && sock->protocol == IPPROTO_TCP) {
+        uint8_t tcp_buf[2048];
+        size_t want = len;
+        if (want > sizeof(tcp_buf)) {
+            want = sizeof(tcp_buf);
+        }
+        if (!sock->connected || sock->tcp_conn_id < 0) {
+            return -ENOTCONN;
+        }
+        while (max_loops-- > 0) {
+            ret = net_tcp_recv(sock->tcp_conn_id, tcp_buf, want, &peer_closed);
+            if (ret >= 0) {
+                break;
+            }
+            if (ret != -EAGAIN) {
+                return ret;
+            }
+            net_tick();
+            scheduler_yield();
+        }
+        if (ret < 0) {
+            return -EAGAIN;
+        }
+        if (ret > 0) {
+            if (vmm_copy_to_user(buf, tcp_buf, (size_t)ret) < 0) {
+                return -EFAULT;
+            }
+        }
+        if (src_addr && addrlen) {
+            struct sockaddr_in_compat sa;
+            int user_len;
+            if (vmm_copy_from_user(&user_len, addrlen, sizeof(user_len)) < 0) {
+                return -EFAULT;
+            }
+            if (user_len >= (int)sizeof(sa)) {
+                memset(&sa, 0, sizeof(sa));
+                sa.sin_family = AF_INET;
+                sa.sin_port = htons16(sock->remote_port);
+                sa.sin_addr = ((uint32_t)sock->remote_ip[0] << 24) |
+                              ((uint32_t)sock->remote_ip[1] << 16) |
+                              ((uint32_t)sock->remote_ip[2] << 8) |
+                              (uint32_t)sock->remote_ip[3];
+                if (vmm_copy_to_user(src_addr, &sa, sizeof(sa)) < 0) {
+                    return -EFAULT;
+                }
+                user_len = sizeof(sa);
+                if (vmm_copy_to_user(addrlen, &user_len, sizeof(user_len)) < 0) {
+                    return -EFAULT;
+                }
+            }
+        }
+        if (ret == 0 && peer_closed) {
+            return 0;
+        }
+        return (int64_t)ret;
     }
     return -EAFNOSUPPORT;
 }
@@ -2161,6 +2462,11 @@ static int64_t sys_shutdown(int sockfd, int how) {
     (void)how;
     if (!sock) {
         return -EBADF;
+    }
+    if (sock->type == SOCK_STREAM && sock->protocol == IPPROTO_TCP && sock->tcp_conn_id >= 0) {
+        (void)net_tcp_close(sock->tcp_conn_id);
+        sock->tcp_conn_id = -1;
+        sock->connected = false;
     }
     return 0;
 }

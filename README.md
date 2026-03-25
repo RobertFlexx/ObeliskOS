@@ -73,9 +73,16 @@ Run in QEMU:
 make run
 ```
 
-If serial logs appear but the QEMU window is blank, make sure you are using the
-updated ISO (GRUB now forces text payload for VGA console output), then retry
-`make run`. Kernel logs are mirrored to serial and VGA text mode.
+For GUI + KVM runs with a guaranteed log mirror in your terminal:
+
+```bash
+make run-kvm
+```
+
+If GRUB appears in the GUI window but kernel text does not, this is usually
+QEMU display/console routing (or VGA model) rather than a kernel panic.
+Use the project targets (`run-gui` / `run-kvm`) which force `-vga std` and
+mirror serial logs to terminal for diagnosis.
 
 Debug boot with GDB stub:
 
@@ -104,3 +111,18 @@ Installer details are documented in `docs/INSTALLER.md`.
 Current command support/limitations are documented in `docs/USERLAND_COMMANDS.md`.
 Package ecosystem scaffolding is documented under `opkg/docs/`.
 Static D userspace bring-up notes are documented in `docs/STATIC_D_USERLAND.md`.
+<<<<<<< HEAD
+=======
+
+## Optional Userland Overlay
+
+You can ship extra tools (for example Rockbox-style applets or selected GNU tools) by
+placing binaries and config files in `rootfs-overlay/`. The build copies this
+overlay into the packaged root filesystem.
+
+See `rootfs-overlay/README.txt` for expected layout and notes.
+
+Current default userland direction is Rockbox-style for bring-up simplicity:
+the image includes `/bin/rockbox`, `/bin/osh`, and `/bin/sh` (`sh` remains as
+compatibility entrypoint).
+>>>>>>> d049231 (fix)

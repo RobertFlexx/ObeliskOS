@@ -9,17 +9,8 @@ typedef long ssize_t;
 extern int printf(const char *fmt, ...);
 extern ssize_t read(int fd, void *buf, size_t count);
 extern int execve(const char *pathname, char *const argv[], char *const envp[]);
+extern int strcmp(const char *a, const char *b);
 extern void _exit(int status);
-
-static void draw_box(void) {
-    printf("+-------------------------------------------+\n");
-    printf("|           Obelisk TUI Installer           |\n");
-    printf("+-------------------------------------------+\n");
-    printf("| 1) Guided install                          |\n");
-    printf("| 2) Shell-style CLI install                 |\n");
-    printf("| q) Quit                                    |\n");
-    printf("+-------------------------------------------+\n");
-}
 
 static void prompt(const char *q, char *buf, size_t cap) {
     size_t i = 0;
@@ -34,52 +25,76 @@ static void prompt(const char *q, char *buf, size_t cap) {
     buf[i] = '\0';
 }
 
-static int read_choice(void) {
-    char c = 0;
-    if (read(0, &c, 1) <= 0) {
-        return -1;
-    }
-    return (int)c;
+static void clear_screen(void) {
+    printf("\033[2J\033[H");
+}
+
+static void draw_header(void) {
+    printf("+------------------------------------------------------------+\n");
+    printf("|                    Obelisk TUI Installer                   |\n");
+    printf("+------------------------------------------------------------+\n");
+}
+
+static void pause_enter(void) {
+    char b[8];
+    prompt("Press Enter to continue...", b, sizeof(b));
+}
+
+static int launch_cli_installer(void) {
+    char *argv[] = { "/sbin/installer", NULL };
+    char *envp[] = { "PATH=/bin:/sbin:/usr/bin", NULL };
+    (void)execve("/sbin/installer", argv, envp);
+    printf("Failed to launch /sbin/installer\n");
+    return -1;
 }
 
 void _start(void) {
+    char sel[8];
     for (;;) {
-        draw_box();
-        printf("Select option: ");
-
-        int ch = read_choice();
+        clear_screen();
+        draw_header();
+        printf("| 1) Guided install wizard                                   |\n");
+        printf("| 2) Advanced CLI installer                                 |\n");
+        printf("| 3) Desktop profile help (TTY/Xorg/XFCE/XDM)              |\n");
+        printf("| q) Quit                                                   |\n");
+        printf("+------------------------------------------------------------+\n");
+        prompt("Select option: ", sel, sizeof(sel));
         printf("\n");
 
-        if (ch == '1') {
-            char disk[64];
-            char host[64];
-            char proc[8];
-            printf("Guided mode selected.\n");
-            printf("This mode collects settings, then launches CLI installer.\n\n");
-            prompt("Disk (/dev/sda): ", disk, sizeof(disk));
-            prompt("Hostname (obelisk): ", host, sizeof(host));
-            prompt("Enable /proc [yes/no]: ", proc, sizeof(proc));
-            printf("\nCollected:\n  disk=%s\n  hostname=%s\n  /proc=%s\n\n",
-                   disk[0] ? disk : "/dev/sda",
-                   host[0] ? host : "obelisk",
-                   proc[0] ? proc : "no");
-
-            char *argv[] = { "/sbin/installer", NULL };
-            char *envp[] = { NULL };
-            (void)execve("/sbin/installer", argv, envp);
-            printf("Failed to launch /sbin/installer\n");
-            _exit(1);
-        } else if (ch == '2') {
-            char *argv[] = { "/sbin/installer", NULL };
-            char *envp[] = { NULL };
-            (void)execve("/sbin/installer", argv, envp);
-            printf("Failed to launch /sbin/installer\n");
-            _exit(1);
-        } else if (ch == 'q' || ch == 'Q') {
+        if (strcmp(sel, "1") == 0) {
+            clear_screen();
+            draw_header();
+            printf("Guided wizard launches the improved CLI workflow.\n\n");
+            printf("It will walk you through:\n");
+            printf("  - disk and target root selection\n");
+            printf("  - hostname and /proc compatibility\n");
+            printf("  - desktop mode: tty / xorg / xfce / xdm\n");
+            printf("  - optional web repo URL + index pin\n");
+            printf("  - profile installation with opkg\n\n");
+            pause_enter();
+            if (launch_cli_installer() < 0) _exit(1);
+        } else if (strcmp(sel, "2") == 0) {
+            if (launch_cli_installer() < 0) _exit(1);
+        } else if (strcmp(sel, "3") == 0) {
+            clear_screen();
+            draw_header();
+            printf("Desktop mode guidance:\n\n");
+            printf("  tty  - keep text shell only, smallest footprint\n");
+            printf("  xorg - install X11 base profile only\n");
+            printf("  xfce - install XFCE profile (includes xorg)\n\n");
+            printf("  xdm  - display-manager style launcher path (xfce/xorg)\n\n");
+            printf("For custom web repos you can provide:\n");
+            printf("  - desktop repo URL (https://... or file://...)\n");
+            printf("  - optional index pin sha256:<hash>\n\n");
+            printf("After install, validate desktop launch path with:\n");
+            printf("  desktop-session auto --probe-only\n\n");
+            pause_enter();
+        } else if (strcmp(sel, "q") == 0 || strcmp(sel, "Q") == 0) {
             printf("Installer aborted.\n");
             _exit(0);
         } else {
             printf("Unknown selection.\n\n");
+            pause_enter();
         }
     }
 }

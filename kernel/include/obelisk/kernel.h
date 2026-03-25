@@ -61,6 +61,11 @@ int snprintf(char *buf, size_t size, const char *fmt, ...);
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
 void console_putc(char c);
 void console_write(const char *buf, size_t len);
+void console_fb_init(void);
+void console_poll(void);
+int devfs_console_getc_nonblock(void);
+char devfs_console_getc(void);
+void devfs_console_flush_input(void);
 
 /* Panic function */
 __noreturn void panic(const char *fmt, ...);
@@ -130,6 +135,9 @@ bool net_is_ready(void);
 void pci_init(void);
 void virtio_net_init(void);
 void e1000_init(void);
+unsigned long devfs_input_kbd_drop_count(void);
+unsigned long devfs_input_mouse_drop_count(void);
+unsigned long devfs_input_mice_drop_count(void);
 void irq_enable(uint8_t irq);
 void irq_disable(uint8_t irq);
 int irq_register_handler(uint8_t irq, irq_handler_fn_t fn, void *ctx);

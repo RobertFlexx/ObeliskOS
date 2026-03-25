@@ -6,7 +6,7 @@ Obelisk **without** enabling dynamic ELF support.
 ## Goal
 
 Run D-built userland binaries under the same static execution model as existing
-Obelisk userland tools (`init`, `busybox`, etc.), while keeping runtime
+Obelisk userland tools (`init`, `rockbox`, etc.), while keeping runtime
 requirements minimal and explicit.
 
 ## Current validated mode
@@ -66,13 +66,19 @@ For Obelisk-native D binaries today:
   - `list`, `info <pkg>`, `files <pkg>`, `owner <path>`
 - local repo workflows now supported:
   - `repo` (list configured repos from `/etc/opkg/repos.conf`)
-  - `update` (cache indexes from local path / `file://` repos)
+  - `update` (cache indexes from local path / `file://` / `http(s)` repos)
   - `search <term>` (search cached indexes)
-  - `install <pkg>` from local cached repos
+  - `install <pkg>` from cached repos (including HTTP-backed repos after fetch)
+    with recursive dependency resolution from repo `depends`
+  - `install-profile <xorg|xfce>` for desktop profile package groups
 - `doctor` (runtime capability diagnostics, including socket syscall probe)
-- HTTP/HTTPS transport is still pending in this static runtime profile; current
-  kernel/userspace runtime path does not provide complete networking support for
-  in-image `opkg` web fetch in this mode
+- HTTP/HTTPS transport in-image is fetch-helper based (`curl`/`wget`/`fetch`)
+  and requires:
+  - working TCP path
+  - helper binary present in image
+  - for HTTPS: helper protocol support + CA bundle (for certificate verification)
+- repo entries may optionally pin `index.json` with a third field:
+  `sha256:<hex>` in `/etc/opkg/repos.conf`
 - `build <dir>` remains intentionally unavailable in this profile for now
 - this moves `/bin/opkg` from help-only routing to usable local package management
 

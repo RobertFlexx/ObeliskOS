@@ -26,7 +26,7 @@ root_dir = sys.argv[1]
 log_file = sys.argv[2]
 timeout_sec = int(sys.argv[3])
 
-prompt_markers = ("Obelisk shell ready.", "$ ", "zsh% ")
+prompt_markers = ("Obelisk osh ready.", "osh$ ", "$ ")
 commands = [
     "ls",
     "ls -l /",
@@ -45,7 +45,7 @@ commands = [
 ]
 
 required = [
-    "Obelisk shell ready.",
+    "Obelisk osh ready.",
     "hello smoke",
     "system.kernel.version =",
     "Usage: opkg <command> [args]",

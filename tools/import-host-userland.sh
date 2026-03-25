@@ -2,12 +2,12 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
-  echo "usage: $0 <rootfs-dir> <zsh-bin> [coreutils-bin...]" >&2
+  echo "usage: $0 <rootfs-dir> <optional-shell-bin> [coreutils-bin...]" >&2
   exit 1
 fi
 
 ROOTFS_DIR="$1"
-ZSH_BIN="$2"
+SHELL_BIN="$2"
 shift 2
 
 copy_path_into_rootfs() {
@@ -70,8 +70,8 @@ import_bin() {
 
 echo "Importing host userland into ${ROOTFS_DIR}..."
 
-if import_bin "$ZSH_BIN"; then
-  echo "  imported zsh: $ZSH_BIN"
+if [ -n "${SHELL_BIN}" ] && import_bin "$SHELL_BIN"; then
+  echo "  imported shell: $SHELL_BIN"
 fi
 
 for tool in "$@"; do

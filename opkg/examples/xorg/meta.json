@@ -1,0 +1,12 @@
+{
+  "name": "xorg",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "Xorg base profile package",
+  "description": "Installs baseline Xorg profile markers and dependencies for Obelisk desktop bring-up.",
+  "depends": [],
+  "provides": ["x11-server"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "desktop"
+}

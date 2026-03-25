@@ -1,0 +1,15 @@
+#!/bin/sh
+# Obelisk generic X session compatibility wrapper for display managers.
+
+if [ -x /usr/bin/startxfce4 ]; then
+  exec /usr/bin/startxfce4
+fi
+if [ -x /bin/startxfce4 ]; then
+  exec /bin/startxfce4
+fi
+if [ -x /usr/lib/obelisk/desktop/startxfce4-compat ]; then
+  exec /usr/lib/obelisk/desktop/startxfce4-compat
+fi
+
+echo "xsession-compat: no XFCE launcher available"
+exec /bin/osh -i

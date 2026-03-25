@@ -17,10 +17,21 @@ struct obelisk_boot_module {
     char name[OBELISK_BOOT_MODULE_NAME_LEN];
 };
 
+struct obelisk_framebuffer_info {
+    uint64_t phys_addr;
+    uint32_t pitch;
+    uint32_t width;
+    uint32_t height;
+    uint8_t bpp;
+    uint8_t type;
+    bool available;
+};
+
 void bootinfo_init(uint32_t magic, uint64_t multiboot_addr);
 const char *bootinfo_cmdline(void);
 size_t bootinfo_module_count(void);
 const struct obelisk_boot_module *bootinfo_module_at(size_t index);
 const struct obelisk_boot_module *bootinfo_find_module(const char *name);
+const struct obelisk_framebuffer_info *bootinfo_framebuffer(void);
 
 #endif

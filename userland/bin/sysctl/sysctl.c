@@ -93,6 +93,7 @@ static const char *const known_sysctls[] = {
     "system.kernel.hostname",
     "system.kernel.domainname",
     "system.kernel.uptime",
+    "system.kernel.uptime_ms",
     "system.kernel.context_switches",
     "system.cpu.count",
     "system.cpu.frequency",

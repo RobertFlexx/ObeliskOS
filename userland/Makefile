@@ -35,7 +35,7 @@ OBELISKD := $(OUTDIR)/obeliskd
 SYSCTL := $(OUTDIR)/sysctl
 INSTALLER := $(OUTDIR)/installer
 INSTALLER_TUI := $(OUTDIR)/installer-tui
-BUSYBOX := $(OUTDIR)/busybox
+ROCKBOX := $(OUTDIR)/rockbox
 IDCPP := $(OUTDIR)/idcpp
 STATCPP := $(OUTDIR)/statcpp
 CREDPROBE := $(OUTDIR)/credprobe
@@ -47,8 +47,13 @@ OPKG := $(OUTDIR)/opkg
 DPROBE := $(OUTDIR)/dprobe
 PING := $(OUTDIR)/ping
 NSLOOKUP := $(OUTDIR)/nslookup
+CURL := $(OUTDIR)/curl
+FETCH := $(OUTDIR)/fetch
+FBINFO := $(OUTDIR)/fbinfo
+XORG_SMOKE := $(OUTDIR)/xorg-smoke
+DESKTOP_SESSION := $(OUTDIR)/desktop-session
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(BUSYBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION)
 
 CFLAGS := \
 	-ffreestanding \
@@ -126,7 +131,7 @@ $(INSTALLER_TUI): $(BUILDDIR)/bin/installer-tui/installer_tui.o $(LIBC) | $(OUTD
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
-$(BUSYBOX): $(BUILDDIR)/bin/busybox/busybox.o $(LIBC) | $(OUTDIR)
+$(ROCKBOX): $(BUILDDIR)/bin/rockbox/rockbox.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
@@ -171,6 +176,26 @@ $(PING): $(BUILDDIR)/bin/ping/ping.o $(LIBC) | $(OUTDIR)
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 
 $(NSLOOKUP): $(BUILDDIR)/bin/nslookup/nslookup.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(CURL): $(BUILDDIR)/bin/curl/curl.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(FETCH): $(BUILDDIR)/bin/fetch/fetch.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(FBINFO): $(BUILDDIR)/bin/fbinfo/fbinfo.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(XORG_SMOKE): $(BUILDDIR)/bin/xorg-smoke/xorg_smoke.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(DESKTOP_SESSION): $(BUILDDIR)/bin/desktop-session/desktop_session.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
 

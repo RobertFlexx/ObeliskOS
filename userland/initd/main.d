@@ -52,6 +52,7 @@ struct Config {
     uid_t uid;
     gid_t gid;
     int verbose;
+    char[16] desktopMode;
 }
 
 struct Service {
@@ -213,13 +214,14 @@ private char* splitKV(char* line, char** outVal) {
 private void configDefaults(Config* cfg) {
     cstrcpy(cfg.profile.ptr, "production".ptr, cfg.profile.length);
     cstrcpy(cfg.serviceList.ptr, "/etc/obelisk/initd/services/motd.svc,/etc/obelisk/initd/services/identity.svc".ptr, cfg.serviceList.length);
-    cstrcpy(cfg.shellPath.ptr, "/bin/busybox".ptr, cfg.shellPath.length);
-    cstrcpy(cfg.shellArg0.ptr, "busybox".ptr, cfg.shellArg0.length);
-    cstrcpy(cfg.shellArg1.ptr, "sh".ptr, cfg.shellArg1.length);
+    cstrcpy(cfg.shellPath.ptr, "/bin/osh".ptr, cfg.shellPath.length);
+    cstrcpy(cfg.shellArg0.ptr, "osh".ptr, cfg.shellArg0.length);
+    cstrcpy(cfg.shellArg1.ptr, "-i".ptr, cfg.shellArg1.length);
     cstrcpy(cfg.userName.ptr, "obelisk".ptr, cfg.userName.length);
     cfg.uid = 1000;
     cfg.gid = 1000;
     cfg.verbose = 1;
+    cstrcpy(cfg.desktopMode.ptr, "tty".ptr, cfg.desktopMode.length);
 }
 
 private void parseConfig(Config* cfg, char* content) {
@@ -247,7 +249,19 @@ private void parseConfig(Config* cfg, char* content) {
         else if (cstrcmp(key, "default_uid".ptr) == 0) { uint v; if (parseU32(value, &v) == 0) cfg.uid = v; }
         else if (cstrcmp(key, "default_gid".ptr) == 0) { uint v; if (parseU32(value, &v) == 0) cfg.gid = v; }
         else if (cstrcmp(key, "verbose".ptr) == 0) cfg.verbose = parseBool(value);
+        else if (cstrcmp(key, "desktop_mode".ptr) == 0) cstrcpy(cfg.desktopMode.ptr, value, cfg.desktopMode.length);
     }
+}
+
+private void loadDesktopMode(Config* cfg) {
+    char[256] buf = void;
+    if (readSmallFile("/etc/obelisk-desktop.conf".ptr, buf.ptr, buf.length) < 0) {
+        /* Fall back to installer plan when dedicated desktop conf is absent. */
+        if (readSmallFile("/etc/obelisk-install.conf".ptr, buf.ptr, buf.length) < 0) {
+            return;
+        }
+    }
+    parseConfig(cfg, buf.ptr);
 }
 
 private int lookupUserByName(const char* name, uid_t* outUid, gid_t* outGid) {
@@ -403,19 +417,32 @@ private void launchInteractive(const Config* cfg) {
         cast(char*)"PATH=/bin:/sbin:/usr/bin".ptr,
         cast(char*)"HOME=/home/obelisk".ptr,
         cast(char*)"TERM=vt100".ptr,
-        cast(char*)"SHELL=/bin/sh".ptr,
+        cast(char*)"SHELL=/bin/osh".ptr,
         cast(char*)"USER=obelisk".ptr,
         null
     ];
+
+    /* Auto-launch desktop session when installer selected xorg/xfce/xdm mode. */
+    if (cstrcmp(cfg.desktopMode.ptr, "tty".ptr) != 0) {
+        char*[3] dsArgv = [
+            cast(char*)"desktop-session".ptr,
+            cast(char*)cfg.desktopMode.ptr,
+            null
+        ];
+        statusLine(C_BLUE, "[*]".ptr, "attempting desktop auto-start".ptr);
+        if (execve("/bin/desktop-session".ptr, dsArgv.ptr, envp.ptr) < 0) {
+            statusLine(C_YELLOW, "[..]".ptr, "desktop auto-start failed; falling back to shell".ptr);
+        }
+    }
 
     char*[3] argv = [ cast(char*)cfg.shellArg0.ptr, cast(char*)cfg.shellArg1.ptr, null ];
     if (execve(cfg.shellPath.ptr, argv.ptr, envp.ptr) < 0) {
         statusLine(C_RED, "[!!]".ptr, "primary shell failed, trying /sbin/init-legacy".ptr);
         char*[2] fargv = [ cast(char*)"init-legacy".ptr, null ];
         execve("/sbin/init-legacy".ptr, fargv.ptr, envp.ptr);
-        statusLine(C_RED, "[!!]".ptr, "legacy init failed, trying /bin/busybox sh".ptr);
-        char*[3] bbargv = [ cast(char*)"busybox".ptr, cast(char*)"sh".ptr, null ];
-        execve("/bin/busybox".ptr, bbargv.ptr, envp.ptr);
+        statusLine(C_RED, "[!!]".ptr, "legacy init failed, trying /bin/osh".ptr);
+        char*[3] bbargv = [ cast(char*)"osh".ptr, cast(char*)"-i".ptr, null ];
+        execve("/bin/osh".ptr, bbargv.ptr, envp.ptr);
     }
 }
 
@@ -433,6 +460,7 @@ extern(C) void _start() {
     } else {
         statusLine(C_YELLOW, "[..]".ptr, "using built-in defaults (no initd.conf)".ptr);
     }
+    loadDesktopMode(&cfg);
 
     if (cfg.verbose != 0) {
         print(C_DIM);
@@ -442,6 +470,8 @@ extern(C) void _start() {
         printU32(cfg.uid);
         print("/");
         printU32(cfg.gid);
+        print(" desktop_mode=");
+        print(cfg.desktopMode.ptr);
         println(C_RESET);
     }
 

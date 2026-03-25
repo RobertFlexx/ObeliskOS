@@ -142,7 +142,7 @@ static void fallback_shell(void) {
         if (strcmp(line, "help") == 0) {
             print("help, clear, uname, reboot, shutdown, exit\n");
         } else if (strcmp(line, "clear") == 0) {
-            print("\033[2J\033[H");
+            print("\033[3J\033[2J\033[H");
         } else if (strcmp(line, "uname") == 0) {
             print("Obelisk OS\n");
         } else if (strcmp(line, "reboot") == 0) {
@@ -191,27 +191,26 @@ void _start(void) {
     pid_buf[idx] = '\0';
     print(pid_buf);
     print(")\n");
-    print("Boot target: /bin/busybox sh (reliable mode)\n");
+    print("Boot target: /bin/osh (Obelisk shell)\n");
 
     char *const envp[] = {
         "PATH=/bin:/sbin:/usr/bin",
         "HOME=/home/obelisk",
-        "SHELL=/bin/sh",
+        "SHELL=/bin/osh",
         "USER=obelisk",
         "TERM=vt100",
         NULL
     };
     char *const sh_argv[] = { "sh", NULL };
-    char *const bb_argv[] = { "busybox", "sh", NULL };
+    char *const osh_argv[] = { "osh", "-i", NULL };
 
-    print("Launching reliable interactive shell...\n");
-    print("Tip: run '/usr/bin/zsh -i' manually to test full GNU userland.\n");
+    print("Launching Obelisk shell...\n");
     print("Dropping to default user: obelisk (uid/gid 1000)\n");
     if (setgid(1000) < 0 || setuid(1000) < 0) {
         print("init: warning: failed to drop privileges, continuing as root\n");
     }
-    if (execve("/bin/busybox", bb_argv, envp) < 0) {
-        print("init: /bin/busybox failed, trying /bin/sh\n");
+    if (execve("/bin/osh", osh_argv, envp) < 0) {
+        print("init: /bin/osh failed, trying /bin/sh\n");
         if (execve("/bin/sh", sh_argv, envp) < 0) {
             print("init: all shell exec attempts failed\n");
             fallback_shell();

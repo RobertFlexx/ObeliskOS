@@ -124,6 +124,9 @@ static void memory_init(void) {
     
     /* Kernel heap allocator */
     kmalloc_init();
+
+    /* Enable framebuffer text mirroring once MMU mappings are available. */
+    console_fb_init();
     
     printk(KERN_INFO "Memory subsystem initialized.\n");
 }

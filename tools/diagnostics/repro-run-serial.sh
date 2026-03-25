@@ -33,9 +33,9 @@ repro_cmd = sys.argv[4]
 post_cmd_wait_sec = int(sys.argv[5])
 
 prompt_markers = (
-    "Obelisk shell ready.",
+    "Obelisk osh ready.",
     "$ ",
-    "zsh% ",
+    "osh$ ",
 )
 
 proc = subprocess.Popen(

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Obelisk XFCE session compatibility wrapper.
+
+echo "xfce4-session-compat: placeholder session active (real XFCE binaries not packaged yet)"
+exec /bin/osh -i
+#!/bin/sh
+# Obelisk XFCE session compatibility wrapper.
+
+echo "xfce4-session-compat: placeholder session active (real XFCE binaries not packaged yet)"
+exec /bin/osh -i

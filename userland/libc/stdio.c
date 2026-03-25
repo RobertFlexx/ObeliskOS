@@ -16,11 +16,12 @@ extern ssize_t read(int fd, void *buf, size_t count);
 #define STDIN_FILENO    0
 #define STDOUT_FILENO   1
 #define STDERR_FILENO   2
+static int g_stdio_out_fd = STDOUT_FILENO;
 
 /* Put character */
 int putchar(int c) {
     char ch = c;
-    write(STDOUT_FILENO, &ch, 1);
+    write(g_stdio_out_fd, &ch, 1);
     return c;
 }
 
@@ -42,65 +43,51 @@ int getchar(void) {
     return c;
 }
 
-/* Print integer */
-static void print_int(int value, int base, int width, char pad) {
-    char buf[32];
+static int print_uint_base(uint64_t value, unsigned base, int width, char pad, int uppercase) {
+    char buf[64];
     int i = 0;
-    int negative = 0;
-    unsigned int magnitude;
-    
-    if (value < 0 && base == 10) {
-        negative = 1;
-        magnitude = (unsigned int)(-(value + 1)) + 1U;
-    } else {
-        magnitude = (unsigned int)value;
-    }
-    
-    if (magnitude == 0) {
-        buf[i++] = '0';
-    } else {
-        while (magnitude > 0) {
-            unsigned int digit = magnitude % (unsigned int)base;
-            buf[i++] = digit < 10 ? '0' + digit : 'a' + digit - 10;
-            magnitude /= (unsigned int)base;
-        }
-    }
-    
-    if (negative) {
-        buf[i++] = '-';
-    }
-    
-    while (i < width) {
-        buf[i++] = pad;
-    }
-    
-    while (i > 0) {
-        putchar(buf[--i]);
-    }
-}
+    int out = 0;
+    const char *digits = uppercase ? "0123456789ABCDEF" : "0123456789abcdef";
 
-/* Print unsigned integer */
-static void print_uint(unsigned long value, int base, int width, char pad) {
-    char buf[32];
-    int i = 0;
-    
+    if (base < 2 || base > 16) {
+        return 0;
+    }
     if (value == 0) {
         buf[i++] = '0';
     } else {
-        while (value > 0) {
-            int digit = value % base;
-            buf[i++] = digit < 10 ? '0' + digit : 'a' + digit - 10;
-            value /= base;
+        while (value > 0 && i < (int)sizeof(buf)) {
+            unsigned d = (unsigned)(value % (uint64_t)base);
+            buf[i++] = digits[d];
+            value /= (uint64_t)base;
         }
     }
-    
-    while (i < width) {
+    while (i < width && i < (int)sizeof(buf)) {
         buf[i++] = pad;
     }
-    
     while (i > 0) {
         putchar(buf[--i]);
+        out++;
     }
+    return out;
+}
+
+static int print_int_base(int64_t value, unsigned base, int width, char pad) {
+    uint64_t mag;
+    int out = 0;
+    int num_width = width;
+    if (base != 10) {
+        return print_uint_base((uint64_t)value, base, width, pad, 0);
+    }
+    if (value < 0) {
+        putchar('-');
+        out++;
+        if (num_width > 0) num_width--;
+        mag = (uint64_t)(-(value + 1)) + 1ULL;
+    } else {
+        mag = (uint64_t)value;
+    }
+    out += print_uint_base(mag, base, num_width, pad, 0);
+    return out;
 }
 
 /* Simple printf */
@@ -134,22 +121,59 @@ static int vprintf_impl(const char *fmt, va_list args_in) {
             fmt++;
         }
         
+        /* Handle length modifiers */
+        int length = 0; /* 0=default,1=l,2=ll,3=z */
+        if (*fmt == 'l') {
+            length = 1;
+            fmt++;
+            if (*fmt == 'l') {
+                length = 2;
+                fmt++;
+            }
+        } else if (*fmt == 'z') {
+            length = 3;
+            fmt++;
+        }
+
         /* Handle format */
         switch (*fmt) {
             case 'd':
-            case 'i':
-                print_int(va_arg(args, int), 10, width, pad);
+            case 'i': {
+                int64_t v;
+                if (length == 2) v = va_arg(args, long long);
+                else if (length == 1) v = va_arg(args, long);
+                else if (length == 3) v = (int64_t)va_arg(args, ssize_t);
+                else v = va_arg(args, int);
+                count += print_int_base(v, 10, width, pad);
                 break;
+            }
             case 'u':
-                print_uint(va_arg(args, unsigned int), 10, width, pad);
+            {
+                uint64_t v;
+                if (length == 2) v = va_arg(args, unsigned long long);
+                else if (length == 1) v = va_arg(args, unsigned long);
+                else if (length == 3) v = (uint64_t)va_arg(args, size_t);
+                else v = va_arg(args, unsigned int);
+                count += print_uint_base(v, 10, width, pad, 0);
                 break;
+            }
             case 'x':
-                print_uint(va_arg(args, unsigned int), 16, width, pad);
+            case 'X':
+            {
+                uint64_t v;
+                int upper = (*fmt == 'X');
+                if (length == 2) v = va_arg(args, unsigned long long);
+                else if (length == 1) v = va_arg(args, unsigned long);
+                else if (length == 3) v = (uint64_t)va_arg(args, size_t);
+                else v = va_arg(args, unsigned int);
+                count += print_uint_base(v, 16, width, pad, upper);
                 break;
+            }
             case 'p':
                 putchar('0');
                 putchar('x');
-                print_uint(va_arg(args, unsigned long), 16, 16, '0');
+                count += 2;
+                count += print_uint_base((uint64_t)(uintptr_t)va_arg(args, void *), 16, 2 * (int)sizeof(void *), '0', 0);
                 break;
             case 's': {
                 const char *s = va_arg(args, const char *);
@@ -184,7 +208,9 @@ static int vprintf_impl(const char *fmt, va_list args_in) {
 int printf(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
+    g_stdio_out_fd = STDOUT_FILENO;
     int ret = vprintf_impl(fmt, args);
+    g_stdio_out_fd = STDOUT_FILENO;
     va_end(args);
     return ret;
 }
@@ -193,7 +219,9 @@ int printf(const char *fmt, ...) {
 int fprintf_stderr(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
+    g_stdio_out_fd = STDERR_FILENO;
     int ret = vprintf_impl(fmt, args);
+    g_stdio_out_fd = STDOUT_FILENO;
     va_end(args);
     return ret;
 }

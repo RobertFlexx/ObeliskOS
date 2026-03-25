@@ -333,6 +333,8 @@ struct process *process_create(const char *name, uint32_t flags) {
     INIT_LIST_HEAD(&proc->sibling);
     INIT_LIST_HEAD(&proc->thread_group);
     INIT_LIST_HEAD(&proc->run_list);
+    INIT_LIST_HEAD(&proc->sleep_list);
+    proc->wakeup_tick = 0;
     
     /* Initialize wait queue */
     proc->wait_chldexit = (wait_queue_head_t)WAIT_QUEUE_HEAD_INIT(proc->wait_chldexit);
@@ -365,6 +367,7 @@ void process_destroy(struct process *proc) {
     list_del(&proc->tasks);
     list_del(&proc->sibling);
     list_del(&proc->run_list);
+    list_del(&proc->sleep_list);
     
     /* Remove from PID table */
     free_pid(proc->pid);
@@ -448,10 +451,10 @@ static void create_init_process(void) {
 
 static void init_bootstrap_thread(void) {
     static const char *fallback_init_paths[] = {
-        "/usr/bin/zsh",
-        "/bin/zsh",
+        "/usr/bin/osh",
+        "/bin/osh",
+        "/bin/rockbox",
         "/bin/sh",
-        "/bin/busybox",
         "/sbin/installer",
         NULL
     };

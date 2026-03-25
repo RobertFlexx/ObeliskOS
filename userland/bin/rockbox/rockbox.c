@@ -86,7 +86,7 @@ struct winsize {
 };
 
 static char env_home[96] = "HOME=/";
-static char env_shell[96] = "SHELL=/bin/sh";
+static char env_shell[96] = "SHELL=/bin/osh";
 static char env_user[64] = "USER=root";
 static char *shell_envp[] = {
     "PATH=/bin:/sbin:/usr/bin",
@@ -1427,16 +1427,16 @@ static int try_exec_external(char **args);
 static void report_exec_failure(const char *cmd, int ret);
 static int wildcard_match(const char *pat, const char *s);
 
-static int read_uptime_seconds(unsigned long *out_secs) {
+static int read_uptime_millis(unsigned long *out_ms) {
     char buf[64];
     size_t len = sizeof(buf);
     struct ob_sysctl_args args;
     unsigned long v = 0;
     int i = 0;
-    if (!out_secs) {
+    if (!out_ms) {
         return -1;
     }
-    args.name = "system.kernel.uptime";
+    args.name = "system.kernel.uptime_ms";
     args.oldval = buf;
     args.oldlenp = &len;
     args.newval = NULL;
@@ -1448,20 +1448,21 @@ static int read_uptime_seconds(unsigned long *out_secs) {
         v = (v * 10UL) + (unsigned long)(buf[i] - '0');
         i++;
     }
-    *out_secs = v;
+    *out_ms = v;
     return 0;
 }
 
 static int applet_time_exec(int argc, char **argv) {
     long pid;
     int status = 0;
-    unsigned long start = 0;
-    unsigned long end = 0;
+    unsigned long start_ms = 0;
+    unsigned long end_ms = 0;
+    unsigned long elapsed_ms = 0;
     if (argc < 2) {
         write_str("time: usage: time <command> [args...]\n");
         return 1;
     }
-    (void)read_uptime_seconds(&start);
+    (void)read_uptime_millis(&start_ms);
     pid = syscall0(SYS_FORK);
     if (pid < 0) {
         print_errno("fork", pid);
@@ -1491,9 +1492,17 @@ static int applet_time_exec(int argc, char **argv) {
         print_errno("wait4", ret);
         break;
     }
-    (void)read_uptime_seconds(&end);
+    (void)read_uptime_millis(&end_ms);
+    elapsed_ms = (end_ms >= start_ms) ? (end_ms - start_ms) : 0;
     write_str("real ");
-    write_u64_dec((end >= start) ? (end - start) : 0);
+    write_u64_dec(elapsed_ms / 1000UL);
+    write_ch('.');
+    {
+        unsigned long frac = elapsed_ms % 1000UL;
+        write_ch((char)('0' + (frac / 100UL) % 10UL));
+        write_ch((char)('0' + (frac / 10UL) % 10UL));
+        write_ch((char)('0' + frac % 10UL));
+    }
     write_str("s\n");
     return (status == 0) ? 0 : 1;
 }
@@ -1613,7 +1622,7 @@ static int applet_main(const char *name, int argc, char **argv);
 
 static int is_builtin_applet_name(const char *name) {
     static const char *const names[] = {
-        "busybox", "sh", "ash", "zsh", "echo", "uname", "pwd",
+        "rockbox", "busybox", "osh", "sh", "ash", "echo", "uname", "pwd",
         "ls", "cat", "touch", "mkdir", "rm", "rmdir",
         "chmod", "chown", "stat", "head", "tail", "wc", "cut",
         "true", "false", "users", "find", "time",
@@ -1646,8 +1655,8 @@ struct static_account {
 };
 
 static const struct static_account static_accounts[] = {
-    { "root", 0, 0, "/root", "/bin/sh" },
-    { "obelisk", 1000, 1000, "/home/obelisk", "/bin/sh" },
+    { "root", 0, 0, "/root", "/bin/osh" },
+    { "obelisk", 1000, 1000, "/home/obelisk", "/bin/osh" },
 };
 
 static int lookup_static_user_record(const char *username, struct user_record *out) {
@@ -1992,7 +2001,7 @@ static int lookup_uid_record(unsigned uid, struct user_record *out) {
 static void set_identity_env(const struct user_record *u) {
     char fallback_home[96];
     const char *home = u->home[0] ? u->home : NULL;
-    const char *shell = u->shell[0] ? u->shell : "/bin/sh";
+    const char *shell = u->shell[0] ? u->shell : "/bin/osh";
 
     if (!home) {
         if (u->uid == 0) {
@@ -2320,7 +2329,7 @@ static int applet_sudo(int argc, char **argv) {
 
 static const char *builtin_names[] = {
     "help", "echo", "uname", "clear", "reboot", "shutdown", "exit",
-    "zsh", "sh", "busybox", "cd", "pwd", "ls", "cat", "touch",
+    "osh", "sh", "rockbox", "busybox", "cd", "pwd", "ls", "cat", "touch",
     "mkdir", "rm", "rmdir", "write", "chmod", "chown", "stat",
     "su", "sudo", "whoami", "id",
     "sysctl", "installer", "installer-tui", NULL
@@ -2587,9 +2596,26 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
             continue;
         }
 
+        if (c == 0x01) { /* Ctrl-A */
+            cursor = 0;
+            redraw_line(prompt, line, cursor);
+            continue;
+        }
+
         if (c == 0x1b) {
             char a = 0, b = 0;
             if (syscall3(SYS_READ, 0, (long)&a, 1) <= 0) continue;
+            if (a == 'O') {
+                if (syscall3(SYS_READ, 0, (long)&b, 1) <= 0) continue;
+                if (b == 'H') { /* Home */
+                    cursor = 0;
+                    redraw_line(prompt, line, cursor);
+                } else if (b == 'F') { /* End */
+                    cursor = len;
+                    redraw_line(prompt, line, cursor);
+                }
+                continue;
+            }
             if (syscall3(SYS_READ, 0, (long)&b, 1) <= 0) continue;
             if (a == '[') {
                 if (b == 'A') { /* Up */
@@ -2634,6 +2660,16 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
                     }
                     continue;
                 }
+                if (b == 'H') { /* Home */
+                    cursor = 0;
+                    redraw_line(prompt, line, cursor);
+                    continue;
+                }
+                if (b == 'F') { /* End */
+                    cursor = len;
+                    redraw_line(prompt, line, cursor);
+                    continue;
+                }
                 if (b == '3') { /* Delete key: ESC [ 3 ~ */
                     char t = 0;
                     if (syscall3(SYS_READ, 0, (long)&t, 1) > 0 && t == '~') {
@@ -2644,6 +2680,18 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
                             len--;
                             redraw_line(prompt, line, cursor);
                         }
+                    }
+                    continue;
+                }
+                if (b == '1' || b == '4' || b == '7' || b == '8') {
+                    char t = 0;
+                    if (syscall3(SYS_READ, 0, (long)&t, 1) > 0 && t == '~') {
+                        if (b == '1' || b == '7') { /* Home */
+                            cursor = 0;
+                        } else { /* End */
+                            cursor = len;
+                        }
+                        redraw_line(prompt, line, cursor);
                     }
                     continue;
                 }
@@ -3083,8 +3131,8 @@ static int execute_simple_command(const char *prompt, char *line) {
     }
 
     if (str_cmp(args[0], "help") == 0) {
-        write_str("builtins: help echo uname clear reboot shutdown exit zsh sh busybox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut find time true false users su sudo whoami id opkg\n");
-        write_str("shell: quotes, $VAR expansion, && || ;, minimal pipes |, redirects < > >>, Up/Down history, TAB completion\n");
+        write_str("builtins: help echo uname clear reboot shutdown exit osh sh rockbox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut find time true false users su sudo whoami id opkg\n");
+        write_str("shell: quotes, $VAR expansion, && || ;, minimal pipes |, redirects < > >>, Ctrl-A Home/End Left/Right, Up/Down history, TAB completion\n");
         rc = 0;
     } else if (str_cmp(args[0], "echo") == 0) {
         applet_echo(argc, args);
@@ -3171,12 +3219,13 @@ static int execute_simple_command(const char *prompt, char *line) {
         applet_shutdown();
         rc = 0;
     } else if (str_cmp(args[0], "clear") == 0) {
-        write_str("\033[2J\033[H");
+        write_str("\033[3J\033[2J\033[H");
         rc = 0;
-    } else if (str_cmp(args[0], "zsh") == 0) {
-        rc = run_shell("zsh% ");
-    } else if (str_cmp(args[0], "sh") == 0 || str_cmp(args[0], "busybox") == 0) {
-        rc = run_shell("$ ");
+    } else if (str_cmp(args[0], "osh") == 0 ||
+               str_cmp(args[0], "sh") == 0 ||
+               str_cmp(args[0], "rockbox") == 0 ||
+               str_cmp(args[0], "busybox") == 0) {
+        rc = run_shell("osh$ ");
     } else if (str_cmp(args[0], "exit") == 0) {
         restore_redirections(saved_in, saved_out);
         return -1000;
@@ -3196,7 +3245,7 @@ static int run_shell(const char *prompt) {
     int hist_count = 0;
     int hist_pos = -1;
 
-    write_str("Obelisk shell ready. Type 'help' for commands.\n");
+    write_str("Obelisk osh ready. Type 'help' for commands.\n");
     while (1) {
         hist_pos = -1;
         read_line_interactive(prompt, line, sizeof(line), history, hist_count, &hist_pos);
@@ -3244,17 +3293,14 @@ static int run_shell(const char *prompt) {
 }
 
 static int applet_main(const char *name, int argc, char **argv) {
-    if (str_cmp(name, "busybox") == 0) {
+    if (str_cmp(name, "rockbox") == 0 || str_cmp(name, "busybox") == 0) {
         if (argc >= 2) {
             return applet_main(argv[1], argc - 1, &argv[1]);
         }
-        return run_shell("$ ");
+        return run_shell("osh$ ");
     }
-    if (str_cmp(name, "sh") == 0 || str_cmp(name, "ash") == 0) {
-        return run_shell("$ ");
-    }
-    if (str_cmp(name, "zsh") == 0) {
-        return run_shell("zsh% ");
+    if (str_cmp(name, "osh") == 0 || str_cmp(name, "sh") == 0 || str_cmp(name, "ash") == 0) {
+        return run_shell("osh$ ");
     }
     if (str_cmp(name, "echo") == 0) {
         applet_echo(argc, argv);
@@ -3348,7 +3394,7 @@ static int applet_main(const char *name, int argc, char **argv) {
         return 0;
     }
     if (str_cmp(name, "clear") == 0) {
-        write_str("\033[2J\033[H");
+        write_str("\033[3J\033[2J\033[H");
         return 0;
     }
     if (str_cmp(name, "su") == 0) {
@@ -3366,7 +3412,7 @@ static int applet_main(const char *name, int argc, char **argv) {
         return 0;
     }
 
-    write_str("busybox: unsupported applet: ");
+    write_str("rockbox: unsupported applet: ");
     write_str(name);
     write_str("\n");
     return 1;
@@ -3378,7 +3424,7 @@ void _start(void) {
 
     int argc = (int)stack_ptr[0];
     char **argv = (char **)&stack_ptr[1];
-    char *fallback_argv[] = { "busybox", NULL };
+    char *fallback_argv[] = { "rockbox", NULL };
     char **use_argv = argv;
     int use_argc = argc;
 
@@ -3408,13 +3454,15 @@ void _start(void) {
         }
     }
 
-    /* Prefer execfn applet name for copied busybox applets.
+    /* Prefer execfn applet name for copied rockbox applets.
      * This avoids falling back to shell when argv[0] is ambiguous. */
     if (exec_name && *exec_name) {
-        if ((use_argc == 1 && str_cmp(exec_name, "busybox") != 0) ||
+        if ((use_argc == 1 && str_cmp(exec_name, "rockbox") != 0 && str_cmp(exec_name, "busybox") != 0) ||
+            str_cmp(name, "rockbox") == 0 ||
             str_cmp(name, "busybox") == 0 ||
+            str_cmp(name, "osh") == 0 ||
             str_cmp(name, "sh") == 0 ||
-            str_cmp(name, "zsh") == 0) {
+            str_cmp(name, "ash") == 0) {
             name = exec_name;
         }
     }

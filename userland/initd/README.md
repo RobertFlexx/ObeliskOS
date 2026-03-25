@@ -41,4 +41,4 @@ Supported keys:
 ## Safety
 
 - If primary shell launch fails, `obeliskd` falls back to `/sbin/init-legacy`.
-- If legacy init fails, it falls back to `/bin/busybox sh`.
+- If legacy init fails, it falls back to `/bin/osh -i`.

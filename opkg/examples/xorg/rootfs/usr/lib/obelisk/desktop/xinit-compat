@@ -1,0 +1,32 @@
+#!/bin/sh
+# Obelisk xinit compatibility wrapper.
+
+if [ -x /bin/xorg-smoke ]; then
+  /bin/xorg-smoke || {
+    echo "xinit-compat: xorg-smoke failed"
+    exit 1
+  }
+fi
+
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
+echo "xinit-compat: no client specified; starting interactive shell fallback"
+exec /bin/osh -i
+#!/bin/sh
+# Obelisk xinit compatibility wrapper.
+
+if [ -x /bin/xorg-smoke ]; then
+  /bin/xorg-smoke || {
+    echo "xinit-compat: xorg-smoke failed"
+    exit 1
+  }
+fi
+
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
+echo "xinit-compat: no client specified; starting interactive shell fallback"
+exec /bin/osh -i

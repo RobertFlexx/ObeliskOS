@@ -23,15 +23,22 @@ static struct sched_policy_ops *policies[MAX_SCHED_POLICIES];
 static int num_policies = 0;
 
 /* Timer tick rate (Hz) */
-#define HZ  100
+#define HZ  250
 #define TICK_MS (1000 / HZ)
 
 /* Scheduler statistics */
 static uint64_t total_switches = 0;
 static struct thread_info scheduler_ti;
+static LIST_HEAD(sleep_queue);
+
+static int rr_time_slice(struct process *p);
 
 static inline bool run_list_linked(const struct process *p) {
     return p && p->run_list.next != &p->run_list && p->run_list.prev != &p->run_list;
+}
+
+static inline bool sleep_list_linked(const struct process *p) {
+    return p && p->sleep_list.next != &p->sleep_list && p->sleep_list.prev != &p->sleep_list;
 }
 
 static inline bool process_schedulable(const struct process *p) {
@@ -90,13 +97,24 @@ static void rr_dequeue(struct run_queue *rq, struct process *p) {
 }
 
 static struct process *rr_pick_next(struct run_queue *rq) {
-    /* Find highest priority non-empty queue */
-    for (int i = 0; i < MAX_PRIO; i++) {
-        if (!list_empty(&rq->queues[i])) {
-            return list_first_entry(&rq->queues[i], struct process, run_list);
+    /* Find highest priority runnable queue via bitmap scan. */
+    int words = (MAX_PRIO / 64) + 1;
+    for (int w = 0; w < words; w++) {
+        uint64_t bits = rq->bitmap[w];
+        while (bits) {
+            int b = __builtin_ctzll(bits);
+            int prio = (w * 64) + b;
+            if (prio >= MAX_PRIO) {
+                break;
+            }
+            if (!list_empty(&rq->queues[prio])) {
+                return list_first_entry(&rq->queues[prio], struct process, run_list);
+            }
+            /* Stale bitmap bit; clear it lazily. */
+            rq->bitmap[w] &= ~(1UL << b);
+            bits &= ~(1UL << b);
         }
     }
-    
     return rq->idle;
 }
 
@@ -112,11 +130,16 @@ static void rr_yield(struct run_queue *rq, struct process *p) {
 static void rr_tick(struct run_queue *rq, struct process *p) {
     if (p && p != rq->idle) {
         p->time_slice--;
-        
+
         if (p->time_slice <= 0) {
-            /* Time slice expired, need to reschedule */
-            struct thread_info *ti = current_thread_info();
-            ti->flags |= TIF_NEED_RESCHED;
+            if (rq->nr_running > 0) {
+                /* Time slice expired and peers are runnable; request preemption. */
+                struct thread_info *ti = current_thread_info();
+                ti->flags |= TIF_NEED_RESCHED;
+            } else {
+                /* No peer to run: refresh slice and continue, minimizing churn. */
+                p->time_slice = rr_time_slice(p);
+            }
         }
     }
 }
@@ -173,6 +196,11 @@ void scheduler_enqueue(struct process *p) {
         panic("scheduler_enqueue: policy not initialized");
     }
     
+    if (sleep_list_linked(p)) {
+        list_del(&p->sleep_list);
+        INIT_LIST_HEAD(&p->sleep_list);
+        p->wakeup_tick = 0;
+    }
     p->state = PROC_STATE_READY;
     p->time_slice = current_policy->time_slice(p);
     current_policy->enqueue(&runqueue, p);
@@ -191,22 +219,20 @@ void scheduler_dequeue(struct process *p) {
 void schedule(void) {
     struct process *prev, *next;
     struct run_queue *rq = &runqueue;
-    
-    cli();  /* Disable interrupts */
+    uint64_t flags = read_flags();
+    cli();  /* Uniprocessor critical section (SMP-ready lock point). */
     if (!policy_ready(current_policy)) {
         panic("schedule: invalid scheduler policy");
     }
-    
+
     prev = rq->curr;
-    
-    /* Handle previous process */
-    if (prev) {
-        if (prev->state == PROC_STATE_RUNNING && prev != rq->idle && process_schedulable(prev)) {
-            prev->state = PROC_STATE_READY;
-            current_policy->enqueue(rq, prev);
-        }
+
+    /* If current remains runnable, park it back in runqueue before selecting next. */
+    if (prev && prev != rq->idle && prev->state == PROC_STATE_RUNNING && process_schedulable(prev)) {
+        prev->state = PROC_STATE_READY;
+        current_policy->enqueue(rq, prev);
     }
-    
+
     /* Pick next process */
     next = current_policy->pick_next(rq);
     if (!next) {
@@ -215,47 +241,59 @@ void schedule(void) {
     if (next && next != rq->idle && !process_schedulable(next)) {
         next = rq->idle;
     }
-    
-    if (next != prev) {
-        rq->nr_switches++;
-        total_switches++;
-        
-        if (next) {
-            /* Dequeue if not idle */
-            if (next != rq->idle && next->state == PROC_STATE_READY) {
-                current_policy->dequeue(rq, next);
-            }
-            
-            next->state = PROC_STATE_RUNNING;
-            next->last_run = get_ticks();
-            rq->curr = next;
-            scheduler_ti.process = next;
-            
-            /* Switch address space if needed */
-            if (prev && prev->mm != next->mm && next->mm) {
-                mmu_switch(next->mm->pt);
-            }
-            
-            /* Update TSS RSP0 for user->kernel transitions */
-            extern void tss_set_rsp0(uint64_t);
-            tss_set_rsp0((uint64_t)next->kernel_stack + next->kernel_stack_size);
-            
-            /* Context switch */
-            if (prev) {
-                context_switch(&prev->context, &next->context);
-            } else {
-                context_switch_initial(&next->context);
-            }
-            /* context_switch restores task register state and does not obey
-             * normal C callee-saved assumptions from the compiler's view. */
-            __asm__ __volatile__("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
-        }
+
+    /* Pull chosen task from runqueue and mark running. */
+    if (next && next != rq->idle && next->state == PROC_STATE_READY) {
+        current_policy->dequeue(rq, next);
     }
-    
+    if (!next) {
+        next = rq->idle;
+    }
+    if (next && next->time_slice <= 0) {
+        next->time_slice = current_policy->time_slice(next);
+    }
+    if (next) {
+        next->state = PROC_STATE_RUNNING;
+        next->last_run = get_ticks();
+    }
+    rq->curr = next;
+    scheduler_ti.process = next;
+
     /* Clear reschedule flag */
     current_thread_info()->flags &= ~TIF_NEED_RESCHED;
-    
-    sti();  /* Re-enable interrupts */
+
+    if (next == prev) {
+        write_flags(flags);
+        return;
+    }
+
+    rq->nr_switches++;
+    total_switches++;
+
+    /* Switch address space if needed */
+    if (prev && next && prev->mm != next->mm && next->mm) {
+        mmu_switch(next->mm->pt);
+    }
+
+    /* Update TSS RSP0 for user->kernel transitions */
+    if (next) {
+        extern void tss_set_rsp0(uint64_t);
+        tss_set_rsp0((uint64_t)next->kernel_stack + next->kernel_stack_size);
+    }
+
+    /* Context switch */
+    if (next) {
+        if (prev) {
+            context_switch(&prev->context, &next->context);
+        } else {
+            context_switch_initial(&next->context);
+        }
+        /* context_switch restores task register state and does not obey
+         * normal C callee-saved assumptions from the compiler's view. */
+        __asm__ __volatile__("" ::: "rbx", "r12", "r13", "r14", "r15", "memory");
+    }
+
+    write_flags(flags);
 }
 
 void scheduler_yield(void) {
@@ -267,7 +305,8 @@ void scheduler_yield(void) {
 
 void scheduler_tick(void) {
     struct process *p = runqueue.curr;
-    
+    struct list_head *pos, *n;
+
     if (p) {
         p->runtime += TICK_MS;
         
@@ -279,8 +318,19 @@ void scheduler_tick(void) {
         
         current_policy->tick(&runqueue, p);
     }
-    
+
     runqueue.clock += TICK_MS;
+
+    /* Wake timed sleepers whose deadlines have elapsed. */
+    list_for_each_safe(pos, n, &sleep_queue) {
+        struct process *sp = list_entry(pos, struct process, sleep_list);
+        if (sp->state == PROC_STATE_SLEEPING && sp->wakeup_tick <= runqueue.clock) {
+            list_del(&sp->sleep_list);
+            INIT_LIST_HEAD(&sp->sleep_list);
+            sp->wakeup_tick = 0;
+            scheduler_enqueue(sp);
+        }
+    }
 }
 
 void scheduler_exit(void) {
@@ -308,41 +358,62 @@ void scheduler_exit(void) {
 
 void scheduler_sleep(struct process *p, wait_queue_head_t *wq) {
     if (!p) return;
-    
+
+    uint64_t flags = read_flags();
     cli();
-    
+
     p->state = PROC_STATE_BLOCKED;
     if (run_list_linked(p)) {
         scheduler_dequeue(p);
     }
+    if (sleep_list_linked(p)) {
+        list_del(&p->sleep_list);
+        INIT_LIST_HEAD(&p->sleep_list);
+    }
+    p->wakeup_tick = 0;
     
     /* TODO: Add to wait queue */
     (void)wq;
     
-    sti();
-    
+    write_flags(flags);
     schedule();
 }
 
 void scheduler_wake(struct process *p) {
+    struct process *curr;
     if (!p) return;
-    
+
     if (p->state == PROC_STATE_BLOCKED || p->state == PROC_STATE_SLEEPING) {
+        if (sleep_list_linked(p)) {
+            list_del(&p->sleep_list);
+            INIT_LIST_HEAD(&p->sleep_list);
+            p->wakeup_tick = 0;
+        }
         scheduler_enqueue(p);
+        curr = runqueue.curr;
+        if (curr == runqueue.idle || (curr && p->priority < curr->priority)) {
+            current_thread_info()->flags |= TIF_NEED_RESCHED;
+        }
     }
 }
 
 void scheduler_sleep_timeout(struct process *p, uint64_t timeout_ms) {
     if (!p) return;
-    
+    uint64_t flags = read_flags();
+    cli();
+
     p->state = PROC_STATE_SLEEPING;
     if (run_list_linked(p)) {
         scheduler_dequeue(p);
     }
-    
-    /* TODO: Set up timer to wake process */
-    (void)timeout_ms;
-    
+    if (sleep_list_linked(p)) {
+        list_del(&p->sleep_list);
+        INIT_LIST_HEAD(&p->sleep_list);
+    }
+    p->wakeup_tick = runqueue.clock + timeout_ms;
+    list_add_tail(&p->sleep_list, &sleep_queue);
+
+    write_flags(flags);
     schedule();
 }
 
@@ -423,9 +494,12 @@ uint64_t scheduler_get_runtime(struct process *p) {
  * Timer
  * ========================================================================== */
 
-static void __unused timer_handler(void) {
+static void timer_handler(uint8_t irq, struct cpu_regs *regs, void *ctx) {
+    (void)irq;
+    (void)regs;
+    (void)ctx;
     scheduler_tick();
-    
+
     /* Check if reschedule needed */
     if (current_thread_info()->flags & TIF_NEED_RESCHED) {
         schedule();
@@ -441,7 +515,10 @@ void timer_init(void) {
     outb(0x43, 0x36);               /* Channel 0, rate generator */
     outb(0x40, divisor & 0xFF);     /* Low byte */
     outb(0x40, (divisor >> 8));     /* High byte */
-    
+
+    if (irq_register_handler(0, timer_handler, NULL) < 0) {
+        panic("timer_init: failed to register IRQ0 handler");
+    }
     /* Enable timer IRQ */
     extern void irq_enable(uint8_t);
     irq_enable(0);

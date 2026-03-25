@@ -18,6 +18,7 @@ extern ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags, void *src_
 extern int getpid(void);
 extern int strcmp(const char *a, const char *b);
 extern size_t strlen(const char *s);
+extern int sysctl(void *args);
 
 #define AF_INET 2
 #define SOCK_DGRAM 2
@@ -39,6 +40,14 @@ struct icmp_echo {
     uint16_t seq;
     uint8_t payload[56];
 } __attribute__((packed));
+
+struct sysctl_args {
+    const char *name;
+    void *oldval;
+    size_t *oldlenp;
+    const void *newval;
+    size_t newlen;
+};
 
 static int parse_ipv4(const char *s, uint8_t ip[4]);
 
@@ -81,6 +90,28 @@ static int parse_uint(const char *s, int *out) {
     }
     *out = v;
     return 0;
+}
+
+static unsigned long read_uptime_millis(void) {
+    char value[64];
+    size_t len = sizeof(value);
+    struct sysctl_args args;
+    unsigned long v = 0;
+    int i = 0;
+
+    args.name = "system.kernel.uptime_ms";
+    args.oldval = value;
+    args.oldlenp = &len;
+    args.newval = NULL;
+    args.newlen = 0;
+    if (sysctl(&args) < 0) {
+        return 0;
+    }
+    while (value[i] >= '0' && value[i] <= '9') {
+        v = (v * 10UL) + (unsigned long)(value[i] - '0');
+        i++;
+    }
+    return v;
 }
 
 static size_t dns_encode_name(uint8_t *out, size_t cap, const char *name) {
@@ -286,6 +317,8 @@ static __attribute__((used)) void ping_main(int argc, char **argv) {
         struct icmp_echo rep;
         int from_len = sizeof(from);
         ssize_t n;
+        unsigned long t0_ms;
+        unsigned long t1_ms;
 
         to.sin_family = AF_INET;
         to.sin_port = 0;
@@ -304,10 +337,17 @@ static __attribute__((used)) void ping_main(int argc, char **argv) {
         }
         req.checksum = 0;
         req.checksum = htons(checksum16(&req, sizeof(req)));
+        t0_ms = read_uptime_millis();
 
         n = sendto(sock, &req, sizeof(req), 0, &to, sizeof(to));
         if (n < 0) {
             printf("ping: sendto failed (%d)\n", (int)n);
+            if (seq < count) {
+                unsigned long deadline = t0_ms + 1000UL;
+                while (read_uptime_millis() < deadline) {
+                    __asm__ volatile("pause");
+                }
+            }
             continue;
         }
         sent++;
@@ -315,24 +355,50 @@ static __attribute__((used)) void ping_main(int argc, char **argv) {
         n = recvfrom(sock, &rep, sizeof(rep), 0, &from, &from_len);
         if (n < 0) {
             printf("Request timeout for icmp_seq %d\n", seq);
+            if (seq < count) {
+                unsigned long deadline = t0_ms + 1000UL;
+                while (read_uptime_millis() < deadline) {
+                    __asm__ volatile("pause");
+                }
+            }
             continue;
         }
         if ((size_t)n < sizeof(struct icmp_echo) - sizeof(rep.payload) || rep.type != 0) {
             printf("ping: received non-echo-reply packet\n");
+            if (seq < count) {
+                unsigned long deadline = t0_ms + 1000UL;
+                while (read_uptime_millis() < deadline) {
+                    __asm__ volatile("pause");
+                }
+            }
             continue;
         }
         if (rep.ident != htons((uint16_t)ident)) {
+            if (seq < count) {
+                unsigned long deadline = t0_ms + 1000UL;
+                while (read_uptime_millis() < deadline) {
+                    __asm__ volatile("pause");
+                }
+            }
             continue;
         }
+        t1_ms = read_uptime_millis();
 
-        printf("%d bytes from %u.%u.%u.%u: icmp_seq=%d\n",
+        printf("%d bytes from %u.%u.%u.%u: icmp_seq=%d time=%ums\n",
                (int)n,
                (unsigned)((from.sin_addr >> 24) & 0xFF),
                (unsigned)((from.sin_addr >> 16) & 0xFF),
                (unsigned)((from.sin_addr >> 8) & 0xFF),
                (unsigned)(from.sin_addr & 0xFF),
-               seq);
+               seq,
+               (unsigned)((t1_ms >= t0_ms) ? (t1_ms - t0_ms) : 0UL));
         recv_ok++;
+        if (seq < count) {
+            unsigned long deadline = t0_ms + 1000UL;
+            while (read_uptime_millis() < deadline) {
+                __asm__ volatile("pause");
+            }
+        }
     }
 
     close(sock);

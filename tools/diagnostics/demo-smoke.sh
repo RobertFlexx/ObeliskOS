@@ -77,7 +77,7 @@ with open(log_file, "wb") as log:
             text = chunk.decode("utf-8", errors="ignore")
             tail = (tail + text)[-16384:]
 
-            if not sent and ("Obelisk shell ready." in tail or "$ " in tail):
+            if not sent and ("Obelisk osh ready." in tail or "osh$ " in tail or "$ " in tail):
                 try:
                     for cmd in commands:
                         proc.stdin.write((cmd + "\n").encode("utf-8"))

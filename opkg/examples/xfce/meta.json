@@ -1,0 +1,12 @@
+{
+  "name": "xfce",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "XFCE desktop profile package",
+  "description": "Installs baseline XFCE profile markers for Obelisk. Depends on xorg.",
+  "depends": ["xorg"],
+  "provides": ["desktop-session"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "xfce"
+}

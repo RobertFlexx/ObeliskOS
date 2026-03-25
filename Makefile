@@ -28,14 +28,15 @@ QEMU := qemu-system-x86_64
 QEMU_MEMORY := 512M
 QEMU_BASE_FLAGS := -m $(QEMU_MEMORY)
 QEMU_NET_FLAGS ?= -nic user,model=e1000
-QEMU_DISPLAY ?= gtk,gl=off
-QEMU_GRAPHICAL_FLAGS := -vga std -display $(QEMU_DISPLAY) -serial vc
+QEMU_DISPLAY ?= gtk,gl=off,zoom-to-fit=off
+QEMU_VIDEO ?= virtio-vga
+QEMU_GRAPHICAL_FLAGS := -device $(QEMU_VIDEO) -display $(QEMU_DISPLAY)
+QEMU_GUI_SERIAL_FLAGS := -serial mon:stdio
 QEMU_SERIAL_FLAGS := -nographic -monitor none -chardev stdio,mux=on,signal=off,id=char0 -serial chardev:char0
 
-# Host userland import settings (real zsh/coreutils from host)
+# Host userland import settings (optional host tools)
 IMPORT_HOST_USERLAND ?= 0
 EXPERIMENTAL_DYNAMIC_ELF ?= 0
-HOST_ZSH_BIN ?= /usr/bin/zsh
 HOST_COREUTILS_BINS ?= ls cat cp mv rm mkdir rmdir ln chmod chown pwd uname date head tail wc sort uniq cut tr tee sleep true false env printenv id whoami users
 HOST_USERLAND_IMPORT_SCRIPT := $(TOOLS_DIR)/import-host-userland.sh
 
@@ -81,31 +82,31 @@ rootfs: userland
 	@cp $(USERLAND_DIR)/axiomd/policy/access.pro $(ROOTFS_DIR)/etc/axiomd/policy/access.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/allocation.pro $(ROOTFS_DIR)/etc/axiomd/policy/allocation.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/inheritance.pro $(ROOTFS_DIR)/etc/axiomd/policy/inheritance.pro
-	@for tool in busybox sh zsh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
+	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
 		if [ -f "$(USERLAND_OUT_DIR)/$$tool" ]; then \
 			cp "$(USERLAND_OUT_DIR)/$$tool" "$(ROOTFS_DIR)/bin/$$tool"; \
 		fi; \
 	done
-	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sh" ]; then \
-		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/sh"; \
+	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ] && [ ! -f "$(ROOTFS_DIR)/bin/osh" ]; then \
+		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/osh"; \
 	fi
-	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/zsh" ]; then \
-		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/zsh"; \
+	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sh" ]; then \
+		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/sh"; \
 	fi
-	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/su" ]; then \
-		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/su"; \
+	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ] && [ ! -f "$(ROOTFS_DIR)/bin/su" ]; then \
+		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/su"; \
 	fi
-	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sudo" ]; then \
-		cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/sudo"; \
+	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sudo" ]; then \
+		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/sudo"; \
 	fi
-	@if [ -f "$(ROOTFS_DIR)/bin/busybox" ]; then \
+	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ]; then \
 		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc sort uniq cut tr tee sleep true false env printenv find time; do \
 			if [ ! -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
-				cp "$(ROOTFS_DIR)/bin/busybox" "$(ROOTFS_DIR)/bin/$$app"; \
+				cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/$$app"; \
 			fi; \
 		done; \
 	fi
-	@for app in sh zsh busybox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe ping nslookup find time; do \
+	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date head tail wc cut true false env printenv stat opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session find time; do \
 		if [ -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 			cp "$(ROOTFS_DIR)/bin/$$app" "$(ROOTFS_DIR)/usr/bin/$$app"; \
 		fi; \
@@ -113,6 +114,12 @@ rootfs: userland
 	@if [ -d "$(ROOTFS_OVERLAY_DIR)" ]; then \
 		echo "Applying rootfs overlay from $(ROOTFS_OVERLAY_DIR)..."; \
 		cp -a "$(ROOTFS_OVERLAY_DIR)/." "$(ROOTFS_DIR)/"; \
+	fi
+	@mkdir -p "$(ROOTFS_DIR)/etc/ssl/certs"
+	@if [ -f "/etc/ssl/certs/ca-certificates.crt" ]; then \
+		cp "/etc/ssl/certs/ca-certificates.crt" "$(ROOTFS_DIR)/etc/ssl/certs/ca-certificates.crt"; \
+	elif [ -f "/etc/pki/tls/certs/ca-bundle.crt" ]; then \
+		cp "/etc/pki/tls/certs/ca-bundle.crt" "$(ROOTFS_DIR)/etc/ssl/certs/ca-certificates.crt"; \
 	fi
 	@mkdir -p "$(ROOTFS_DIR)/var/cache/opkg/repo/packages"
 	@if [ -d "opkg/examples/samplepkg" ]; then \
@@ -127,16 +134,22 @@ rootfs: userland
 		if [ -d "opkg/examples/sed" ]; then \
 			./opkg/opkg build opkg/examples/sed "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/sed-1.0.0-x86_64.opk"; \
 		fi; \
+		if [ -d "opkg/examples/xorg" ]; then \
+			./opkg/opkg build opkg/examples/xorg "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xorg-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/xfce" ]; then \
+			./opkg/opkg build opkg/examples/xfce "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xfce-1.0.0-x86_64.opk"; \
+		fi; \
 		./opkg/opkg repo index "$(ROOTFS_DIR)/var/cache/opkg/repo"; \
 	fi
 	@if [ "$(IMPORT_HOST_USERLAND)" = "1" ] && [ -x "$(HOST_USERLAND_IMPORT_SCRIPT)" ]; then \
-		"$(HOST_USERLAND_IMPORT_SCRIPT)" "$(ROOTFS_DIR)" "$(HOST_ZSH_BIN)" $(HOST_COREUTILS_BINS); \
+		"$(HOST_USERLAND_IMPORT_SCRIPT)" "$(ROOTFS_DIR)" "" $(HOST_COREUTILS_BINS); \
 	fi
 	@rm -f "$(ROOTFS_DIR)/README.txt"
 	@printf "%s\n" \
 		"Obelisk OS early userspace image" \
 		"Use /sbin/installer or /sbin/installer-tui to stage an installation." \
-		"Static-only default image. Host zsh/coreutils import is disabled unless IMPORT_HOST_USERLAND=1." \
+		"Static-only default image. Host tool import is disabled unless IMPORT_HOST_USERLAND=1." \
 		> "$(ROOTFS_DIR)/etc/motd"
 	@tar -C $(ROOTFS_DIR) -cf $(ROOTFS_TAR) .
 
@@ -145,12 +158,32 @@ rootfs: userland
 iso: kernel rootfs
 	@echo "Creating ISO image..."
 	@command -v grub-mkrescue >/dev/null || (echo "Error: grub-mkrescue is required" && exit 1)
-	@command -v xorriso >/dev/null || (echo "Error: xorriso is required by grub-mkrescue" && exit 1)
+	@XORRISO_PATH="$$(command -v xorriso || true)"; \
+	if [ -z "$$XORRISO_PATH" ]; then \
+		for cand in "/home/linuxbrew/.linuxbrew/bin/xorriso" "/home/robertsolus/.linuxbrew/bin/xorriso" "/opt/homebrew/bin/xorriso"; do \
+			if [ -x "$$cand" ]; then \
+				XORRISO_PATH="$$cand"; \
+				break; \
+			fi; \
+		done; \
+	fi; \
+	[ -n "$$XORRISO_PATH" ] || (echo "Error: xorriso is required by grub-mkrescue" && exit 1); \
+	echo "Using xorriso: $$XORRISO_PATH"; \
+	PATH="$$(dirname "$$XORRISO_PATH"):$$PATH" grub-mkrescue --version >/dev/null
 	@mkdir -p $(ISO_DIR)/boot/grub
 	@cp $(KERNEL) $(ISO_DIR)/boot/
 	@cp $(ROOTFS_TAR) $(ISO_DIR)/boot/
 	@cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/
-	@grub-mkrescue -o $(ISO) $(ISO_DIR)
+	@XORRISO_PATH="$$(command -v xorriso || true)"; \
+	if [ -z "$$XORRISO_PATH" ]; then \
+		for cand in "/home/linuxbrew/.linuxbrew/bin/xorriso" "/home/robertsolus/.linuxbrew/bin/xorriso" "/opt/homebrew/bin/xorriso"; do \
+			if [ -x "$$cand" ]; then \
+				XORRISO_PATH="$$cand"; \
+				break; \
+			fi; \
+		done; \
+	fi; \
+	PATH="$$(dirname "$$XORRISO_PATH"):$$PATH" grub-mkrescue -o $(ISO) $(ISO_DIR)
 	@echo "ISO created: $(ISO)"
 
 # Run in QEMU (default: robust serial mode)
@@ -163,13 +196,13 @@ run: iso
 # Run in QEMU graphical mode
 .PHONY: run-gui
 run-gui: iso
-	@echo "Starting QEMU..."
-	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_NET_FLAGS) $(QEMU_GRAPHICAL_FLAGS) -cdrom $(ISO)
+	@echo "Starting QEMU (GUI + terminal serial log mirror)..."
+	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_NET_FLAGS) $(QEMU_GRAPHICAL_FLAGS) $(QEMU_GUI_SERIAL_FLAGS) -cdrom $(ISO)
 
 .PHONY: run-sdl
 run-sdl: iso
-	@echo "Starting QEMU (SDL display fallback)..."
-	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_NET_FLAGS) -vga std -display sdl -serial vc -cdrom $(ISO)
+	@echo "Starting QEMU (SDL display fallback + terminal serial mirror)..."
+	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_NET_FLAGS) -device $(QEMU_VIDEO) -display sdl $(QEMU_GUI_SERIAL_FLAGS) -cdrom $(ISO)
 
 # Run with terminal-attached serial console
 .PHONY: run-serial
@@ -182,8 +215,8 @@ run-serial: iso
 # Run with KVM acceleration
 .PHONY: run-kvm
 run-kvm: iso
-	@echo "Starting QEMU with KVM..."
-	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_NET_FLAGS) $(QEMU_GRAPHICAL_FLAGS) -enable-kvm -cpu host -cdrom $(ISO)
+	@echo "Starting QEMU with KVM (GUI + terminal serial log mirror)..."
+	@$(QEMU) $(QEMU_BASE_FLAGS) $(QEMU_NET_FLAGS) $(QEMU_GRAPHICAL_FLAGS) $(QEMU_GUI_SERIAL_FLAGS) -enable-kvm -cpu host -cdrom $(ISO)
 
 # Debug with GDB
 .PHONY: debug

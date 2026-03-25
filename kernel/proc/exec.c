@@ -714,8 +714,12 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
                 }
                 interp[ip] = '\0';
                 while (shebang[i] == ' ' || shebang[i] == '\t') i++;
-                while (shebang[i] && shebang[i] != '\n' && op < (int)sizeof(optarg) - 1) {
+                while (shebang[i] && shebang[i] != '\n' && shebang[i] != '\r' &&
+                       op < (int)sizeof(optarg) - 1) {
                     optarg[op++] = shebang[i++];
+                }
+                while (op > 0 && (optarg[op - 1] == ' ' || optarg[op - 1] == '\t')) {
+                    op--;
                 }
                 optarg[op] = '\0';
                 has_optarg = (op > 0);

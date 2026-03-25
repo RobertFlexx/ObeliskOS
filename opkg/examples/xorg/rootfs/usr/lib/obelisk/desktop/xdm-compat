@@ -1,0 +1,28 @@
+#!/bin/sh
+# Obelisk XDM compatibility wrapper.
+#
+# Until a real xdm package lands, this wrapper provides a deterministic
+# "display manager style" entrypoint for desktop-session xdm mode.
+
+if [ -x /bin/xorg-smoke ]; then
+  /bin/xorg-smoke || {
+    echo "xdm-compat: xorg-smoke failed"
+    exit 1
+  }
+fi
+
+if [ -x /usr/bin/startxfce4 ]; then
+  exec /usr/bin/startxfce4
+fi
+if [ -x /bin/startxfce4 ]; then
+  exec /bin/startxfce4
+fi
+if [ -x /usr/lib/obelisk/desktop/startxfce4-compat ]; then
+  exec /usr/lib/obelisk/desktop/startxfce4-compat
+fi
+if [ -x /usr/lib/obelisk/desktop/xsession-compat ]; then
+  exec /usr/lib/obelisk/desktop/xsession-compat
+fi
+
+echo "xdm-compat: no XFCE session launcher available"
+exit 1

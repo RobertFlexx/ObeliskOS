@@ -102,6 +102,26 @@ static int sysctl_uptime_handler(struct sysctl_node *node, void *buf,
     return 0;
 }
 
+static int sysctl_uptime_ms_handler(struct sysctl_node *node, void *buf,
+                                    size_t *len, loff_t *ppos, bool write) {
+    (void)node; (void)ppos;
+
+    if (write) {
+        return -EPERM;
+    }
+
+    unsigned long up_ms = get_ticks();
+
+    if (*len < sizeof(up_ms)) {
+        return -EINVAL;
+    }
+
+    memcpy(buf, &up_ms, sizeof(up_ms));
+    *len = sizeof(up_ms);
+
+    return 0;
+}
+
 static int sysctl_context_switches_handler(struct sysctl_node *node, void *buf,
                                            size_t *len, loff_t *ppos, bool write) {
     (void)node; (void)ppos;
@@ -119,6 +139,39 @@ static int sysctl_context_switches_handler(struct sysctl_node *node, void *buf,
     memcpy(buf, &switches, sizeof(switches));
     *len = sizeof(switches);
     
+    return 0;
+}
+
+static int sysctl_input_kbd_drops_handler(struct sysctl_node *node, void *buf,
+                                          size_t *len, loff_t *ppos, bool write) {
+    (void)node; (void)ppos;
+    if (write) return -EPERM;
+    unsigned long v = devfs_input_kbd_drop_count();
+    if (*len < sizeof(v)) return -EINVAL;
+    memcpy(buf, &v, sizeof(v));
+    *len = sizeof(v);
+    return 0;
+}
+
+static int sysctl_input_mouse_drops_handler(struct sysctl_node *node, void *buf,
+                                            size_t *len, loff_t *ppos, bool write) {
+    (void)node; (void)ppos;
+    if (write) return -EPERM;
+    unsigned long v = devfs_input_mouse_drop_count();
+    if (*len < sizeof(v)) return -EINVAL;
+    memcpy(buf, &v, sizeof(v));
+    *len = sizeof(v);
+    return 0;
+}
+
+static int sysctl_input_mice_drops_handler(struct sysctl_node *node, void *buf,
+                                           size_t *len, loff_t *ppos, bool write) {
+    (void)node; (void)ppos;
+    if (write) return -EPERM;
+    unsigned long v = devfs_input_mice_drop_count();
+    if (*len < sizeof(v)) return -EINVAL;
+    memcpy(buf, &v, sizeof(v));
+    *len = sizeof(v);
     return 0;
 }
 
@@ -171,6 +224,8 @@ void sysctl_register_system_nodes(void) {
                           sizeof(domainname), SYSCTL_RW);
     sysctl_register_handler("system.kernel.uptime", sysctl_uptime_handler,
                            NULL, SYSCTL_RO);
+    sysctl_register_handler("system.kernel.uptime_ms", sysctl_uptime_ms_handler,
+                           NULL, SYSCTL_RO);
     sysctl_register_handler("system.kernel.context_switches", 
                            sysctl_context_switches_handler, NULL, SYSCTL_RO);
     
@@ -189,6 +244,14 @@ void sysctl_register_system_nodes(void) {
                         &axiomfs_daemon_timeout, SYSCTL_RW);
     sysctl_register_bool("system.fs.axiomfs.policy_enabled",
                         &axiomfs_policy_enabled, SYSCTL_RW);
+
+    /* Input telemetry */
+    sysctl_register_handler("system.input.ps2.kbd_event_drops",
+                           sysctl_input_kbd_drops_handler, NULL, SYSCTL_RO);
+    sysctl_register_handler("system.input.ps2.mouse_event_drops",
+                           sysctl_input_mouse_drops_handler, NULL, SYSCTL_RO);
+    sysctl_register_handler("system.input.ps2.mice_packet_drops",
+                           sysctl_input_mice_drops_handler, NULL, SYSCTL_RO);
 }
 
 /* Initialize CPU information */

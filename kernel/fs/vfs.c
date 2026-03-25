@@ -22,6 +22,31 @@ static int num_mounts = 0;
 static struct vfsmount *root_mount = NULL;
 static struct dentry *root_dentry = NULL;
 
+static struct dentry *vfs_follow_mounts(struct dentry *dentry) {
+    if (!dentry) {
+        return NULL;
+    }
+    for (;;) {
+        struct dentry *next_root = NULL;
+        for (int i = 0; i < num_mounts; i++) {
+            struct vfsmount *mnt = mount_table[i];
+            if (!mnt || !mnt->mnt_root || !mnt->mnt_mountpoint) {
+                continue;
+            }
+            if (mnt->mnt_mountpoint == dentry) {
+                next_root = dget(mnt->mnt_root);
+                break;
+            }
+        }
+        if (!next_root) {
+            break;
+        }
+        dput(dentry);
+        dentry = next_root;
+    }
+    return dentry;
+}
+
 static bool vfs_is_mountpoint(struct dentry *dentry) {
     if (!dentry) {
         return false;
@@ -331,7 +356,10 @@ struct dentry *vfs_lookup(const char *pathname) {
             return NULL;
         }
 
-        dentry = next;
+        dentry = vfs_follow_mounts(next);
+        if (!dentry) {
+            return NULL;
+        }
         pathname = p;
     }
     if (!dentry->d_inode) {

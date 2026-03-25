@@ -1,0 +1,4 @@
+Obelisk XFCE profile package
+
+This package represents the baseline XFCE profile selection for the installer.
+It is a marker package used by opkg profile installs.

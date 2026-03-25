@@ -181,6 +181,8 @@ struct process {
     
     /* Scheduler list entry */
     struct list_head run_list;      /* Run queue link */
+    struct list_head sleep_list;    /* Sleep queue link */
+    uint64_t wakeup_tick;           /* Wake deadline in scheduler clock ms */
     
     /* Global process list */
     struct list_head tasks;         /* All processes link */

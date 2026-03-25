@@ -333,13 +333,6 @@ static int e1000_poll(void *ctx) {
         printk(KERN_INFO "e1000: rx=%lu tx=%lu drop=%lu bytes_rx=%lu bytes_tx=%lu rdh=%u\n",
                s->rx_packets, s->tx_packets, s->rx_drops, s->rx_bytes, s->tx_bytes, rdh);
     }
-    if ((s->poll_count % 500) == 0 && s->tx_packets > 0 && s->rx_packets == 0) {
-        uint32_t status = e1000_read32(s, E1000_REG_STATUS);
-        uint32_t rctl = e1000_read32(s, E1000_REG_RCTL);
-        uint32_t tctl = e1000_read32(s, E1000_REG_TCTL);
-        printk(KERN_WARNING "e1000: no-rx tx=%lu tx_to=%lu status=0x%x rctl=0x%x tctl=0x%x rdh=%u rdt=%u\n",
-               s->tx_packets, s->tx_timeouts, status, rctl, tctl, rdh, rdt);
-    }
     return 0;
 }
 
