@@ -111,3 +111,6 @@ Obelisk is pre-1.0. "Release-ready" currently means:
 - stable boot/session fallback behavior
 - predictable package install/update/remove flow
 - documented known gaps and validation gates
+
+
+bigguy118 is now tester
