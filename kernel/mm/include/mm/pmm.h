@@ -42,8 +42,19 @@ struct pmm_zone {
 struct page {
     uint32_t flags;             /* Page flags */
     uint32_t refcount;          /* Reference count */
+    uint16_t zone;              /* zone_type_t */
+    uint16_t owner;             /* Ownership category */
     struct list_head list;      /* Free list or LRU list */
     void *private;              /* Private data (e.g., slab pointer) */
+};
+
+enum page_owner {
+    PAGE_OWNER_FREE = 0,
+    PAGE_OWNER_KERNEL = 1,
+    PAGE_OWNER_USER = 2,
+    PAGE_OWNER_SLAB = 3,
+    PAGE_OWNER_PAGETABLE = 4,
+    PAGE_OWNER_DMA = 5,
 };
 
 /* Initialization */
@@ -61,8 +72,8 @@ uint64_t pmm_alloc_page_zone(zone_type_t zone);
 uint64_t pmm_alloc_pages_zone(size_t count, zone_type_t zone);
 
 /* Page deallocation */
-void pmm_free_page(uint64_t pfn);
-void pmm_free_pages(uint64_t pfn, size_t count);
+void pmm_free_page(uint64_t phys);
+void pmm_free_pages(uint64_t phys, size_t count);
 
 /* Statistics */
 uint64_t pmm_get_total_pages(void);
@@ -73,6 +84,14 @@ void pmm_dump_stats(void);
 
 /* Zone management */
 struct pmm_zone *pmm_get_zone(zone_type_t type);
+
+/* Live per-page metadata accessors */
+struct page *pmm_get_page_by_pfn(uint64_t pfn);
+struct page *pmm_get_page_by_phys(uint64_t phys);
+void pmm_page_set_owner(uint64_t phys, uint16_t owner);
+void pmm_page_update_flags(uint64_t phys, uint32_t set_flags, uint32_t clear_flags);
+void pmm_page_ref_inc(uint64_t phys);
+bool pmm_page_ref_dec(uint64_t phys);
 
 /* Page frame operations */
 static inline uint64_t pfn_to_phys(uint64_t pfn) {

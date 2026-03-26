@@ -6,6 +6,7 @@
 #include <obelisk/types.h>
 #include <obelisk/kernel.h>
 #include <arch/cpu.h>
+#include <arch/mmu.h>
 #include <drivers/pci.h>
 #include <mm/pmm.h>
 #include <net/net.h>
@@ -42,6 +43,7 @@
 #define PCI_COMMAND_BUS_MASTER 0x4
 
 #define NET_BUFFER_SIZE 2048
+#define VIRTIO_MMIO_MAP_SIZE 0x1000
 
 struct vring_desc {
     uint64_t addr;
@@ -93,6 +95,8 @@ struct virtio_net_hdr {
 
 struct virtio_net_state {
     bool present;
+    bool mmio;                       /* BAR0 access mode */
+    volatile uint8_t *mmio_base;    /* Mapped BAR0 base for MMIO */
     uint8_t bus;
     uint8_t slot;
     uint8_t function;
@@ -119,6 +123,57 @@ static const struct net_device_ops g_vnet_ops = {
     .poll = virtio_net_poll,
 };
 
+static inline uint8_t vnet_read8(struct virtio_net_state *s, uint32_t reg) {
+    if (!s) return 0;
+    if (s->mmio) {
+        return *(volatile uint8_t *)(s->mmio_base + reg);
+    }
+    return inb((uint16_t)(s->io_base + reg));
+}
+
+static inline void vnet_write8(struct virtio_net_state *s, uint32_t reg, uint8_t value) {
+    if (!s) return;
+    if (s->mmio) {
+        *(volatile uint8_t *)(s->mmio_base + reg) = value;
+        return;
+    }
+    outb((uint16_t)(s->io_base + reg), value);
+}
+
+static inline uint16_t vnet_read16(struct virtio_net_state *s, uint32_t reg) {
+    if (!s) return 0;
+    if (s->mmio) {
+        return *(volatile uint16_t *)(s->mmio_base + reg);
+    }
+    return inw((uint16_t)(s->io_base + reg));
+}
+
+static inline void vnet_write16(struct virtio_net_state *s, uint32_t reg, uint16_t value) {
+    if (!s) return;
+    if (s->mmio) {
+        *(volatile uint16_t *)(s->mmio_base + reg) = value;
+        return;
+    }
+    outw((uint16_t)(s->io_base + reg), value);
+}
+
+static inline uint32_t vnet_read32(struct virtio_net_state *s, uint32_t reg) {
+    if (!s) return 0;
+    if (s->mmio) {
+        return *(volatile uint32_t *)(s->mmio_base + reg);
+    }
+    return inl((uint16_t)(s->io_base + reg));
+}
+
+static inline void vnet_write32(struct virtio_net_state *s, uint32_t reg, uint32_t value) {
+    if (!s) return;
+    if (s->mmio) {
+        *(volatile uint32_t *)(s->mmio_base + reg) = value;
+        return;
+    }
+    outl((uint16_t)(s->io_base + reg), value);
+}
+
 static size_t virtq_total_bytes(uint16_t qsize) {
     size_t desc_bytes = (size_t)qsize * sizeof(struct vring_desc);
     size_t avail_bytes = sizeof(uint16_t) * (3 + (size_t)qsize);
@@ -127,12 +182,12 @@ static size_t virtq_total_bytes(uint16_t qsize) {
     return used_offset + used_bytes;
 }
 
-static int virtio_legacy_queue_setup(uint16_t io_base, uint16_t qindex, struct virtio_legacy_queue *q) {
+static int virtio_legacy_queue_setup(struct virtio_net_state *s, uint16_t qindex, struct virtio_legacy_queue *q) {
     uint16_t qmax;
     size_t used_offset;
 
-    outw(io_base + VIRTIO_PCI_QUEUE_SEL, qindex);
-    qmax = inw(io_base + VIRTIO_PCI_QUEUE_NUM);
+    vnet_write16(s, VIRTIO_PCI_QUEUE_SEL, qindex);
+    qmax = vnet_read16(s, VIRTIO_PCI_QUEUE_NUM);
     if (qmax == 0) {
         return -ENOENT;
     }
@@ -155,7 +210,7 @@ static int virtio_legacy_queue_setup(uint16_t io_base, uint16_t qindex, struct v
     q->used = (struct vring_used *)((uint8_t *)q->mem_virt + used_offset);
 
     /* Legacy queue address is PFN of queue memory. */
-    outl(io_base + VIRTIO_PCI_QUEUE_PFN, (uint32_t)(q->mem_phys >> PAGE_SHIFT));
+    vnet_write32(s, VIRTIO_PCI_QUEUE_PFN, (uint32_t)(q->mem_phys >> PAGE_SHIFT));
     return 0;
 }
 
@@ -196,7 +251,7 @@ static int virtio_rx_prime(struct virtio_net_state *s) {
         q->desc_busy[i] = 1;
         virtio_queue_push_avail(q, i);
     }
-    outw(s->io_base + VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_RX);
+    vnet_write16(s, VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_RX);
     return 0;
 }
 
@@ -243,7 +298,7 @@ static int virtio_tx_submit(struct virtio_net_state *s, const void *payload, siz
     q->desc[desc_idx].len = (uint32_t)frame_len;
     q->desc_busy[desc_idx] = 1;
     virtio_queue_push_avail(q, desc_idx);
-    outw(s->io_base + VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_TX);
+    vnet_write16(s, VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_TX);
     return 0;
 }
 
@@ -315,7 +370,7 @@ static void virtio_net_irq(uint8_t irq, struct cpu_regs *regs, void *ctx) {
         return;
     }
 
-    isr = inb(s->io_base + VIRTIO_PCI_ISR_STATUS);
+    isr = vnet_read8(s, VIRTIO_PCI_ISR_STATUS);
     if (isr == 0) {
         return;
     }
@@ -324,7 +379,7 @@ static void virtio_net_irq(uint8_t irq, struct cpu_regs *regs, void *ctx) {
     if (isr & 0x1) {
         virtio_handle_rx_used(s);
         virtio_handle_tx_used(s);
-        outw(s->io_base + VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_RX);
+        vnet_write16(s, VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_RX);
     }
     if (isr & 0x2) {
         printk(KERN_INFO "virtio-net: config change interrupt\n");
@@ -342,11 +397,11 @@ static int virtio_net_poll(void *ctx) {
     if (!s || !s->present || !s->link_up) {
         return -ENODEV;
     }
-    isr = inb(s->io_base + VIRTIO_PCI_ISR_STATUS);
+    isr = vnet_read8(s, VIRTIO_PCI_ISR_STATUS);
     if (isr & 0x1) {
         virtio_handle_rx_used(s);
         virtio_handle_tx_used(s);
-        outw(s->io_base + VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_RX);
+        vnet_write16(s, VIRTIO_PCI_QUEUE_NOTIFY, VIRTQ_INDEX_RX);
     }
     return 0;
 }
@@ -366,7 +421,11 @@ static bool virtio_net_pci_match(const struct pci_device *d) {
 
 static int virtio_net_legacy_init(const struct pci_device *d) {
     uint32_t bar0;
-    uint16_t io_base;
+    uint16_t io_base = 0;
+    uint64_t bar0_phys = 0;
+    uint64_t map_phys = 0;
+    uint64_t map_virt = 0;
+    int map_ret;
     int ret;
     uint16_t pci_cmd;
 
@@ -375,24 +434,43 @@ static int virtio_net_legacy_init(const struct pci_device *d) {
     }
 
     bar0 = d->bar[0];
-    if ((bar0 & 0x1U) == 0) {
-        printk(KERN_WARNING "virtio-net: device at %02x:%02x.%u has MMIO BAR0 (legacy I/O expected)\n",
-               d->bus, d->slot, d->function);
-        return -EOPNOTSUPP;
-    }
-
-    io_base = (uint16_t)(bar0 & ~0x3U);
-    if (io_base == 0) {
-        return -ENODEV;
+    if ((bar0 & 0x1U) != 0) {
+        /* Legacy I/O BAR layout. */
+        io_base = (uint16_t)(bar0 & ~0x3U);
+        if (io_base == 0) {
+            return -ENODEV;
+        }
+    } else {
+        /* MMIO BAR layout (common for virtio-net-pci in VMs). */
+        bar0_phys = (uint64_t)(bar0 & ~0x3U);
+        if (bar0_phys == 0) {
+            return -ENODEV;
+        }
+        map_phys = ALIGN_DOWN(bar0_phys, PAGE_SIZE);
+        map_virt = (uint64_t)PHYS_TO_VIRT(map_phys);
+        map_ret = mmu_map_range(mmu_get_kernel_pt(), map_virt, map_phys,
+                                VIRTIO_MMIO_MAP_SIZE,
+                                PTE_WRITABLE | PTE_NOCACHE);
+        if (map_ret < 0) {
+            printk(KERN_WARNING "virtio-net: failed to map MMIO BAR0 phys=0x%lx size=0x%lx (%d)\n",
+                   bar0_phys, (uint64_t)VIRTIO_MMIO_MAP_SIZE, map_ret);
+            return map_ret;
+        }
     }
 
     memset(&g_vnet, 0, sizeof(g_vnet));
     g_vnet.present = true;
+    g_vnet.mmio = ((bar0 & 0x1U) == 0);
     g_vnet.bus = d->bus;
     g_vnet.slot = d->slot;
     g_vnet.function = d->function;
     g_vnet.device_id = d->device_id;
     g_vnet.io_base = io_base;
+    if (g_vnet.mmio) {
+        g_vnet.mmio_base = (volatile uint8_t *)(map_virt + (bar0_phys - map_phys));
+    } else {
+        g_vnet.mmio_base = NULL;
+    }
     g_vnet.irq_line = d->interrupt_line;
     g_vnet.link_up = false;
 
@@ -400,56 +478,57 @@ static int virtio_net_legacy_init(const struct pci_device *d) {
     pci_cmd |= (PCI_COMMAND_IO | PCI_COMMAND_MEM | PCI_COMMAND_BUS_MASTER);
     pci_config_write16(d->bus, d->slot, d->function, 0x04, pci_cmd);
 
-    outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
-    outb(io_base + VIRTIO_PCI_DEVICE_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
-    outb(io_base + VIRTIO_PCI_DEVICE_STATUS, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+    vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
+    vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
+    vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS,
+                 VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
-    g_vnet.host_features = inl(io_base + VIRTIO_PCI_HOST_FEATURES);
-    outl(io_base + VIRTIO_PCI_GUEST_FEATURES, 0);
-    outb(io_base + VIRTIO_PCI_DEVICE_STATUS,
-         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
+    g_vnet.host_features = vnet_read32(&g_vnet, VIRTIO_PCI_HOST_FEATURES);
+    vnet_write32(&g_vnet, VIRTIO_PCI_GUEST_FEATURES, 0);
+    vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS,
+                 VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
 
-    ret = virtio_legacy_queue_setup(io_base, VIRTQ_INDEX_RX, &g_vnet.rxq);
+    ret = virtio_legacy_queue_setup(&g_vnet, VIRTQ_INDEX_RX, &g_vnet.rxq);
     if (ret < 0) {
         printk(KERN_WARNING "virtio-net: RX queue setup failed: %d\n", ret);
-        outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
+        vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
         return ret;
     }
 
-    ret = virtio_legacy_queue_setup(io_base, VIRTQ_INDEX_TX, &g_vnet.txq);
+    ret = virtio_legacy_queue_setup(&g_vnet, VIRTQ_INDEX_TX, &g_vnet.txq);
     if (ret < 0) {
         printk(KERN_WARNING "virtio-net: TX queue setup failed: %d\n", ret);
-        outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
+        vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
         return ret;
     }
 
     ret = virtio_queue_alloc_buffers(&g_vnet.rxq);
     if (ret < 0) {
         printk(KERN_WARNING "virtio-net: RX buffer allocation failed: %d\n", ret);
-        outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
+        vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
         return ret;
     }
     ret = virtio_queue_alloc_buffers(&g_vnet.txq);
     if (ret < 0) {
         printk(KERN_WARNING "virtio-net: TX buffer allocation failed: %d\n", ret);
-        outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
+        vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
         return ret;
     }
     ret = virtio_rx_prime(&g_vnet);
     if (ret < 0) {
         printk(KERN_WARNING "virtio-net: RX queue prime failed: %d\n", ret);
-        outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
+        vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
         return ret;
     }
     ret = virtio_tx_prepare(&g_vnet);
     if (ret < 0) {
         printk(KERN_WARNING "virtio-net: TX queue prepare failed: %d\n", ret);
-        outb(io_base + VIRTIO_PCI_DEVICE_STATUS, 0);
+        vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS, 0);
         return ret;
     }
 
     for (int i = 0; i < 6; i++) {
-        g_vnet.mac[i] = inb(io_base + VIRTIO_PCI_CONFIG_BASE + i);
+        g_vnet.mac[i] = vnet_read8(&g_vnet, VIRTIO_PCI_CONFIG_BASE + i);
     }
 
     if (g_vnet.irq_line < 16) {
@@ -464,15 +543,15 @@ static int virtio_net_legacy_init(const struct pci_device *d) {
                g_vnet.irq_line);
     }
 
-    (void)inb(io_base + VIRTIO_PCI_ISR_STATUS);
-    outb(io_base + VIRTIO_PCI_DEVICE_STATUS,
-         VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK |
-             VIRTIO_STATUS_DRIVER_OK);
+    (void)vnet_read8(&g_vnet, VIRTIO_PCI_ISR_STATUS);
+    vnet_write8(&g_vnet, VIRTIO_PCI_DEVICE_STATUS,
+                 VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK |
+                 VIRTIO_STATUS_DRIVER_OK);
     g_vnet.link_up = true;
 
     printk(KERN_INFO
-           "virtio-net: legacy device ready at %02x:%02x.%u io=0x%x irq=%u mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
-           d->bus, d->slot, d->function, io_base, g_vnet.irq_line,
+           "virtio-net: legacy device ready at %02x:%02x.%u io=0x%x mmio=%u irq=%u mac=%02x:%02x:%02x:%02x:%02x:%02x\n",
+           d->bus, d->slot, d->function, io_base, g_vnet.mmio, g_vnet.irq_line,
            g_vnet.mac[0], g_vnet.mac[1], g_vnet.mac[2],
            g_vnet.mac[3], g_vnet.mac[4], g_vnet.mac[5]);
     printk(KERN_INFO "virtio-net: queues rx=%u tx=%u host_features=0x%x\n",

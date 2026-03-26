@@ -27,6 +27,8 @@ info_request_tag_start:
     .long info_request_tag_end - info_request_tag_start
     .long 6                                          /* Request: memory map */
     .long 8                                          /* Request: framebuffer info */
+    .long 14                                         /* Request: ACPI 1.0 RSDP */
+    .long 15                                         /* Request: ACPI 2.0+ RSDP */
 info_request_tag_end:
 
     /* Framebuffer tag */
@@ -35,9 +37,10 @@ framebuffer_tag_start:
     .short 5                                         /* Type: framebuffer */
     .short 0                                         /* Flags */
     .long framebuffer_tag_end - framebuffer_tag_start
-    .long 1024                                       /* Width */
-    .long 768                                        /* Height */
-    .long 32                                         /* Depth */
+    /* 0 = let the bootloader pick any mode that works (required for UEFI/GOP laptops). */
+    .long 0                                          /* Width */
+    .long 0                                          /* Height */
+    .long 0                                          /* Depth */
 framebuffer_tag_end:
 
     /* Module alignment tag */
@@ -124,6 +127,8 @@ err_no_cpuid:
 _start:
     /* Disable interrupts */
     cli
+    /* String ops in this path assume DF=0 (forward). */
+    cld
     
     /* Save multiboot info */
     movl %eax, boot_mb_magic

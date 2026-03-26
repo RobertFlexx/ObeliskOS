@@ -72,7 +72,7 @@ static void *early_alloc(size_t size) {
 static uint32_t calc_objects_per_slab(size_t obj_size, size_t slab_size) {
     /* Account for freelist overhead */
     size_t usable = slab_size - sizeof(struct slab);
-    return usable / (obj_size + sizeof(uint8_t));
+    return usable / (obj_size + sizeof(uint32_t));
 }
 
 /* Create a new slab */
@@ -85,6 +85,11 @@ static struct slab *slab_create(struct kmem_cache *cache) {
     }
     
     void *base = PHYS_TO_VIRT(phys);
+    for (size_t i = 0; i < pages; i++) {
+        uint64_t page_phys = phys + (i * PAGE_SIZE);
+        pmm_page_set_owner(page_phys, PAGE_OWNER_SLAB);
+        pmm_page_update_flags(page_phys, PAGE_FLAG_SLAB | PAGE_FLAG_KERNEL, 0);
+    }
     
     /* Initialize slab structure (at the beginning of the slab) */
     struct slab *slab = (struct slab *)base;
@@ -94,13 +99,13 @@ static struct slab *slab_create(struct kmem_cache *cache) {
     slab->cache = cache;
     
     /* Initialize freelist */
-    slab->freelist = (uint8_t *)slab->base + 
-                     (cache->objects_per_slab * cache->aligned_size);
+    slab->freelist = (uint32_t *)((uint8_t *)slab->base +
+                     (cache->objects_per_slab * cache->aligned_size));
     
     for (uint32_t i = 0; i < cache->objects_per_slab; i++) {
         slab->freelist[i] = i + 1;
     }
-    slab->freelist[cache->objects_per_slab - 1] = 0xFF;  /* End marker */
+    slab->freelist[cache->objects_per_slab - 1] = UINT32_MAX;  /* End marker */
     
     /* Call constructors if defined */
     if (cache->ctor) {
@@ -128,7 +133,12 @@ static void slab_destroy(struct kmem_cache *cache, struct slab *slab) {
     
     /* Free slab pages */
     uint64_t phys = VIRT_TO_PHYS((uint64_t)slab);
-    pmm_free_pages(phys, cache->slab_size / PAGE_SIZE);
+    size_t pages = cache->slab_size / PAGE_SIZE;
+    for (size_t i = 0; i < pages; i++) {
+        uint64_t page_phys = phys + (i * PAGE_SIZE);
+        pmm_page_update_flags(page_phys, 0, PAGE_FLAG_SLAB);
+    }
+    pmm_free_pages(phys, pages);
     
     cache->total_slabs--;
     cache->total_objects -= cache->objects_per_slab;
@@ -136,7 +146,7 @@ static void slab_destroy(struct kmem_cache *cache, struct slab *slab) {
 
 /* Allocate from slab */
 static void *slab_alloc_obj(struct slab *slab) {
-    if (slab->free_idx == 0xFF) {
+    if (slab->free_idx == UINT32_MAX) {
         return NULL;  /* Slab is full */
     }
     
@@ -255,6 +265,11 @@ struct kmem_cache *kmem_cache_create(const char *name, size_t size,
     
     cache->objects_per_slab = calc_objects_per_slab(cache->aligned_size,
                                                      cache->slab_size);
+    if (cache->objects_per_slab == 0) {
+        printk(KERN_ERR "kmalloc: cache '%s' objects_per_slab=0 (obj=%zu slab=%zu)\n",
+               name ? name : "<unnamed>", cache->aligned_size, cache->slab_size);
+        return NULL;
+    }
     
     INIT_LIST_HEAD(&cache->slabs_full);
     INIT_LIST_HEAD(&cache->slabs_partial);

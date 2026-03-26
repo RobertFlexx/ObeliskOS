@@ -760,6 +760,18 @@ static int console_input_pop_char_nonblock(void) {
     return out;
 }
 
+static int console_input_peek_char_nonblock(void) {
+    int out;
+    uint64_t flags = irq_save_flags();
+    if (g_console_in_tail == g_console_in_head) {
+        irq_restore_flags(flags);
+        return -EAGAIN;
+    }
+    out = (unsigned char)g_console_in_q[g_console_in_tail];
+    irq_restore_flags(flags);
+    return out;
+}
+
 static uint16_t ps2_set1_keycode(uint8_t sc, bool e0);
 static uint16_t ps2_set2_keycode(uint8_t sc, bool e0);
 
@@ -1618,6 +1630,43 @@ void devfs_console_flush_input(void) {
     while (uart_getc_nonblock() >= 0) {
         /* Drain UART input too. */
     }
+}
+
+int devfs_console_peekc_nonblock(void) {
+    /* Peek next queued console byte; if queue is empty, opportunistically
+     * feed missed keyboard bytes into the queue (same as getc nonblock does),
+     * and enqueue any UART byte we pull so it isn't lost.
+     */
+    int c = console_input_peek_char_nonblock();
+    if (c >= 0) {
+        return c;
+    }
+
+    for (int i = 0; i < 32; i++) {
+        uint8_t status = inb(I8042_STATUS_PORT);
+        if ((status & I8042_STAT_OBF) == 0U) {
+            break;
+        }
+        if ((status & I8042_STAT_AUX) != 0U) {
+            /* Drain mouse byte so keyboard stream is not blocked by AUX OBF. */
+            (void)inb(I8042_DATA_PORT);
+            continue;
+        }
+        ps2_kbd_feed_byte(inb(I8042_DATA_PORT), false);
+        c = console_input_peek_char_nonblock();
+        if (c >= 0) {
+            return c;
+        }
+    }
+
+    /* Fallback: if nothing queued, check UART and enqueue if a byte exists. */
+    c = uart_getc_nonblock();
+    if (c >= 0) {
+        (void)console_input_push_char((char)c);
+        return c;
+    }
+
+    return -EAGAIN;
 }
 
 unsigned long devfs_input_kbd_drop_count(void) {

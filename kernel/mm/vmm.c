@@ -487,13 +487,19 @@ void *vmm_brk(struct address_space *as, void *addr) {
     if (new_brk > as->brk_end) {
         /* Expand heap */
         for (uint64_t addr = as->brk_end; addr < new_brk; addr += PAGE_SIZE) {
+            /* Do not remap over already-mapped pages; that can corrupt
+             * loader state (ld.so / link_map) when brk bookkeeping is off. */
+            uint64_t existing_phys = mmu_resolve(as->pt, addr);
+            if (existing_phys) {
+                return (void *)-1;
+            }
             uint64_t phys = pmm_alloc_page();
             if (!phys) {
                 return (void *)-1;
             }
             
             int ret = mmu_map(as->pt, addr, phys,
-                             PTE_PRESENT | PTE_WRITABLE | PTE_USER | PTE_NX);
+                             PTE_PRESENT | PTE_WRITABLE | PTE_USER);
             if (ret != 0) {
                 pmm_free_page(phys);
                 return (void *)-1;

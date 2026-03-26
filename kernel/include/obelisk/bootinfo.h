@@ -34,4 +34,8 @@ const struct obelisk_boot_module *bootinfo_module_at(size_t index);
 const struct obelisk_boot_module *bootinfo_find_module(const char *name);
 const struct obelisk_framebuffer_info *bootinfo_framebuffer(void);
 
+/* ACPI RSDP copy from multiboot2 tag (if present); len 0 if unavailable. */
+const uint8_t *bootinfo_acpi_rsdp(void);
+size_t bootinfo_acpi_rsdp_len(void);
+
 #endif

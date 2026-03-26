@@ -21,6 +21,7 @@ enum target_mode {
     TARGET_XORG = 1,
     TARGET_XFCE = 2,
     TARGET_XDM  = 3,
+    TARGET_OBWM = 4,
 };
 
 static int file_exists(const char *path) {
@@ -59,6 +60,18 @@ static int run_wait(const char *path, char *const argv[]) {
     }
     while (waitpid(pid, &st, 0) < 0) { }
     return st == 0 ? 0 : -1;
+}
+
+static int run_wait_status(const char *path, char *const argv[], char *const envp[]) {
+    int pid = fork();
+    int st = -1;
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        execve(path, argv, envp);
+        _exit(127);
+    }
+    while (waitpid(pid, &st, 0) < 0) { }
+    return st;
 }
 
 static const char *find_xserver_bin(void) {
@@ -117,6 +130,9 @@ static enum target_mode pick_target(void) {
 }
 
 static int require_profile(enum target_mode target) {
+    if (target == TARGET_OBWM) {
+        return 0;
+    }
     if (target == TARGET_XFCE || target == TARGET_XDM) {
         if (!file_exists("/var/lib/opkg/installed/xfce.json") &&
             !file_exists("/var/lib/opkg/installed/xfce4.json") &&
@@ -181,8 +197,32 @@ static const char *find_xorg_launcher(void) {
     return 0;
 }
 
+static const char *find_obwm_launcher(void) {
+    static const char *cand[] = {
+        "/usr/bin/obwm",
+        "/bin/obwm"
+    };
+    int i;
+    for (i = 0; i < (int)(sizeof(cand) / sizeof(cand[0])); i++) {
+        if (file_exists(cand[i])) return cand[i];
+    }
+    return 0;
+}
+
 static void print_usage(void) {
-    printf("usage: desktop-session [auto|xorg|xfce|xdm] [--probe-only]\n");
+    printf("usage: desktop-session [auto|xorg|xfce|xdm|obwm] [--probe-only]\n");
+}
+
+static int validate_native_stack(void) {
+    if (!file_exists("/dev/fb0")) {
+        printf("desktop-session: native mode needs /dev/fb0\n");
+        return -1;
+    }
+    if (!file_exists("/dev/input/event0")) {
+        printf("desktop-session: native mode needs /dev/input/event0\n");
+        return -1;
+    }
+    return 0;
 }
 
 static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
@@ -202,6 +242,8 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
             target = TARGET_XFCE;
         } else if (strcmp(argv[i], "xdm") == 0) {
             target = TARGET_XDM;
+        } else if (strcmp(argv[i], "obwm") == 0 || strcmp(argv[i], "native") == 0) {
+            target = TARGET_OBWM;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage();
             _exit(0);
@@ -211,8 +253,20 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
         }
     }
 
+    if (target == TARGET_AUTO) {
+        target = pick_target();
+        if (target == TARGET_AUTO) {
+            printf("desktop-session: no desktop profile installed, defaulting to obwm mode\n");
+            target = TARGET_OBWM;
+        }
+    }
+
     printf("desktop-session: validating graphics/input stack...\n");
-    {
+    if (target == TARGET_OBWM) {
+        if (validate_native_stack() < 0) {
+            _exit(2);
+        }
+    } else {
         char *smoke_argv[] = { "xorg-smoke", 0 };
         if (run_wait("/bin/xorg-smoke", smoke_argv) < 0) {
             printf("desktop-session: xorg-smoke failed\n");
@@ -220,19 +274,19 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
         }
     }
 
-    if (target == TARGET_AUTO) {
-        target = pick_target();
-        if (target == TARGET_AUTO) {
-            printf("desktop-session: no desktop profile installed, defaulting to xorg mode\n");
-            target = TARGET_XORG;
-        }
-    }
-
     if (require_profile(target) < 0) {
         _exit(3);
     }
 
-    if (target == TARGET_XDM) {
+    if (target == TARGET_OBWM) {
+        launcher = find_obwm_launcher();
+        if (!launcher) {
+            printf("desktop-session: obwm launcher missing (expected /bin/obwm or /usr/bin/obwm)\n");
+            _exit(4);
+        }
+        printf("desktop-session: selected obwm launcher: %s\n", launcher);
+        printf("desktop-session: launching native desktop (switch to VM graphical display)\n");
+    } else if (target == TARGET_XDM) {
         launcher = find_xdm_launcher();
         if (!launcher) {
             printf("desktop-session: xdm launcher missing (expected xdm or xdm-compat)\n");
@@ -260,7 +314,32 @@ static __attribute__((used)) void desktop_session_main(int argc, char **argv) {
         _exit(0);
     }
 
-    if (target == TARGET_XDM) {
+    if (target == TARGET_OBWM) {
+        char *envp[] = {
+            "PATH=/bin:/sbin:/usr/bin",
+            "HOME=/home/obelisk",
+            "TERM=vt100",
+            "USER=obelisk",
+            "SHELL=/bin/osh",
+            "XDG_SESSION_TYPE=obelisk-native",
+            0
+        };
+        char *args[] = { (char *)launcher, 0 };
+        int st = run_wait_status(launcher, args, envp);
+        if (st == 0) {
+            printf("desktop-session: obwm exited normally\n");
+            _exit(0);
+        }
+        if (st < 0) {
+            printf("desktop-session: failed to start %s\n", launcher);
+        } else {
+            printf("desktop-session: obwm exited with status=0x%x\n", st);
+            if (st == (127 << 8)) {
+                printf("desktop-session: exec failed (missing binary/interpreter or bad ELF)\n");
+            }
+        }
+        _exit(5);
+    } else if (target == TARGET_XDM) {
         char *envp[] = {
             "PATH=/bin:/sbin:/usr/bin",
             "HOME=/home/obelisk",

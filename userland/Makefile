@@ -29,6 +29,9 @@ LIBC_OBJS := \
 	$(BUILDDIR)/libc/stdio.o \
 	$(BUILDDIR)/libc/syscall.o
 
+NATIVE_GUI_OBJS := \
+	$(BUILDDIR)/lib/native_gui.o
+
 LIBC := $(BUILDDIR)/libc.a
 INIT := $(OUTDIR)/init
 OBELISKD := $(OUTDIR)/obeliskd
@@ -55,8 +58,11 @@ DESKTOP_SESSION := $(OUTDIR)/desktop-session
 OED := $(OUTDIR)/oed
 RUNTIME_ABI_PROBE := $(OUTDIR)/runtime-abi-probe
 LOADER_ELF_PROBE := $(OUTDIR)/loader-elf-probe
+OBWM := $(OUTDIR)/obwm
+OTERM := $(OUTDIR)/oterm
+OFILES := $(OUTDIR)/ofiles
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED) $(RUNTIME_ABI_PROBE) $(LOADER_ELF_PROBE)
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED) $(RUNTIME_ABI_PROBE) $(LOADER_ELF_PROBE) $(OBWM) $(OTERM) $(OFILES)
 
 CFLAGS := \
 	-ffreestanding \
@@ -213,6 +219,18 @@ $(RUNTIME_ABI_PROBE): $(BUILDDIR)/bin/runtime-abi-probe/runtime_abi_probe.o $(LI
 $(LOADER_ELF_PROBE): $(BUILDDIR)/bin/loader-elf-probe/loader_elf_probe.o $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $< $(LIBC)
+
+$(OBWM): $(BUILDDIR)/bin/obwm/obwm.o $(NATIVE_GUI_OBJS) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/obwm/obwm.o $(NATIVE_GUI_OBJS) $(LIBC)
+
+$(OTERM): $(BUILDDIR)/bin/oterm/oterm.o $(NATIVE_GUI_OBJS) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/oterm/oterm.o $(NATIVE_GUI_OBJS) $(LIBC)
+
+$(OFILES): $(BUILDDIR)/bin/ofiles/ofiles.o $(NATIVE_GUI_OBJS) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/ofiles/ofiles.o $(NATIVE_GUI_OBJS) $(LIBC)
 
 clean:
 	@echo "  CLEAN"

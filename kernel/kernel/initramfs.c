@@ -6,6 +6,7 @@
 #include <obelisk/types.h>
 #include <obelisk/kernel.h>
 #include <obelisk/initramfs.h>
+#include <obelisk/zig_initramfs.h>
 #include <fs/vfs.h>
 #include <fs/inode.h>
 #include <fs/file.h>
@@ -232,6 +233,12 @@ static void normalize_runtime_ids(const char *path, uid_t *uid, gid_t *gid) {
 }
 
 int initramfs_unpack_tar(const void *archive, size_t archive_size) {
+    if (zig_initramfs_scan(archive, (uint64_t)archive_size) != 0) {
+        printk(KERN_ERR
+               "initramfs: archive failed structural validation (truncated or malformed)\n");
+        return -EINVAL;
+    }
+
     const uint8_t *p = (const uint8_t *)archive;
     const uint8_t *end = p + archive_size;
     size_t imported = 0;

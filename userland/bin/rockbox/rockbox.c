@@ -2089,15 +2089,51 @@ static char *trim_ws(char *s) {
     return s;
 }
 
-static char *find_substr(char *hay, const char *needle) {
-    size_t n = str_len(needle);
-    if (n == 0) return hay;
-    for (size_t i = 0; hay[i]; i++) {
-        size_t j = 0;
-        while (j < n && hay[i + j] == needle[j]) j++;
-        if (j == n) return &hay[i];
+/*
+ * Obelisk sudoers subset: supports common lines like
+ *   user ALL=(ALL) ALL
+ *   user ALL=(ALL) NOPASSWD: ALL
+ *   user NOPASSWD: ALL
+ * (Host is always ALL; runas (ALL) is skipped; Cmnd_Alias not supported.)
+ */
+static char *sudoers_strip_nopasswd(char *r, int *nopw_out) {
+    r = trim_ws(r);
+    if (str_ncmp(r, "NOPASSWD:", 9) == 0) {
+        if (nopw_out) {
+            *nopw_out = 1;
+        }
+        return trim_ws(r + 9);
     }
-    return NULL;
+    return r;
+}
+
+static char *sudoers_skip_host_runas(char *r) {
+    r = trim_ws(r);
+    if (!r[0]) {
+        return r;
+    }
+    /* ALL=(ALL) or ALL=(ALL:ALL) … */
+    if (str_ncmp(r, "ALL", 3) == 0 && r[3] == '=') {
+        char *lp = r + 4;
+        while (*lp && *lp != '(') {
+            lp++;
+        }
+        if (*lp == '(') {
+            char *rp = lp + 1;
+            while (*rp && *rp != ')') {
+                rp++;
+            }
+            if (*rp == ')') {
+                return trim_ws(rp + 1);
+            }
+        }
+        return r;
+    }
+    /* Host field only: ALL */
+    if (str_ncmp(r, "ALL", 3) == 0 && (r[3] == ' ' || r[3] == '\t')) {
+        return trim_ws(r + 3);
+    }
+    return r;
 }
 
 static void parse_sudoers_line(char *line, const char *username, const char *cmd0,
@@ -2120,27 +2156,11 @@ static void parse_sudoers_line(char *line, const char *username, const char *cmd
     if (rest[0] == '\0') return;
 
     int nopw = 0;
-    char *np = find_substr(rest, "NOPASSWD:");
-    if (np) {
-        nopw = 1;
-        rest = trim_ws(np + 9);
-    } else {
-        char *colon = NULL;
-        for (char *q = rest; *q; q++) if (*q == ':') colon = q;
-        if (colon) rest = trim_ws(colon + 1);
-    }
+    rest = sudoers_strip_nopasswd(rest, &nopw);
+    rest = sudoers_skip_host_runas(rest);
+    rest = sudoers_strip_nopasswd(rest, &nopw);
 
-    if (rest[0] == '\0') {
-        /* fallback to last token */
-        char *last = rest;
-        for (char *q = p; *q; q++) {
-            if (*q == ' ' || *q == '\t') {
-                while (*q == ' ' || *q == '\t') q++;
-                if (*q) last = q;
-            }
-        }
-        rest = trim_ws(last);
-    }
+    if (rest[0] == '\0') return;
 
     int allow_cmd = 0;
     if (str_ncmp(rest, "ALL", 3) == 0 && (rest[3] == '\0' || rest[3] == ',' || rest[3] == ' ' || rest[3] == '\t')) {
@@ -2157,12 +2177,12 @@ static void parse_sudoers_line(char *line, const char *username, const char *cmd
             char hold = *it;
             *it = '\0';
             const char *base = base_name(start);
-                if (str_cmp(start, cmd0) == 0 ||
-                    str_cmp(base, cmd0) == 0 ||
-                    str_cmp(base, base_name(cmd0)) == 0 ||
-                    wildcard_match(start, cmd0) ||
-                    wildcard_match(start, base_name(cmd0)) ||
-                    wildcard_match(base, base_name(cmd0))) {
+            if (str_cmp(start, cmd0) == 0 ||
+                str_cmp(base, cmd0) == 0 ||
+                str_cmp(base, base_name(cmd0)) == 0 ||
+                wildcard_match(start, cmd0) ||
+                wildcard_match(start, base_name(cmd0)) ||
+                wildcard_match(base, base_name(cmd0))) {
                 allow_cmd = 1;
                 *it = hold;
                 break;

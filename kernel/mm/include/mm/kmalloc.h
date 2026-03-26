@@ -30,7 +30,7 @@ struct slab {
     void *base;                 /* Base address */
     uint32_t inuse;             /* Objects in use */
     uint32_t free_idx;          /* First free object index */
-    uint8_t *freelist;          /* Free object list */
+    uint32_t *freelist;         /* Free object list */
     struct kmem_cache *cache;   /* Parent cache */
 };
 

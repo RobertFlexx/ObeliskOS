@@ -64,6 +64,7 @@ void console_write(const char *buf, size_t len);
 void console_fb_init(void);
 void console_poll(void);
 int devfs_console_getc_nonblock(void);
+int devfs_console_peekc_nonblock(void);
 char devfs_console_getc(void);
 void devfs_console_flush_input(void);
 

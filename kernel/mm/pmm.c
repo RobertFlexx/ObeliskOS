@@ -35,6 +35,10 @@ static struct pmm_zone zones[ZONE_COUNT] = {
 static uint64_t total_pages = 0;
 static uint64_t free_pages = 0;
 static uint64_t usable_pages = 0;
+static struct page *page_array = NULL;
+static uint64_t page_array_count = 0;
+static uint64_t page_array_backing_phys = 0;
+static uint32_t initial_bitmap[1024 * 1024 / 32]; /* 1M pages = 4GB */
 
 /* Bitmap operations */
 static inline void bitmap_set(uint32_t *bitmap, uint64_t bit) {
@@ -92,30 +96,89 @@ static struct pmm_zone *pfn_to_zone(uint64_t pfn) {
     return NULL;
 }
 
+static inline struct page *pfn_to_page_struct(uint64_t pfn) {
+    if (!page_array || pfn >= page_array_count) {
+        return NULL;
+    }
+    return &page_array[pfn];
+}
+
+static void pmm_init_page_metadata(void) {
+    size_t meta_bytes;
+    size_t meta_pages;
+    uint64_t phys;
+
+    if (total_pages == 0) {
+        return;
+    }
+
+    meta_bytes = total_pages * sizeof(struct page);
+    meta_pages = ALIGN_UP(meta_bytes, PAGE_SIZE) / PAGE_SIZE;
+    phys = pmm_alloc_pages(meta_pages);
+    if (!phys) {
+        panic("PMM: failed to allocate struct page metadata");
+    }
+
+    page_array = (struct page *)PHYS_TO_VIRT(phys);
+    page_array_count = total_pages;
+    page_array_backing_phys = phys;
+    memset(page_array, 0, meta_pages * PAGE_SIZE);
+
+    for (uint64_t pfn = 0; pfn < total_pages; pfn++) {
+        struct pmm_zone *zone = pfn_to_zone(pfn);
+        struct page *pg = &page_array[pfn];
+        pg->zone = zone ? (uint16_t)(zone - &zones[0]) : (uint16_t)ZONE_NORMAL;
+        pg->flags = PAGE_FLAG_RESERVED;
+        pg->refcount = 1;
+        pg->owner = PAGE_OWNER_KERNEL;
+        if (zone == &zones[ZONE_DMA]) {
+            pg->flags |= PAGE_FLAG_DMA;
+        }
+    }
+
+    for (size_t i = 0; i < meta_pages; i++) {
+        uint64_t pfn = phys_to_pfn(phys + (i * PAGE_SIZE));
+        struct page *pg = pfn_to_page_struct(pfn);
+        if (pg) {
+            pg->flags |= PAGE_FLAG_KERNEL;
+            pg->owner = PAGE_OWNER_KERNEL;
+            pg->refcount = 1;
+        }
+    }
+
+    printk(KERN_INFO "PMM: struct page metadata at phys=0x%lx (%zu pages, %zu bytes)\n",
+           phys, meta_pages, meta_bytes);
+}
+
 /* Initialize PMM bitmap */
 void pmm_init_bitmap(uint64_t num_pages) {
-    total_pages = num_pages;
+    const uint64_t max_bitmap_pages = (uint64_t)(sizeof(initial_bitmap) * 8);
+    if (num_pages > max_bitmap_pages) {
+        printk(KERN_WARNING "PMM: detected %lu pages, but bitmap supports %lu pages; capping managed range\n",
+               num_pages, max_bitmap_pages);
+        total_pages = max_bitmap_pages;
+    } else {
+        total_pages = num_pages;
+    }
     
     /* Calculate bitmap size (1 bit per page) */
     size_t bitmap_pages = ALIGN_UP(num_pages / 8, PAGE_SIZE) / PAGE_SIZE;
     (void)bitmap_pages;
     
     /* Update zone boundaries */
-    if (num_pages > 0x100000) {
-        zones[ZONE_HIGH].end_pfn = num_pages;
-    } else if (num_pages > 0x1000) {
-        zones[ZONE_NORMAL].end_pfn = num_pages;
+    if (total_pages > 0x100000) {
+        zones[ZONE_HIGH].end_pfn = total_pages;
+    } else if (total_pages > 0x1000) {
+        zones[ZONE_NORMAL].end_pfn = total_pages;
         zones[ZONE_HIGH].end_pfn = zones[ZONE_HIGH].start_pfn;
     } else {
-        zones[ZONE_DMA].end_pfn = num_pages;
+        zones[ZONE_DMA].end_pfn = total_pages;
         zones[ZONE_NORMAL].end_pfn = zones[ZONE_NORMAL].start_pfn;
         zones[ZONE_HIGH].end_pfn = zones[ZONE_HIGH].start_pfn;
     }
     
     /* For initial setup, we use a static area in BSS */
     /* This will be replaced with proper memory once we can allocate */
-    static uint32_t initial_bitmap[1024 * 1024 / 32]; /* 1M pages = 4GB */
-    
     /* Initialize all zones with the same bitmap for now */
     for (int i = 0; i < ZONE_COUNT; i++) {
         zones[i].bitmap = initial_bitmap;
@@ -148,6 +211,17 @@ void pmm_mark_region_free(uint64_t base, uint64_t size) {
             zone->free_pages++;
             free_pages++;
             usable_pages++;
+            struct page *pg = pfn_to_page_struct(pfn);
+            if (pg) {
+                pg->refcount = 0;
+                pg->flags &= ~(PAGE_FLAG_RESERVED | PAGE_FLAG_KERNEL | PAGE_FLAG_USER | PAGE_FLAG_SLAB);
+                pg->owner = PAGE_OWNER_FREE;
+                if (zone == &zones[ZONE_DMA]) {
+                    pg->flags |= PAGE_FLAG_DMA;
+                } else {
+                    pg->flags &= ~PAGE_FLAG_DMA;
+                }
+            }
         }
     }
 }
@@ -163,6 +237,17 @@ void pmm_mark_region_used(uint64_t base, uint64_t size) {
             bitmap_set(zone->bitmap, pfn);
             if (zone->free_pages > 0) zone->free_pages--;
             if (free_pages > 0) free_pages--;
+            struct page *pg = pfn_to_page_struct(pfn);
+            if (pg) {
+                pg->refcount = 1;
+                pg->flags |= PAGE_FLAG_RESERVED | PAGE_FLAG_KERNEL;
+                pg->owner = PAGE_OWNER_KERNEL;
+                if (zone == &zones[ZONE_DMA]) {
+                    pg->flags |= PAGE_FLAG_DMA;
+                } else {
+                    pg->flags &= ~PAGE_FLAG_DMA;
+                }
+            }
         }
     }
 }
@@ -185,6 +270,18 @@ uint64_t pmm_alloc_page_zone(zone_type_t zone_type) {
     bitmap_set(zone->bitmap, pfn);
     zone->free_pages--;
     free_pages--;
+
+    struct page *pg = pfn_to_page_struct((uint64_t)pfn);
+    if (pg) {
+        pg->refcount = 1;
+        pg->flags |= PAGE_FLAG_RESERVED | PAGE_FLAG_KERNEL;
+        pg->owner = (zone_type == ZONE_DMA) ? PAGE_OWNER_DMA : PAGE_OWNER_KERNEL;
+        if (zone_type == ZONE_DMA) {
+            pg->flags |= PAGE_FLAG_DMA;
+        } else {
+            pg->flags &= ~PAGE_FLAG_DMA;
+        }
+    }
     
     return pfn_to_phys(pfn);
 }
@@ -222,6 +319,17 @@ uint64_t pmm_alloc_pages_zone(size_t count, zone_type_t zone_type) {
     /* Mark as used */
     for (size_t i = 0; i < count; i++) {
         bitmap_set(zone->bitmap, start_pfn + i);
+        struct page *pg = pfn_to_page_struct((uint64_t)start_pfn + i);
+        if (pg) {
+            pg->refcount = 1;
+            pg->flags |= PAGE_FLAG_RESERVED | PAGE_FLAG_KERNEL;
+            pg->owner = (zone_type == ZONE_DMA) ? PAGE_OWNER_DMA : PAGE_OWNER_KERNEL;
+            if (zone_type == ZONE_DMA) {
+                pg->flags |= PAGE_FLAG_DMA;
+            } else {
+                pg->flags &= ~PAGE_FLAG_DMA;
+            }
+        }
     }
     zone->free_pages -= count;
     free_pages -= count;
@@ -261,6 +369,18 @@ void pmm_free_page(uint64_t phys) {
     bitmap_clear(zone->bitmap, pfn);
     zone->free_pages++;
     free_pages++;
+
+    struct page *pg = pfn_to_page_struct(pfn);
+    if (pg) {
+        pg->refcount = 0;
+        pg->flags &= ~(PAGE_FLAG_RESERVED | PAGE_FLAG_KERNEL | PAGE_FLAG_USER | PAGE_FLAG_SLAB);
+        pg->owner = PAGE_OWNER_FREE;
+        if (zone == &zones[ZONE_DMA]) {
+            pg->flags |= PAGE_FLAG_DMA;
+        } else {
+            pg->flags &= ~PAGE_FLAG_DMA;
+        }
+    }
 }
 
 /* Free contiguous pages */
@@ -295,6 +415,41 @@ struct pmm_zone *pmm_get_zone(zone_type_t type) {
     return &zones[type];
 }
 
+struct page *pmm_get_page_by_pfn(uint64_t pfn) {
+    return pfn_to_page_struct(pfn);
+}
+
+struct page *pmm_get_page_by_phys(uint64_t phys) {
+    return pfn_to_page_struct(phys_to_pfn(phys));
+}
+
+void pmm_page_set_owner(uint64_t phys, uint16_t owner) {
+    struct page *pg = pmm_get_page_by_phys(phys);
+    if (!pg) return;
+    pg->owner = owner;
+}
+
+void pmm_page_update_flags(uint64_t phys, uint32_t set_flags, uint32_t clear_flags) {
+    struct page *pg = pmm_get_page_by_phys(phys);
+    if (!pg) return;
+    pg->flags |= set_flags;
+    pg->flags &= ~clear_flags;
+}
+
+void pmm_page_ref_inc(uint64_t phys) {
+    struct page *pg = pmm_get_page_by_phys(phys);
+    if (!pg) return;
+    pg->refcount++;
+}
+
+bool pmm_page_ref_dec(uint64_t phys) {
+    struct page *pg = pmm_get_page_by_phys(phys);
+    if (!pg) return false;
+    if (pg->refcount == 0) return false;
+    pg->refcount--;
+    return (pg->refcount == 0);
+}
+
 /* Dump statistics */
 void pmm_dump_stats(void) {
     printk(KERN_INFO "Physical Memory Statistics:\n");
@@ -313,6 +468,10 @@ void pmm_dump_stats(void) {
                    zone->name, zone->total_pages, zone->free_pages);
         }
     }
+    if (page_array) {
+        printk(KERN_INFO "  struct page: %lu entries, backing phys=0x%lx\n",
+               page_array_count, page_array_backing_phys);
+    }
 }
 
 /* Initialize PMM (called from kernel main) */
@@ -321,6 +480,7 @@ void pmm_init(uint64_t multiboot_info) {
     
     /* Parse multiboot memory map and set up bitmap */
     physmem_init(0x36d76289, (void *)multiboot_info);
+    pmm_init_page_metadata();
     
     pmm_dump_stats();
 }

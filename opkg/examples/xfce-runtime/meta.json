@@ -4,7 +4,7 @@
   "arch": "x86_64",
   "summary": "XFCE runtime payload package",
   "description": "Installs real XFCE runtime executables, launch scripts, and session assets used by desktop login/session startup.",
-  "depends": ["xfce", "gtk3-runtime"],
+  "depends": ["gtk3-runtime"],
   "provides": ["xfce-session"],
   "conflicts": [],
   "maintainer": "Obelisk Project",

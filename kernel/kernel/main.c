@@ -197,6 +197,8 @@ static void fs_init_all(void) {
     vfs_mkdir("/var", 0755);
     vfs_mkdir("/tmp", 0777);
     vfs_mkdir("/dev", 0755);
+    /* Reserved for procfs (self, mountinfo, etc.); readlink /proc/self/exe is handled in syscalls. */
+    vfs_mkdir("/proc", 0555);
     
     /* DevFS */
     devfs_init();

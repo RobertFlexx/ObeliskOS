@@ -12,6 +12,10 @@
 #define MULTIBOOT_TAG_TYPE_CMDLINE 1
 #define MULTIBOOT_TAG_TYPE_MODULE 3
 #define MULTIBOOT_TAG_TYPE_FRAMEBUFFER 8
+#define MULTIBOOT_TAG_TYPE_ACPI_OLD 14
+#define MULTIBOOT_TAG_TYPE_ACPI_NEW 15
+
+#define BOOTINFO_ACPI_RSDP_MAX 36
 
 struct multiboot_tag {
     uint32_t type;
@@ -44,6 +48,9 @@ struct multiboot_tag_framebuffer_common {
     uint16_t reserved;
 } __packed;
 
+static uint8_t boot_acpi_rsdp[BOOTINFO_ACPI_RSDP_MAX];
+static size_t boot_acpi_rsdp_len;
+
 static char boot_cmdline[256];
 static struct obelisk_boot_module boot_modules[OBELISK_BOOT_MAX_MODULES];
 static size_t boot_module_count;
@@ -63,6 +70,7 @@ void bootinfo_init(uint32_t magic, uint64_t multiboot_addr) {
 
     boot_cmdline[0] = '\0';
     boot_module_count = 0;
+    boot_acpi_rsdp_len = 0;
     memset(&boot_fb, 0, sizeof(boot_fb));
 
     if (magic != MULTIBOOT2_MAGIC) {
@@ -92,6 +100,20 @@ void bootinfo_init(uint32_t magic, uint64_t multiboot_addr) {
             boot_fb.bpp = fb->framebuffer_bpp;
             boot_fb.type = fb->framebuffer_type;
             boot_fb.available = true;
+        } else if (tag->type == MULTIBOOT_TAG_TYPE_ACPI_OLD ||
+                   tag->type == MULTIBOOT_TAG_TYPE_ACPI_NEW) {
+            size_t payload = tag->size;
+            if (payload > sizeof(struct multiboot_tag)) {
+                payload -= sizeof(struct multiboot_tag);
+                if (payload > BOOTINFO_ACPI_RSDP_MAX) {
+                    payload = BOOTINFO_ACPI_RSDP_MAX;
+                }
+                /* Prefer ACPI 2.0+ tag; accept legacy only if nothing else was seen. */
+                if (tag->type == MULTIBOOT_TAG_TYPE_ACPI_NEW || boot_acpi_rsdp_len == 0) {
+                    memcpy(boot_acpi_rsdp, (const uint8_t *)tag + sizeof(struct multiboot_tag), payload);
+                    boot_acpi_rsdp_len = payload;
+                }
+            }
         }
 
         tag = (struct multiboot_tag *)ALIGN_UP((uint64_t)tag + tag->size, 8);
@@ -112,6 +134,12 @@ void bootinfo_init(uint32_t magic, uint64_t multiboot_addr) {
                boot_fb.phys_addr);
     } else {
         printk(KERN_INFO "bootinfo: framebuffer unavailable\n");
+    }
+    if (boot_acpi_rsdp_len > 0) {
+        printk(KERN_INFO "bootinfo: ACPI RSDP tag present (%lu bytes, sig %.8s)\n",
+               (unsigned long)boot_acpi_rsdp_len, (const char *)boot_acpi_rsdp);
+    } else {
+        printk(KERN_INFO "bootinfo: ACPI RSDP tag not provided by bootloader\n");
     }
 }
 
@@ -144,4 +172,12 @@ const struct obelisk_boot_module *bootinfo_find_module(const char *name) {
 
 const struct obelisk_framebuffer_info *bootinfo_framebuffer(void) {
     return &boot_fb;
+}
+
+const uint8_t *bootinfo_acpi_rsdp(void) {
+    return boot_acpi_rsdp_len > 0 ? boot_acpi_rsdp : NULL;
+}
+
+size_t bootinfo_acpi_rsdp_len(void) {
+    return boot_acpi_rsdp_len;
 }

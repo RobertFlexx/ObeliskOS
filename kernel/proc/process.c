@@ -545,6 +545,80 @@ void do_exit(int code) {
     __builtin_unreachable();
 }
 
+int do_kill(pid_t pid, int sig) {
+    struct process *target = NULL;
+    sigset_t bit;
+
+    if (!current) {
+        return -ESRCH;
+    }
+
+    if (pid == 0 || pid == current->pid) {
+        target = current;
+    } else {
+        target = process_find(pid);
+    }
+
+    if (!target) {
+        return -ESRCH;
+    }
+    if (sig <= 0 || sig >= NSIG) {
+        return -EINVAL;
+    }
+
+    bit = (sigset_t)(1ULL << (uint64_t)sig);
+    target->pending |= bit;
+
+    /* For the minimal Ctrl-C path we deliver immediately only for current. */
+    if (target == current) {
+        do_signal_deliver(target);
+    }
+
+    return 0;
+}
+
+void do_signal_deliver(struct process *proc) {
+    if (!proc || proc != current) {
+        return;
+    }
+
+    /* Phase 1: Ctrl-C must reliably stop polling/ongoing foreground work.
+     * Ignore `blocked` for SIGINT (Ctrl-C is a “physical” console interrupt).
+     */
+    sigset_t sigint_bit = (sigset_t)(1ULL << (uint64_t)SIGINT);
+    if (proc->pending & sigint_bit) {
+        proc->pending &= ~sigint_bit;
+        proc->flags |= PROC_FLAG_SIGNALED;
+        do_exit(128 + SIGINT);
+    }
+
+    /* Only implement default/ignore semantics for other signals right now. */
+    sigset_t deliverable = proc->pending & ~proc->blocked;
+    if (!deliverable) {
+        return;
+    }
+
+    for (int sig = 0; sig < NSIG; sig++) {
+        sigset_t bit = (sigset_t)(1ULL << (uint64_t)sig);
+        if ((deliverable & bit) == 0) {
+            continue;
+        }
+
+        /* Clear pending before action. */
+        proc->pending &= ~bit;
+
+        proc->flags |= PROC_FLAG_SIGNALED;
+
+        sighandler_t handler = proc->sigactions[sig].sa_handler;
+        if (handler == SIG_IGN) {
+            continue;
+        }
+
+        /* Default to termination for now (including user-installed handlers). */
+        do_exit(128 + sig);
+    }
+}
+
 pid_t do_wait(pid_t pid, int *status, int options) {
     struct process *parent = current;
     const int WNOHANG = 1;

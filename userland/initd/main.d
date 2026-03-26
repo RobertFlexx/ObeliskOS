@@ -661,15 +661,24 @@ private void launchInteractive(const Config* cfg) {
         null
     ];
 
+    const(char)* effectiveDesktopMode = cfg.desktopMode.ptr;
+    if (cstrcmp(effectiveDesktopMode, "auto".ptr) == 0) {
+        if (pathExists("/dev/fb0".ptr) != 0 && pathExists("/dev/input/event0".ptr) != 0) {
+            effectiveDesktopMode = "obwm".ptr;
+        } else {
+            effectiveDesktopMode = "tty".ptr;
+        }
+    }
+
     if (pathExists(FORCE_TTY_SENTINEL.ptr) != 0) {
         statusLine(C_YELLOW, "[..]".ptr, "force-tty override detected; skipping desktop auto-start".ptr);
         appendBootLog("desktop-boot: force-tty override honored".ptr);
         cstrcpy(state.lastAttemptedDesktopMode.ptr, "tty".ptr, state.lastAttemptedDesktopMode.length);
         saveBootState(&state);
-    } else if (cstrcmp(cfg.desktopMode.ptr, "tty".ptr) != 0) {
+    } else if (cstrcmp(effectiveDesktopMode, "tty".ptr) != 0) {
         int dsStatus = -1;
         int suppressXdm = 0;
-        if (cstrcmp(cfg.desktopMode.ptr, "xdm".ptr) == 0) {
+        if (cstrcmp(effectiveDesktopMode, "xdm".ptr) == 0) {
             if (pathExists(REENABLE_XDM_SENTINEL.ptr) != 0) {
                 state.consecutiveGraphicalFailures = 0;
                 appendBootLog("desktop-boot: re-enable sentinel present, xdm failure counter reset".ptr);
@@ -687,12 +696,12 @@ private void launchInteractive(const Config* cfg) {
             statusLine(C_BLUE, "[*]".ptr, "attempting desktop auto-start".ptr);
             logLine[0] = 0;
             cstrappend(logLine.ptr, "desktop-boot: launching /bin/desktop-session ".ptr, logLine.length);
-            cstrappend(logLine.ptr, cfg.desktopMode.ptr, logLine.length);
+            cstrappend(logLine.ptr, effectiveDesktopMode, logLine.length);
             appendBootLog(logLine.ptr);
-            cstrcpy(state.lastAttemptedDesktopMode.ptr, cfg.desktopMode.ptr, state.lastAttemptedDesktopMode.length);
+            cstrcpy(state.lastAttemptedDesktopMode.ptr, effectiveDesktopMode, state.lastAttemptedDesktopMode.length);
             saveBootState(&state);
 
-            dsStatus = launchDesktopSession(cfg.desktopMode.ptr, uid, gid);
+            dsStatus = launchDesktopSession(effectiveDesktopMode, uid, gid);
             if (dsStatus == 0) {
                 state.lastGraphicalSuccess = 1;
                 state.consecutiveGraphicalFailures = 0;
@@ -714,7 +723,7 @@ private void launchInteractive(const Config* cfg) {
                 appendBootLog(logLine.ptr);
 
                 statusLine(C_YELLOW, "[..]".ptr, "desktop auto-start failed; falling back to tty shell".ptr);
-                if (cstrcmp(cfg.desktopMode.ptr, "xdm".ptr) == 0 &&
+                if (cstrcmp(effectiveDesktopMode, "xdm".ptr) == 0 &&
                     state.consecutiveGraphicalFailures >= XDM_FAILURE_SUPPRESS_THRESHOLD) {
                     statusLine(C_YELLOW, "[..]".ptr, "xdm auto-start will remain suppressed until re-enabled".ptr);
                 }

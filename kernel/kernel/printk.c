@@ -8,6 +8,7 @@
 #include <obelisk/types.h>
 #include <obelisk/kernel.h>
 #include <obelisk/bootinfo.h>
+#include <obelisk/zig_mul.h>
 #include <mm/vmm.h>
 #include <stdarg.h>
 
@@ -328,12 +329,24 @@ static void fb_clear_rows(uint32_t y_start, uint32_t y_count) {
 }
 
 static void fb_scroll(void) {
+    uint64_t move_bytes_u64;
+    size_t line_bytes;
+    size_t move_lines;
+
     if (!g_fbcon.ready) return;
     fb_cursor_erase();
-    size_t line_bytes = g_fbcon.pitch;
-    size_t move_lines = (g_fbcon.rows > 1) ? (size_t)(g_fbcon.rows - 1) * g_fbcon.cell_h : 0;
+    line_bytes = g_fbcon.pitch;
+    move_lines = (g_fbcon.rows > 1) ? (size_t)(g_fbcon.rows - 1) * g_fbcon.cell_h : 0;
     if (move_lines > 0) {
-        memmove(g_fbcon.virt, g_fbcon.virt + (size_t)g_fbcon.cell_h * line_bytes, move_lines * line_bytes);
+        if (zig_u64_mul_ok((uint64_t)move_lines, (uint64_t)line_bytes, &move_bytes_u64) != 0 ||
+            move_bytes_u64 > (uint64_t)SIZE_MAX) {
+            /* Avoid printk here: printk -> fb_putc -> fb_scroll -> printk. */
+            fb_clear_rows(0, g_fbcon.height);
+            g_fbcon.row = 0;
+            g_fbcon.col = 0;
+            return;
+        }
+        memmove(g_fbcon.virt, g_fbcon.virt + (size_t)g_fbcon.cell_h * line_bytes, (size_t)move_bytes_u64);
     }
     fb_clear_rows((g_fbcon.rows > 0 ? g_fbcon.rows - 1 : 0) * g_fbcon.cell_h, g_fbcon.cell_h);
     if (g_fbcon.row > 0) g_fbcon.row--;
@@ -533,8 +546,24 @@ void console_fb_init(void) {
     g_fbcon.height = fb->height;
     g_fbcon.pitch = fb->pitch;
     g_fbcon.bpp = fb->bpp;
-    g_fbcon.scale_x = (fb->width >= 1600U) ? 2U : 1U;
-    g_fbcon.scale_y = 1U;
+    /*
+     * Uniform X/Y scale so glyphs stay square (wide-only scale looked "squashed").
+     * Step up on common laptop/desktop resolutions; cap at 3 for very large panels.
+     */
+    {
+        uint32_t w = fb->width;
+        uint32_t h = fb->height;
+        uint32_t scale = 1U;
+
+        if (w >= 1280U && h >= 720U) {
+            scale = 2U;
+        }
+        if (w >= 2560U && h >= 1440U) {
+            scale = 3U;
+        }
+        g_fbcon.scale_x = scale;
+        g_fbcon.scale_y = scale;
+    }
     g_fbcon.cell_w = FB_FONT_W * g_fbcon.scale_x;
     g_fbcon.cell_h = FB_FONT_H * g_fbcon.scale_y;
     g_fbcon.cols = fb->width / g_fbcon.cell_w;

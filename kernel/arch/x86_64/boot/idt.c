@@ -208,6 +208,39 @@ static bool diag_read_user_u64(struct process *p, uint64_t uaddr, uint64_t *out)
     return true;
 }
 
+static void dump_fault_page_walk(uint64_t va) {
+    uint64_t cr3 = read_cr3() & PAGE_FRAME_MASK;
+    uint64_t *pml4 = (uint64_t *)PHYS_TO_VIRT(cr3);
+    uint64_t pml4e = pml4[PML4_INDEX(va)];
+    printk(KERN_ERR "ptwalk: va=0x%lx cr3=0x%lx pml4e=0x%lx\n", va, cr3, pml4e);
+    if (!(pml4e & PTE_PRESENT)) {
+        return;
+    }
+
+    uint64_t *pdpt = (uint64_t *)PHYS_TO_VIRT(pte_get_frame(pml4e));
+    uint64_t pdpte = pdpt[PDPT_INDEX(va)];
+    printk(KERN_ERR "ptwalk: pdpte=0x%lx\n", pdpte);
+    if (!(pdpte & PTE_PRESENT) || (pdpte & PTE_HUGE)) {
+        return;
+    }
+
+    uint64_t *pd = (uint64_t *)PHYS_TO_VIRT(pte_get_frame(pdpte));
+    uint64_t pde = pd[PD_INDEX(va)];
+    printk(KERN_ERR "ptwalk: pde=0x%lx\n", pde);
+    if (!(pde & PTE_PRESENT) || (pde & PTE_HUGE)) {
+        return;
+    }
+
+    uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pte_get_frame(pde));
+    uint64_t pte = pt[PT_INDEX(va)];
+    printk(KERN_ERR "ptwalk: pte=0x%lx frame=0x%lx flags[p=%d w=%d u=%d nx=%d]\n",
+           pte, pte_get_frame(pte),
+           (pte & PTE_PRESENT) ? 1 : 0,
+           (pte & PTE_WRITABLE) ? 1 : 0,
+           (pte & PTE_USER) ? 1 : 0,
+           (pte & PTE_NX) ? 1 : 0);
+}
+
 static bool streq(const char *a, const char *b) {
     if (!a || !b) {
         return false;
@@ -292,12 +325,21 @@ static void maybe_diag_ldso_page_fault(const struct cpu_regs *regs) {
         }
     }
 
-    /* If we can locate the interpreter base, only dump when RIP is in it. */
+    /* If we can locate the interpreter base, only dump when the faulting
+     * address is in it. (RIP can be misleading if the fault is caused by an
+     * instruction accessing an invalid pointer.) */
     if (at_base) {
-        uint64_t rip = regs->rip;
-        if (rip < at_base || rip >= at_base + 0x4000000ULL) {
+        uint64_t fault_addr = read_cr2();
+        if (fault_addr < at_base || fault_addr >= at_base + 0x4000000ULL) {
             return;
         }
+    }
+
+    /* Only interpret RDI as link_map* if the faulting instruction pointer is
+     * inside ld.so itself. */
+    bool rip_in_ldso = false;
+    if (at_base) {
+        rip_in_ldso = (regs->rip >= at_base && regs->rip < at_base + 0x4000000ULL);
     }
 
     /*
@@ -387,6 +429,21 @@ static void maybe_diag_ldso_page_fault(const struct cpu_regs *regs) {
            at_base, at_entry, at_phdr, at_phent, at_phnum);
     printk(KERN_ERR "auxv: AT_PAGESZ=0x%lx AT_SECURE=0x%lx uid/euid=%lu/%lu gid/egid=%lu/%lu AT_HWCAP=0x%lx AT_HWCAP2=0x%lx AT_RANDOM=0x%lx\n",
            at_pagesz, at_secure, at_uid, at_euid, at_gid, at_egid, at_hwcap, at_hwcap2, at_random);
+    if (at_phdr && at_phnum && at_phent) {
+        uint64_t phdr0_type = 0, phdr0_flags = 0, phdr0_vaddr = 0;
+        bool phdr_ok = diag_read_user_u64(p, at_phdr + 0x0, &phdr0_type) &&
+                       diag_read_user_u64(p, at_phdr + 0x4, &phdr0_flags) &&
+                       diag_read_user_u64(p, at_phdr + 0x10, &phdr0_vaddr);
+        printk(KERN_ERR "auxv check: AT_PHDR readable=%d first_phdr{type=0x%lx flags=0x%lx vaddr=0x%lx}\n",
+               phdr_ok ? 1 : 0, phdr0_type & 0xffffffffULL, phdr0_flags & 0xffffffffULL, phdr0_vaddr);
+    } else {
+        printk(KERN_ERR "auxv check: AT_PHDR/AT_PHNUM/AT_PHENT incomplete\n");
+    }
+    if (!rip_in_ldso) {
+        printk(KERN_ERR "note: RIP not in ld.so (rip=0x%lx, at_base=0x%lx) -> skip link_map@RDI interpretation\n",
+               regs->rip, at_base);
+        return;
+    }
     if (at_entry >= at_rdi_0) {
         printk(KERN_ERR "main map check: AT_ENTRY-l_addr=0x%lx (expect PIE e_entry e.g. 0x2140 for xinit)\n",
                at_entry - at_rdi_0);
@@ -452,6 +509,9 @@ static void log_exception_header(uint64_t vector, uint64_t error_code) {
         if (error_code & 0x8) printk(" [RSVD]");
         if (error_code & 0x10) printk(" [I]");
         printk("\n");
+        if (error_code & 0x8) {
+            dump_fault_page_walk(fault_addr);
+        }
         return;
     }
 

@@ -12,6 +12,7 @@
 #include <fs/vfs.h>
 #include <fs/inode.h>
 #include <uapi/syscall.h>
+#include <obelisk/zig_elf.h>
 
 /* Off-by-default loader debug instrumentation for responsiveness. */
 extern int loader_exec_debug_enabled;
@@ -271,34 +272,69 @@ static void exec_debug_dump_dynamic(struct process *proc, struct file *src_file,
         if (max_dyn > 96) {
             max_dyn = 96;
         }
-        printk(KERN_INFO "exec: %s PT_DYNAMIC vaddr=0x%lx entries=%zu\n", label, dyn_vaddr, max_dyn);
-        if (src_file && phdr.p_filesz >= sizeof(struct elf64_dyn)) {
-            struct elf64_dyn src_dyn0;
-            off_t dyn_off = phdr.p_offset;
-            if (vfs_read(src_file, &src_dyn0, sizeof(src_dyn0), &dyn_off) == sizeof(src_dyn0)) {
-                printk(KERN_INFO "exec: %s PT_DYNAMIC file[0] tag=0x%lx val=0x%lx\n",
-                       label, (uint64_t)src_dyn0.d_tag, src_dyn0.d_un.d_val);
+        /* Find the PT_LOAD segment containing this PT_DYNAMIC (in ELF VA space). */
+        struct elf64_phdr load_phdr;
+        bool found_load = false;
+        for (uint16_t j = 0; j < hdr->e_phnum; j++) {
+            struct elf64_phdr ph2;
+            uint64_t ph2_addr = img->phdr + (uint64_t)j * sizeof(struct elf64_phdr);
+            if (read_user_memory(proc, ph2_addr, &ph2, sizeof(ph2)) < 0) {
+                continue;
+            }
+            if (ph2.p_type != PT_LOAD) {
+                continue;
+            }
+            uint64_t load_start = ph2.p_vaddr;
+            uint64_t load_end = ph2.p_vaddr + ph2.p_memsz;
+            if (phdr.p_vaddr >= load_start && phdr.p_vaddr < load_end) {
+                load_phdr = ph2;
+                found_load = true;
+                break;
             }
         }
-        for (size_t di = 0; di < max_dyn; di++) {
-            struct elf64_dyn dyn;
-            if (read_user_memory(proc, dyn_vaddr + di * sizeof(struct elf64_dyn), &dyn, sizeof(dyn)) < 0) {
-                printk(KERN_INFO "exec: %s dyn[%zu] unreadable\n", label, di);
+        if (found_load) {
+            uint64_t dyn_off_in_load = phdr.p_vaddr - load_phdr.p_vaddr;
+            printk(KERN_INFO
+                   "exec: %s PT_DYNAMIC contained-in-PT_LOAD p_offset=0x%lx p_vaddr=0x%lx p_filesz=0x%lx p_memsz=0x%lx flags=0x%x dyn_off_in_load=0x%lx\n",
+                   label,
+                   (uint64_t)load_phdr.p_offset,
+                   (uint64_t)(img->load_bias + load_phdr.p_vaddr),
+                   (uint64_t)load_phdr.p_filesz,
+                   (uint64_t)load_phdr.p_memsz,
+                   load_phdr.p_flags,
+                   (uint64_t)dyn_off_in_load);
+        }
+        printk(KERN_INFO "exec: %s PT_DYNAMIC vaddr=0x%lx entries=%zu\n", label, dyn_vaddr, max_dyn);
+
+        /* Compare first few dynamic entries from file vs mapped memory. */
+        size_t dump_n = max_dyn;
+        if (dump_n > 32) dump_n = 32;
+
+        for (size_t di = 0; di < dump_n; di++) {
+            struct elf64_dyn dyn_mem;
+            uint64_t dyn_mem_tag = 0;
+            if (read_user_memory(proc, dyn_vaddr + di * sizeof(struct elf64_dyn),
+                                  &dyn_mem, sizeof(dyn_mem)) < 0) {
+                printk(KERN_INFO "exec: %s dyn[%zu] mem unreadable\n", label, di);
                 break;
             }
-            if ((uint64_t)dyn.d_tag == DT_NULL) {
-                printk(KERN_INFO "exec: %s dyn[%zu] DT_NULL\n", label, di);
-                break;
+            dyn_mem_tag = (uint64_t)dyn_mem.d_tag;
+            printk(KERN_INFO "exec: %s dyn[%zu] mem  tag=0x%lx val=0x%lx\n",
+                   label, di, dyn_mem_tag, (uint64_t)dyn_mem.d_un.d_val);
+
+            if (src_file && phdr.p_filesz >= (off_t)((di + 1) * sizeof(struct elf64_dyn))) {
+                struct elf64_dyn dyn_file;
+                off_t dyn_off = phdr.p_offset + (off_t)(di * sizeof(struct elf64_dyn));
+                if (vfs_read(src_file, &dyn_file, sizeof(dyn_file), &dyn_off) == sizeof(dyn_file)) {
+                    printk(KERN_INFO "exec: %s dyn[%zu] file tag=0x%lx val=0x%lx\n",
+                           label, di, (uint64_t)dyn_file.d_tag, (uint64_t)dyn_file.d_un.d_val);
+                } else {
+                    printk(KERN_INFO "exec: %s dyn[%zu] file unreadable\n", label, di);
+                }
             }
-            if ((uint64_t)dyn.d_tag == DT_STRTAB || (uint64_t)dyn.d_tag == DT_SYMTAB ||
-                (uint64_t)dyn.d_tag == DT_STRSZ || (uint64_t)dyn.d_tag == DT_RELA ||
-                (uint64_t)dyn.d_tag == DT_RELASZ || (uint64_t)dyn.d_tag == DT_RELAENT ||
-                (uint64_t)dyn.d_tag == DT_GNU_HASH || (uint64_t)dyn.d_tag == DT_DEBUG ||
-                (uint64_t)dyn.d_tag == DT_FLAGS || (uint64_t)dyn.d_tag == DT_FLAGS_1 ||
-                (uint64_t)dyn.d_tag == DT_RELR || (uint64_t)dyn.d_tag == DT_RELRSZ ||
-                (uint64_t)dyn.d_tag == DT_RELRENT || (uint64_t)dyn.d_tag == DT_NEEDED) {
-                printk(KERN_INFO "exec: %s dyn[%zu] tag=0x%lx val=0x%lx\n",
-                       label, di, (uint64_t)dyn.d_tag, dyn.d_un.d_val);
+
+            if (dyn_mem_tag == DT_NULL) {
+                break;
             }
         }
         return;
@@ -710,32 +746,24 @@ static int read_elf_interp_path(struct file *file, struct elf64_hdr *hdr,
 /*
  * Validate ELF header
  */
-static int validate_elf(struct elf64_hdr *hdr) {
-    /* Check magic */
-    if (*(uint32_t *)hdr->e_ident != ELF_MAGIC) {
+static uint64_t exec_file_size(struct file *file) {
+    if (!file || !file->f_dentry || !file->f_dentry->d_inode) {
+        return 0;
+    }
+    if (file->f_dentry->d_inode->i_size < 0) {
+        return 0;
+    }
+    return (uint64_t)file->f_dentry->d_inode->i_size;
+}
+
+static int validate_elf(struct file *file, struct elf64_hdr *hdr) {
+    uint64_t sz = exec_file_size(file);
+    if (sz == 0) {
         return -ENOEXEC;
     }
-    
-    /* Check class (64-bit) */
-    if (hdr->e_ident[4] != 2) {
+    if (zig_elf64_header_sanity(hdr, sz) != 0) {
         return -ENOEXEC;
     }
-    
-    /* Check endianness (little) */
-    if (hdr->e_ident[5] != 1) {
-        return -ENOEXEC;
-    }
-    
-    /* Check type */
-    if (hdr->e_type != ET_EXEC && hdr->e_type != ET_DYN) {
-        return -ENOEXEC;
-    }
-    
-    /* Check machine */
-    if (hdr->e_machine != EM_X86_64) {
-        return -ENOEXEC;
-    }
-    
     return 0;
 }
 
@@ -776,6 +804,7 @@ static int load_elf_segments(struct process *proc, struct file *file,
                              struct elf64_hdr *hdr, struct exec_image_info *img,
                              uint64_t et_dyn_bias) {
     struct elf64_phdr phdr;
+    struct elf64_phdr phdr_scan;
     uint64_t brk_start = 0;
     uint64_t load_bias = (hdr->e_type == ET_DYN) ? et_dyn_bias : 0;
     bool phdr_found = false;
@@ -856,7 +885,8 @@ static int load_elf_segments(struct process *proc, struct file *file,
                     }
                     size_t page_off = (size_t)(dst_vaddr & (PAGE_SIZE - 1));
                     size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), phdr.p_filesz - copied);
-                    void *dst = (uint8_t *)PHYS_TO_VIRT(phys) + page_off;
+                    /* mmu_resolve() already returns phys including the page offset. */
+                    void *dst = (uint8_t *)PHYS_TO_VIRT(phys);
                     uint64_t read_off_u = phdr.p_offset + copied;
                     if (read_off_u < phdr.p_offset) {
                         return -ENOEXEC;
@@ -959,7 +989,8 @@ static int load_elf_segments(struct process *proc, struct file *file,
 
                 size_t page_off = (size_t)(dst_vaddr & (PAGE_SIZE - 1));
                 size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), phdr.p_filesz - copied);
-                void *dst = (uint8_t *)PHYS_TO_VIRT(phys) + page_off;
+                /* mmu_resolve() already returns phys including the page offset. */
+                void *dst = (uint8_t *)PHYS_TO_VIRT(phys);
 
                 uint64_t read_off_u = phdr.p_offset + copied;
                 if (read_off_u < phdr.p_offset) {
@@ -990,7 +1021,38 @@ static int load_elf_segments(struct process *proc, struct file *file,
     img->phent = hdr->e_phentsize;
     img->phnum = hdr->e_phnum;
     if (!phdr_found) {
-        img->phdr = load_bias + hdr->e_phoff;
+        /* Robust AT_PHDR fallback: derive virtual PHDR address via PT_LOAD mapping. */
+        bool derived = false;
+        for (int i = 0; i < hdr->e_phnum; i++) {
+            off_t poff = hdr->e_phoff + (i * sizeof(phdr_scan));
+            ret = vfs_read(file, &phdr_scan, sizeof(phdr_scan), &poff);
+            if (ret != (int)sizeof(phdr_scan)) {
+                return -EIO;
+            }
+            if (phdr_scan.p_type != PT_LOAD) {
+                continue;
+            }
+            if (hdr->e_phoff < phdr_scan.p_offset) {
+                continue;
+            }
+            uint64_t phdr_file_off_in_seg = hdr->e_phoff - phdr_scan.p_offset;
+            if (phdr_file_off_in_seg >= phdr_scan.p_filesz) {
+                continue;
+            }
+            if (load_bias != 0 && phdr_scan.p_vaddr > (~(uint64_t)0 - load_bias)) {
+                return -ENOEXEC;
+            }
+            uint64_t seg_vaddr = phdr_scan.p_vaddr + load_bias;
+            if (seg_vaddr > (~(uint64_t)0 - phdr_file_off_in_seg)) {
+                return -ENOEXEC;
+            }
+            img->phdr = seg_vaddr + phdr_file_off_in_seg;
+            derived = true;
+            break;
+        }
+        if (!derived) {
+            return -ENOEXEC;
+        }
     }
     
     return 0;
@@ -1170,6 +1232,18 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     auxv[auxc++] = (struct auxv_pair){ AT_EXECFN, execfn_ptr };
     auxv[auxc++] = (struct auxv_pair){ AT_SYSINFO_EHDR, 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_NULL,   0 };
+
+    /* Validate AT_PHDR exposure before user entry. ld-linux relies on it to
+     * bootstrap the main executable link_map. */
+    if (img && img->phdr && img->phnum && img->phent) {
+        uint64_t phdr_last = img->phdr + (uint64_t)(img->phnum - 1) * img->phent;
+        if (phdr_last < img->phdr) {
+            return -ENOEXEC;
+        }
+        if (!mmu_resolve(proc->mm->pt, img->phdr) || !mmu_resolve(proc->mm->pt, phdr_last)) {
+            return -ENOEXEC;
+        }
+    }
 
     /* Keep final initial %rsp 16-byte aligned. */
     int stack_slots = 1 + (argc + 1) + (envc + 1) + (auxc * 2);
@@ -1386,7 +1460,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     EXEC_LOG("exec: ELF header read complete\n");
     
     /* Validate ELF */
-    ret = validate_elf(&hdr);
+    ret = validate_elf(file, &hdr);
     if (ret < 0) {
         char shebang[128];
         off_t soff = 0;
@@ -1483,7 +1557,7 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
             return -EIO;
         }
 
-        ret = validate_elf(&interp_hdr);
+        ret = validate_elf(interp_file, &interp_hdr);
         if (ret < 0) {
             vfs_close(interp_file);
             vfs_close(file);

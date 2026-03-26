@@ -18,6 +18,8 @@
 #include <fs/file.h>
 #include <mm/pmm.h>
 #include <obelisk/limits.h>
+#include <obelisk/zig_path.h>
+#include <obelisk/power.h>
 #include <sysctl/sysctl.h>
 #include <net/net.h>
 
@@ -31,11 +33,16 @@ static int64_t sys_stat(const char *pathname, struct stat *statbuf);
 static int64_t sys_fstat(int fd, struct stat *statbuf);
 static int64_t sys_access(const char *pathname, int mode);
 static int64_t sys_lseek(int fd, off_t offset, int whence);
+/* Linux x86_64 syscall #17: pread64(fd, buf, count, offset) */
+static int64_t sys_pread64(int fd, void *buf, size_t count, loff_t offset);
 static int64_t sys_mprotect(void *addr, size_t len, int prot);
 static int64_t sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 static int64_t sys_munmap(void *addr, size_t length);
 static int64_t sys_brk(void *addr);
 static int64_t sys_sched_yield(void);
+static int64_t sys_rt_sigaction(int signum, const void *act, void *oldact, size_t sigsetsize);
+static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset, size_t sigsetsize);
+static int64_t sys_clone(uint64_t flags, uint64_t child_stack, void *parent_tid, void *child_tid, uint64_t tls);
 static int64_t sys_fork(void);
 static int64_t sys_execve(const char *pathname, char *const argv[], char *const envp[]);
 static int64_t sys_exit(int status);
@@ -56,6 +63,7 @@ static int64_t sys_setresuid(uid_t ruid, uid_t euid, uid_t suid);
 static int64_t sys_setresgid(gid_t rgid, gid_t egid, gid_t sgid);
 static int64_t sys_setfsuid(uid_t fsuid);
 static int64_t sys_setfsgid(gid_t fsgid);
+static int64_t sys_umask(mode_t mask);
 static int64_t sys_setpgid(pid_t pid, pid_t pgid);
 static int64_t sys_getpgrp(void);
 static int64_t sys_setsid(void);
@@ -86,6 +94,7 @@ static int64_t sys_getdents64(int fd, void *dirp, size_t count);
 static int64_t sys_kill(pid_t pid, int sig);
 static int64_t sys_uname(void *buf);
 static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg);
+static int64_t sys_statfs(const char *pathname, void *buf);
 static int64_t sys_sysctl(void *args);
 static int64_t sys_socket(int domain, int type, int protocol);
 static int64_t sys_connect(int sockfd, const void *addr, int addrlen);
@@ -97,6 +106,14 @@ static int64_t sys_listen(int sockfd, int backlog);
 static int64_t sys_shutdown(int sockfd, int how);
 static int64_t sys_socketpair(int domain, int type, int protocol, int *sv);
 static int64_t sys_arch_prctl(int code, uint64_t addr);
+/* Linux x86_64 syscall gaps needed by glibc/ld.so early startup */
+static int64_t sys_set_tid_address(uint64_t tidptr);
+static int64_t sys_set_robust_list(uint64_t head, uint64_t len);
+static int64_t sys_prlimit64(uint64_t pid, uint64_t new_limit, uint64_t old_limit, uint64_t flags);
+static int64_t sys_getrandom(void *buf, size_t buflen, uint64_t flags);
+static int64_t sys_clock_gettime(uint64_t clockid, void *tp);
+static int64_t sys_rseq(void *rseq, uint64_t rseq_len, uint64_t flags);
+static int64_t sys_prctl(uint64_t code, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6);
 static int resolve_user_path(const char *path, char *out, size_t out_size);
 static int resolve_user_at_path(int dirfd, const char *path, char *out, size_t out_size);
 
@@ -167,10 +184,44 @@ struct timespec_compat {
     int64_t tv_nsec;
 } __packed;
 
+struct rlimit_compat {
+    /* Linux rlim_t is unsigned long on x86_64 (64-bit). */
+    uint64_t rlim_cur;
+    uint64_t rlim_max;
+} __packed;
+
 struct timeval_compat {
     int64_t tv_sec;
     int64_t tv_usec;
 } __packed;
+
+struct kernel_sigaction_compat {
+    uint64_t sa_handler;
+    uint64_t sa_flags;
+    uint64_t sa_restorer;
+    uint64_t sa_mask;
+} __packed;
+
+struct statfs_compat {
+    int64_t f_type;
+    int64_t f_bsize;
+    uint64_t f_blocks;
+    uint64_t f_bfree;
+    uint64_t f_bavail;
+    uint64_t f_files;
+    uint64_t f_ffree;
+    struct {
+        int32_t val[2];
+    } f_fsid;
+    int64_t f_namelen;
+    int64_t f_frsize;
+    int64_t f_flags;
+    int64_t f_spare[4];
+} __packed;
+
+#define SIG_BLOCK_MASK      0
+#define SIG_UNBLOCK_MASK    1
+#define SIG_SETMASK_MASK    2
 
 #define TCGETS      0x5401UL
 #define TCSETS      0x5402UL
@@ -430,12 +481,28 @@ static uint64_t syscall_counts[NR_SYSCALLS];
  * Disabled by default to keep interactive and command execution responsive. */
 int loader_trace_enabled = 0;       /* 0=off, 1=on */
 int loader_trace_budget = 0;       /* max syscall trace lines */
-int loader_exec_debug_enabled = 0; /* extra exec/loader printk instrumentation */
+int loader_exec_debug_enabled = 1; /* extra exec/loader printk instrumentation */
 static int tty_kd_mode = KD_TEXT;
 static int tty_kb_mode = K_XLATE;
 
 #define EXEC_USER_MAX_ARGC    256
 #define EXEC_USER_MAX_STRLEN  4096
+
+/*
+ * Obelisk pathname / sysctl input policy: after copy_user_cstring succeeds, reject
+ * empty strings, missing NUL within cap, C0 controls, and DEL (see zig_path.h).
+ * Wired at: resolve_user_path_checked, resolve_user_at_path_checked, execve path,
+ * readlinkat pathname, sysctl name.
+ */
+static int kernel_user_cstring_ok(const char *kstr, size_t cap) {
+    if (!kstr || cap == 0) {
+        return -EINVAL;
+    }
+    if (zig_kernel_cstring_no_control(kstr, (uint64_t)cap) != 0) {
+        return -EINVAL;
+    }
+    return 0;
+}
 
 static int copy_user_cstring(const char *user_ptr, char *kernel_buf, size_t cap) {
     if (!user_ptr || !kernel_buf || cap == 0) {
@@ -521,12 +588,20 @@ static int resolve_user_path_checked(const char *user_path, char *out, size_t ou
     if (ret < 0) {
         return ret;
     }
+    ret = kernel_user_cstring_ok(kpath, sizeof(kpath));
+    if (ret < 0) {
+        return ret;
+    }
     return resolve_user_path(kpath, out, out_size);
 }
 
 static int resolve_user_at_path_checked(int dirfd, const char *user_path, char *out, size_t out_size) {
     char kpath[PATH_MAX];
     int ret = copy_user_cstring(user_path, kpath, sizeof(kpath));
+    if (ret < 0) {
+        return ret;
+    }
+    ret = kernel_user_cstring_ok(kpath, sizeof(kpath));
     if (ret < 0) {
         return ret;
     }
@@ -553,11 +628,15 @@ static void syscall_table_init(void) {
     syscall_table[SYS_POLL] = (syscall_fn_t)sys_poll;
     syscall_table[SYS_ACCESS] = (syscall_fn_t)sys_access;
     syscall_table[SYS_LSEEK] = (syscall_fn_t)sys_lseek;
+    syscall_table[17] = (syscall_fn_t)sys_pread64; /* pread64 */
+    syscall_table[13] = (syscall_fn_t)sys_rt_sigaction;                 /* rt_sigaction */
+    syscall_table[14] = (syscall_fn_t)sys_rt_sigprocmask;               /* rt_sigprocmask */
     syscall_table[SYS_MPROTECT] = (syscall_fn_t)sys_mprotect;
     syscall_table[SYS_MMAP] = (syscall_fn_t)sys_mmap;
     syscall_table[SYS_MUNMAP] = (syscall_fn_t)sys_munmap;
     syscall_table[SYS_BRK] = (syscall_fn_t)sys_brk;
     syscall_table[SYS_SCHED_YIELD] = (syscall_fn_t)sys_sched_yield;
+    syscall_table[SYS_CLONE] = (syscall_fn_t)sys_clone;
     syscall_table[SYS_FORK] = (syscall_fn_t)sys_fork;
     syscall_table[SYS_EXECVE] = (syscall_fn_t)sys_execve;
     syscall_table[SYS_EXIT] = (syscall_fn_t)sys_exit;
@@ -565,6 +644,13 @@ static void syscall_table_init(void) {
     syscall_table[SYS_WAIT4] = (syscall_fn_t)sys_wait4;
     syscall_table[SYS_GETPID] = (syscall_fn_t)sys_getpid;
     syscall_table[SYS_GETTID] = (syscall_fn_t)sys_gettid;
+    syscall_table[SYS_SET_TID_ADDRESS] = (syscall_fn_t)sys_set_tid_address; /* 218 */
+    syscall_table[273] = (syscall_fn_t)sys_set_robust_list;               /* 273 set_robust_list */
+    syscall_table[SYS_CLOCK_GETTIME] = (syscall_fn_t)sys_clock_gettime;   /* 228 */
+    syscall_table[302] = (syscall_fn_t)sys_prlimit64;                     /* 302 prlimit64 */
+    syscall_table[318] = (syscall_fn_t)sys_getrandom;                      /* 318 getrandom */
+    syscall_table[334] = (syscall_fn_t)sys_rseq;                           /* 334 rseq */
+    syscall_table[SYS_PRCTL] = (syscall_fn_t)sys_prctl;                    /* 157 prctl */
     syscall_table[SYS_GETPPID] = (syscall_fn_t)sys_getppid;
     syscall_table[SYS_GETUID] = (syscall_fn_t)sys_getuid;
     syscall_table[SYS_GETGID] = (syscall_fn_t)sys_getgid;
@@ -572,6 +658,7 @@ static void syscall_table_init(void) {
     syscall_table[SYS_GETEGID] = (syscall_fn_t)sys_getegid;
     syscall_table[SYS_SETUID] = (syscall_fn_t)sys_setuid;
     syscall_table[SYS_SETGID] = (syscall_fn_t)sys_setgid;
+    syscall_table[SYS_UMASK] = (syscall_fn_t)sys_umask;
     syscall_table[SYS_SETPGID] = (syscall_fn_t)sys_setpgid;
     syscall_table[SYS_GETPGRP] = (syscall_fn_t)sys_getpgrp;
     syscall_table[SYS_SETSID] = (syscall_fn_t)sys_setsid;
@@ -606,6 +693,7 @@ static void syscall_table_init(void) {
     syscall_table[SYS_GETDENTS64] = (syscall_fn_t)sys_getdents64;
     syscall_table[SYS_KILL] = (syscall_fn_t)sys_kill;
     syscall_table[SYS_UNAME] = (syscall_fn_t)sys_uname;
+    syscall_table[SYS_STATFS] = (syscall_fn_t)sys_statfs;
     syscall_table[SYS_REBOOT] = (syscall_fn_t)sys_reboot;
     syscall_table[SYS_OBELISK_SYSCTL] = (syscall_fn_t)sys_sysctl;
     /*
@@ -711,11 +799,85 @@ static int resolve_user_path(const char *path, char *out, size_t out_size) {
 }
 
 static int resolve_user_at_path(int dirfd, const char *path, char *out, size_t out_size) {
-    /* Minimal compat: AT_FDCWD and absolute paths are supported. */
+    /* Minimal compat:
+     * - AT_FDCWD and absolute paths resolve like normal paths.
+     * - For loader compatibility, also support dirfd-relative paths by
+     *   resolving against the directory referenced by dirfd.
+     */
     if (dirfd == -100 || (path && path[0] == '/')) {
         return resolve_user_path(path, out, out_size);
     }
-    return -ENOSYS;
+
+    struct process *proc = current;
+    if (!proc || !proc->files) {
+        return -EBADF;
+    }
+    if (dirfd < 0) {
+        return -ENOSYS;
+    }
+
+    struct file *df = fd_get(proc->files, dirfd);
+    if (!df || !df->f_dentry || !df->f_dentry->d_inode) {
+        return -EBADF;
+    }
+
+    /* Convert dirfd's dentry to an absolute path under proc->root. */
+    char base[PATH_MAX];
+    {
+        char tmp[PATH_MAX];
+        size_t pos = PATH_MAX - 1;
+        tmp[pos] = '\0';
+
+        if (df->f_dentry == proc->root || df->f_dentry->d_parent == NULL) {
+            /* Root. */
+            tmp[0] = '/';
+            tmp[1] = '\0';
+            strncpy(base, tmp, sizeof(base) - 1);
+            base[sizeof(base) - 1] = '\0';
+        } else {
+            struct dentry *d = df->f_dentry;
+            while (d && d != proc->root) {
+                size_t n = strlen(d->d_name);
+                if (n == 0) {
+                    break;
+                }
+                if (pos <= n) {
+                    return -ENAMETOOLONG;
+                }
+                pos -= n;
+                memcpy(&tmp[pos], d->d_name, n);
+                tmp[--pos] = '/';
+                d = d->d_parent;
+            }
+            if (pos == PATH_MAX - 1) {
+                tmp[--pos] = '/';
+            }
+            /* Copy final into base. */
+            size_t len = (PATH_MAX - 1) - pos;
+            if (len + 1 > sizeof(base)) {
+                return -ERANGE;
+            }
+            memcpy(base, &tmp[pos], len + 1);
+        }
+    }
+
+    if (!path || path[0] == '\0') {
+        /* fstatat(dirfd, "", ...) -> just resolve base */
+        if (snprintf(out, out_size, "%s", base) >= (int)out_size) {
+            return -ENAMETOOLONG;
+        }
+        return 0;
+    }
+
+    if (strcmp(base, "/") == 0) {
+        return resolve_user_path(path[0] == '/' ? path : "/", out, out_size); /* shouldn't happen for rel path */
+    }
+
+    /* Join base + "/" + path. */
+    if (snprintf(out, out_size, "%s/%s", base, path) >= (int)out_size) {
+        return -ENAMETOOLONG;
+    }
+    return 0;
 }
 
 static void apply_input_path_alias(char *path, size_t cap) {
@@ -799,7 +961,8 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
     if (loader_trace_enabled != 0 && loader_trace_budget > 0 && current) {
         const char *comm = current->comm;
         const bool is_loader_proc =
-            (comm && (strcmp(comm, "xdm") == 0 || strncmp(comm, "ld-linux", 8) == 0));
+            (comm && (strcmp(comm, "xinit") == 0 || strcmp(comm, "xdm") == 0 ||
+                      strncmp(comm, "ld-linux", 8) == 0));
         if (is_loader_proc && (syscall_num == SYS_EXECVE || syscall_num == SYS_ARCH_PRCTL)) {
             trace_loader = 1;
             loader_trace_budget--;
@@ -823,6 +986,31 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
  * Syscall implementations (stubs for now)
  * ========================================================================== */
 
+static int maybe_handle_ctrlc(void) {
+    struct process *proc = current;
+    if (!proc) {
+        return 0;
+    }
+
+    int c = devfs_console_peekc_nonblock();
+    if (c != 0x03) {
+        return 0;
+    }
+
+    /* Mirror sys_read() Ctrl+C behavior. */
+    console_write("^C\n", 3);
+    (void)devfs_console_getc_nonblock();
+    devfs_console_flush_input();
+
+    /* For the in-process shell (rockbox/osh applets), just interrupt syscalls.
+     * Many builtins (e.g. `cat`) explicitly exit on EINTR. */
+    if (strcmp(proc->comm, "rockbox") != 0 && strcmp(proc->comm, "osh") != 0) {
+        (void)do_kill(proc->pid, SIGINT);
+    }
+
+    return -EINTR;
+}
+
 static int64_t sys_read(int fd, void *buf, size_t count) {
     struct process *proc = current;
     struct file *file = NULL;
@@ -843,10 +1031,19 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
         file = fd_get(proc->files, fd);
     }
     if (file) {
+        unsigned ctrlc_check = 0;
         while (done < count) {
             size_t chunk = count - done;
             if (chunk > sizeof(kbuf)) {
                 chunk = sizeof(kbuf);
+            }
+
+            /* Keep Ctrl-C responsive even for relatively large user read buffers. */
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
             }
 
             int64_t n = vfs_read(file, kbuf, chunk, NULL);
@@ -925,6 +1122,52 @@ static int64_t sys_read(int fd, void *buf, size_t count) {
     return (int64_t)i;
 }
 
+static int64_t sys_pread64(int fd, void *buf, size_t count, loff_t offset) {
+    struct process *proc = current;
+    struct file *file = NULL;
+    uint8_t kbuf[256];
+    size_t done = 0;
+
+    if (!buf) {
+        return -EFAULT;
+    }
+
+    if (proc && proc->files && fd >= 0 && fd < (int)proc->files->max_fds) {
+        file = fd_get(proc->files, fd);
+    }
+    if (file) {
+        loff_t pos = offset;
+        while (done < count) {
+            size_t chunk = count - done;
+            if (chunk > sizeof(kbuf)) {
+                chunk = sizeof(kbuf);
+            }
+
+            int64_t n = vfs_read(file, kbuf, chunk, &pos);
+            if (n < 0) {
+                return (done > 0) ? (int64_t)done : n;
+            }
+            if (n == 0) {
+                break;
+            }
+            if (vmm_copy_to_user((uint8_t *)buf + done, kbuf, (size_t)n) < 0) {
+                return (done > 0) ? (int64_t)done : -EFAULT;
+            }
+            done += (size_t)n;
+            if ((size_t)n < chunk) {
+                break;
+            }
+        }
+        return (int64_t)done;
+    }
+
+    if (fd != 0) {
+        return -EBADF;
+    }
+
+    return -EBADF;
+}
+
 static int64_t sys_write(int fd, const void *buf, size_t count) {
     struct process *proc = current;
     struct file *file = NULL;
@@ -973,11 +1216,20 @@ static int64_t sys_write(int fd, const void *buf, size_t count) {
 
     /* Mirror userspace output to serial and VGA for default stdio. */
     if (fd == 1 || fd == 2) {
+        unsigned ctrlc_check = 0;
         while (done < count) {
             size_t chunk = count - done;
             if (chunk > sizeof(kbuf)) {
                 chunk = sizeof(kbuf);
             }
+
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
+            }
+
             if (vmm_copy_from_user(kbuf, (const uint8_t *)buf + done, chunk) < 0) {
                 return (done > 0) ? (int64_t)done : -EFAULT;
             }
@@ -1145,6 +1397,42 @@ static int64_t sys_fstat(int fd, struct stat *statbuf) {
     return 0;
 }
 
+static int64_t sys_statfs(const char *pathname, void *buf) {
+    char resolved[PATH_MAX];
+    struct dentry *dentry;
+    struct statfs_compat out;
+    int ret;
+
+    if (!buf) {
+        return -EFAULT;
+    }
+    ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
+    if (ret < 0) {
+        return ret;
+    }
+    dentry = vfs_lookup(resolved);
+    if (!dentry) {
+        return -ENOENT;
+    }
+
+    memset(&out, 0, sizeof(out));
+    if (dentry->d_sb) {
+        out.f_type = (int64_t)dentry->d_sb->s_magic;
+        out.f_bsize = (int64_t)(dentry->d_sb->s_blocksize ? dentry->d_sb->s_blocksize : PAGE_SIZE);
+        out.f_frsize = out.f_bsize;
+    } else {
+        out.f_bsize = PAGE_SIZE;
+        out.f_frsize = PAGE_SIZE;
+    }
+    out.f_namelen = NAME_MAX;
+
+    dput(dentry);
+    if (vmm_copy_to_user(buf, &out, sizeof(out)) < 0) {
+        return -EFAULT;
+    }
+    return 0;
+}
+
 static int64_t sys_access(const char *pathname, int mode) {
     char resolved[PATH_MAX];
     struct dentry *dentry;
@@ -1232,6 +1520,117 @@ static int64_t sys_brk(void *addr) {
     return (int64_t)(uint64_t)ret;
 }
 
+static int64_t sys_rt_sigaction(int signum, const void *act, void *oldact, size_t sigsetsize) {
+    struct process *proc = current;
+    struct kernel_sigaction_compat uact;
+    struct kernel_sigaction_compat uold;
+    struct sigaction *slot;
+
+    if (!proc) {
+        return -ESRCH;
+    }
+    if (sigsetsize != sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+    if (signum <= 0 || signum >= NSIG) {
+        return -EINVAL;
+    }
+
+    slot = &proc->sigactions[signum];
+
+    if (oldact) {
+        memset(&uold, 0, sizeof(uold));
+        uold.sa_handler = (uint64_t)(uintptr_t)slot->sa_handler;
+        uold.sa_flags = (uint64_t)slot->sa_flags;
+        uold.sa_restorer = (uint64_t)(uintptr_t)slot->sa_restorer;
+        uold.sa_mask = (uint64_t)slot->sa_mask;
+        if (vmm_copy_to_user(oldact, &uold, sizeof(uold)) < 0) {
+            return -EFAULT;
+        }
+    }
+
+    if (act) {
+        if (vmm_copy_from_user(&uact, act, sizeof(uact)) < 0) {
+            return -EFAULT;
+        }
+        slot->sa_handler = (sighandler_t)(uintptr_t)uact.sa_handler;
+        slot->sa_flags = (int)uact.sa_flags;
+        slot->sa_restorer = (void (*)(void))(uintptr_t)uact.sa_restorer;
+        slot->sa_mask = (sigset_t)uact.sa_mask;
+    }
+
+    return 0;
+}
+
+static int64_t sys_rt_sigprocmask(int how, const void *set, void *oldset, size_t sigsetsize) {
+    struct process *proc = current;
+    sigset_t newset = 0;
+
+    if (!proc) {
+        return -ESRCH;
+    }
+    if (sigsetsize != sizeof(uint64_t)) {
+        return -EINVAL;
+    }
+
+    if (oldset) {
+        sigset_t old = proc->blocked;
+        if (vmm_copy_to_user(oldset, &old, sizeof(old)) < 0) {
+            return -EFAULT;
+        }
+    }
+
+    if (!set) {
+        return 0;
+    }
+    if (vmm_copy_from_user(&newset, set, sizeof(newset)) < 0) {
+        return -EFAULT;
+    }
+
+    switch (how) {
+        case SIG_BLOCK_MASK:
+            proc->blocked |= newset;
+            break;
+        case SIG_UNBLOCK_MASK:
+            proc->blocked &= ~newset;
+            break;
+        case SIG_SETMASK_MASK:
+            proc->blocked = newset;
+            break;
+        default:
+            return -EINVAL;
+    }
+
+    return 0;
+}
+
+static int64_t sys_clone(uint64_t flags, uint64_t child_stack, void *parent_tid, void *child_tid, uint64_t tls) {
+    if (!current_syscall_regs) {
+        return -EINVAL;
+    }
+
+    /* Keep semantics conservative: support process-style clone, not threads yet. */
+    if (flags & (CLONE_THREAD | CLONE_SETTLS | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) {
+        return -ENOSYS;
+    }
+
+    int64_t child = do_fork((uint32_t)flags, child_stack, current_syscall_regs);
+    if (child < 0) {
+        return child;
+    }
+
+    if ((flags & CLONE_PARENT_SETTID) && parent_tid) {
+        int32_t ctid = (int32_t)child;
+        if (vmm_copy_to_user(parent_tid, &ctid, sizeof(ctid)) < 0) {
+            return -EFAULT;
+        }
+    }
+
+    (void)child_tid;
+    (void)tls;
+    return child;
+}
+
 static int64_t sys_fork(void) {
     if (!current_syscall_regs) {
         return -EINVAL;
@@ -1259,6 +1658,11 @@ static int64_t sys_execve(const char *pathname, char *const argv[], char *const 
         return -ENOMEM;
     }
     ret = copy_user_cstring(pathname, kpath, PATH_MAX);
+    if (ret < 0) {
+        kfree(kpath);
+        return ret;
+    }
+    ret = kernel_user_cstring_ok(kpath, PATH_MAX);
     if (ret < 0) {
         kfree(kpath);
         return ret;
@@ -1337,6 +1741,67 @@ static int64_t sys_getpid(void) {
 static int64_t sys_gettid(void) {
     struct process *p = current;
     return p ? p->pid : 0;
+}
+
+/* Linux x86_64 syscall #218: set_tid_address */
+static int64_t sys_set_tid_address(uint64_t tidptr) {
+    struct process *p = current;
+    if (!tidptr) {
+        return -EINVAL;
+    }
+    int tid = p ? (int)p->pid : 0;
+    if (vmm_copy_to_user((void *)tidptr, &tid, sizeof(tid)) < 0) {
+        return -EFAULT;
+    }
+    /* Linux ABI: return 0 on success. */
+    return 0;
+}
+
+/* Linux x86_64 syscall #273: set_robust_list (single-thread stub) */
+static int64_t sys_set_robust_list(uint64_t head, uint64_t len) {
+    (void)head;
+    (void)len;
+    return 0;
+}
+
+/* Linux x86_64 syscall #302: prlimit64 (conservative defaults) */
+static int64_t sys_prlimit64(uint64_t pid, uint64_t new_limit, uint64_t old_limit, uint64_t flags) {
+    (void)pid;
+    (void)new_limit;
+    (void)flags;
+
+    if (!old_limit) {
+        return 0;
+    }
+
+    /* Conservative RLIMIT_STACK approximation to avoid "infinite" stacks. */
+    struct rlimit_compat rl = {
+        .rlim_cur = (uint64_t)CONFIG_USER_STACK_SIZE,
+        .rlim_max = (uint64_t)CONFIG_USER_STACK_SIZE,
+    };
+    if (vmm_copy_to_user((void *)old_limit, &rl, sizeof(rl)) < 0) {
+        return -EFAULT;
+    }
+    return 0;
+}
+
+/* Linux x86_64 syscall #334: rseq (not supported yet) */
+static int64_t sys_rseq(void *rseq, uint64_t rseq_len, uint64_t flags) {
+    (void)rseq;
+    (void)rseq_len;
+    (void)flags;
+    /* Minimal compatibility: treat rseq registration as supported. */
+    if (!rseq) {
+        return -EINVAL;
+    }
+    /* glibc passes a small user struct; require at least a header-ish size. */
+    if (rseq_len < 0x10) {
+        return -EINVAL;
+    }
+    if (flags != 0) {
+        return -EINVAL;
+    }
+    return 0;
 }
 
 static int64_t sys_getppid(void) {
@@ -1512,6 +1977,17 @@ static int64_t sys_setfsgid(gid_t fsgid) {
     if (c->euid == 0 || cred_gid_match(c, fsgid)) {
         c->fsgid = fsgid;
     }
+    return old;
+}
+
+static int64_t sys_umask(mode_t mask) {
+    struct process *p = current;
+    mode_t old = 0022;
+    if (!p) {
+        return old;
+    }
+    old = p->umask;
+    p->umask = (mask & 0777);
     return old;
 }
 
@@ -1812,6 +2288,10 @@ static int64_t sys_readlinkat(int dirfd, const char *pathname, char *buf, size_t
         if (ret < 0) {
             return ret;
         }
+        ret = kernel_user_cstring_ok(kpath, sizeof(kpath));
+        if (ret < 0) {
+            return ret;
+        }
         path = kpath;
     }
 
@@ -1967,6 +2447,61 @@ static int64_t sys_nanosleep(const void *req, void *rem) {
     return 0;
 }
 
+/* Linux x86_64 syscall #228: clock_gettime (minimal implementation) */
+static int64_t sys_clock_gettime(uint64_t clockid, void *tp) {
+    /* CLOCK_REALTIME=0, CLOCK_MONOTONIC=1 */
+    if (!tp) {
+        return -EFAULT;
+    }
+    /* Be permissive: treat unsupported clockids as "monotonic-ish". */
+    (void)clockid;
+
+    /* Use get_ticks() to avoid any dependence on a guessed CPU frequency. */
+    uint64_t ms = get_ticks();
+    struct timespec_compat ts = {
+        .tv_sec = (int64_t)(ms / 1000ULL),
+        .tv_nsec = (int64_t)((ms % 1000ULL) * 1000000ULL),
+    };
+
+    if (vmm_copy_to_user(tp, &ts, sizeof(ts)) < 0) {
+        return -EFAULT;
+    }
+    return 0;
+}
+
+/* Linux x86_64 syscall #318: getrandom (best-effort pseudo-random) */
+static int64_t sys_getrandom(void *buf, size_t buflen, uint64_t flags) {
+    (void)flags;
+    if (!buf && buflen != 0) {
+        return -EFAULT;
+    }
+    if (buflen == 0) {
+        return 0;
+    }
+
+    /* Seed from kernel time + pid. */
+    uint64_t x = get_time_ns() ^ (uint64_t)(current ? current->pid : 0) ^ get_ticks();
+
+    uint8_t *dst = (uint8_t *)buf;
+    size_t done = 0;
+    while (done < buflen) {
+        /* xorshift64* */
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        x *= 0x2545F4914F6CDD1DULL;
+
+        uint64_t word = x;
+        size_t chunk = MIN(sizeof(word), buflen - done);
+        if (vmm_copy_to_user(dst + done, &word, chunk) < 0) {
+            return -EFAULT;
+        }
+        done += chunk;
+    }
+
+    return (int64_t)done;
+}
+
 static int poll_check_single_fd(int fd, int16_t events, int16_t *revents) {
     struct process *proc = current;
     struct file *file = NULL;
@@ -2045,6 +2580,10 @@ static int64_t sys_poll(void *fds, uint64_t nfds, int timeout) {
         return -EINVAL;
     }
     for (;;) {
+        int rc = maybe_handle_ctrlc();
+        if (rc) {
+            return rc;
+        }
         int ready = 0;
         for (uint64_t i = 0; i < nfds; i++) {
             if (vmm_copy_from_user(&pf, (const void *)((uintptr_t)fds + (i * sizeof(pf))), sizeof(pf)) < 0) {
@@ -2108,6 +2647,10 @@ static int64_t sys_select(int nfds, void *readfds, void *writefds, void *exceptf
     if (exceptfds && vmm_copy_from_user(in_e, exceptfds, sizeof(in_e)) < 0) return -EFAULT;
 
     for (;;) {
+        int rc = maybe_handle_ctrlc();
+        if (rc) {
+            return rc;
+        }
         int ready = 0;
         memset(out_r, 0, sizeof(out_r));
         memset(out_w, 0, sizeof(out_w));
@@ -2354,8 +2897,7 @@ static int64_t sys_getdents64(int fd, void *dirp, size_t count) {
 }
 
 static int64_t sys_kill(pid_t pid, int sig) {
-    (void)pid; (void)sig;
-    return -ENOSYS;
+    return do_kill(pid, sig);
 }
 
 static int64_t sys_uname(void *buf) {
@@ -2382,39 +2924,6 @@ static int64_t sys_uname(void *buf) {
     return 0;
 }
 
-static __noreturn void machine_reboot_now(void) {
-    printk(KERN_INFO "reboot: requesting hardware reset via 8042\n");
-    cli();
-
-    /* Wait until keyboard controller input buffer is clear. */
-    for (int i = 0; i < 100000; i++) {
-        if ((inb(0x64) & 0x02) == 0) {
-            break;
-        }
-        pause();
-    }
-
-    /* Pulse CPU reset line. */
-    outb(0x64, 0xFE);
-
-    /* If reset does not happen immediately, halt safely. */
-    for (;;) {
-        hlt();
-    }
-}
-
-static __noreturn void machine_poweroff_now(void) {
-    printk(KERN_INFO "shutdown: requesting ACPI/QEMU poweroff\n");
-    cli();
-    /* QEMU/Bochs poweroff ports (best effort). */
-    outw(0x604, 0x2000);
-    outw(0xB004, 0x2000);
-    outw(0x4004, 0x3400);
-    for (;;) {
-        hlt();
-    }
-}
-
 static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg) {
     (void)arg;
     /* Linux-compatible magic values so userland can call reboot sanely. */
@@ -2422,11 +2931,13 @@ static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg) {
         return -EINVAL;
     }
 
+    printk(KERN_INFO "sys_reboot: cmd=0x%x (kernel shutdown path)\n", cmd);
+
     if (cmd == LINUX_REBOOT_CMD_RESTART || cmd == LINUX_REBOOT_CMD_CAD_ON) {
-        machine_reboot_now();
+        kernel_reboot_hardware();
     }
     if (cmd == LINUX_REBOOT_CMD_POWER_OFF || cmd == LINUX_REBOOT_CMD_HALT) {
-        machine_poweroff_now();
+        kernel_poweroff_hardware();
     }
 
     return -EINVAL;
@@ -2454,6 +2965,10 @@ static int64_t sys_sysctl(void *args) {
         return -EINVAL;
     }
     ret = copy_user_cstring(uargs.name, kname, sizeof(kname));
+    if (ret < 0) {
+        return ret;
+    }
+    ret = kernel_user_cstring_ok(kname, sizeof(kname));
     if (ret < 0) {
         return ret;
     }
@@ -2794,7 +3309,14 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
         dst_ip[2] = (uint8_t)((sa.sin_addr >> 8) & 0xFF);
         dst_ip[3] = (uint8_t)(sa.sin_addr & 0xFF);
         int retries = 200;
+        unsigned ctrlc_check = 0;
         do {
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
+            }
             ret = net_send_icmp_echo(dst_ip, payload, len);
             if (ret != -EAGAIN) {
                 break;
@@ -2829,7 +3351,14 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
         }
         {
             int retries = 200;
+            unsigned ctrlc_check = 0;
             do {
+                if (((ctrlc_check++) & 7U) == 0U) {
+                    int rc = maybe_handle_ctrlc();
+                    if (rc) {
+                        return rc;
+                    }
+                }
                 ret = net_send_udp(dst_ip, src_port, dst_port, payload, len);
                 if (ret != -EAGAIN) {
                     break;
@@ -2843,7 +3372,14 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
         if (!sock->connected || sock->tcp_conn_id < 0) {
             return -ENOTCONN;
         }
+        unsigned ctrlc_check = 0;
         do {
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
+            }
             ret = net_tcp_send(sock->tcp_conn_id, payload, len);
             if (ret != -EAGAIN) {
                 break;
@@ -2907,7 +3443,14 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
     }
 
     if (sock->type == SOCK_RAW && sock->protocol == IPPROTO_ICMP) {
+        unsigned ctrlc_check = 0;
         while (max_loops-- > 0) {
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
+            }
             ret = net_recv_icmp_echo_event(&ev);
             if (ret == 0) {
                 break;
@@ -2954,7 +3497,14 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
         }
         return (int64_t)out_len;
     } else if (sock->type == SOCK_DGRAM && sock->protocol == IPPROTO_UDP) {
+        unsigned ctrlc_check = 0;
         while (max_loops-- > 0) {
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
+            }
             ret = net_recv_udp_event(sock->bound_port, &uev);
             if (ret == 0) {
                 break;
@@ -3008,7 +3558,14 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
         if (!sock->connected || sock->tcp_conn_id < 0) {
             return -ENOTCONN;
         }
+        unsigned ctrlc_check = 0;
         while (max_loops-- > 0) {
+            if (((ctrlc_check++) & 7U) == 0U) {
+                int rc = maybe_handle_ctrlc();
+                if (rc) {
+                    return rc;
+                }
+            }
             ret = net_tcp_recv(sock->tcp_conn_id, tcp_buf, want, &peer_closed);
             if (ret >= 0) {
                 break;
@@ -3199,6 +3756,53 @@ static int64_t sys_socketpair(int domain, int type, int protocol, int *sv) {
         return -EFAULT;
     }
     return 0;
+}
+
+/* Linux x86_64 syscall #157: prctl (minimal subset) */
+static int64_t sys_prctl(uint64_t code, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6) {
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    (void)arg6;
+
+    /* Linux constants (x86_64). */
+    const uint64_t PR_SET_NAME = 15;
+    const uint64_t PR_GET_NAME = 16;
+
+    struct process *p = current;
+    if (!p) {
+        return -ESRCH;
+    }
+
+    if (code == PR_SET_NAME) {
+        /* Keep process diagnostic comm stable (startup correctness doesn't depend on PR_SET_NAME). */
+        if (!arg2) {
+            return -EFAULT;
+        }
+        /* Minimal validation: make sure the user pointer is readable. */
+        char probe = 0;
+        if (vmm_copy_from_user(&probe, (const void *)arg2, 1) < 0) {
+            return -EFAULT;
+        }
+        return 0;
+    }
+
+    if (code == PR_GET_NAME) {
+        if (!arg2) {
+            return -EFAULT;
+        }
+        /* Provide NUL-terminated comm in a fixed-size buffer. */
+        char name[16];
+        memset(name, 0, sizeof(name));
+        strncpy(name, p->comm, sizeof(name) - 1);
+        if (vmm_copy_to_user((void *)arg2, name, sizeof(name)) < 0) {
+            return -EFAULT;
+        }
+        return 0;
+    }
+
+    /* Keep behavior conservative: unsupported prctl codes behave like ENOSYS. */
+    return -ENOSYS;
 }
 
 static int64_t sys_arch_prctl(int code, uint64_t addr) {

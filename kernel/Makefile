@@ -21,6 +21,7 @@ AS := $(CROSS_COMPILE)as
 LD := $(CROSS_COMPILE)ld
 OBJCOPY := $(CROSS_COMPILE)objcopy
 OBJDUMP := $(CROSS_COMPILE)objdump
+ZIG ?= zig
 
 # Directories
 SRCDIR := .
@@ -98,6 +99,7 @@ C_SOURCES := \
     kernel/time.c \
     kernel/panic.c \
     kernel/printk.c \
+    kernel/power.c \
     kernel/kthread.c \
     proc/process.c \
     proc/scheduler.c \
@@ -125,6 +127,12 @@ C_SOURCES := \
     lib/bitmap.c \
     lib/rbtree.c
 
+ZIG_SOURCES := \
+    support/elf_validate.zig \
+    support/initramfs_scan.zig \
+    support/path_validate.zig \
+    support/mul_overflow.zig
+
 ASM_SOURCES := \
     $(ARCH_DIR)/boot/boot.S \
     $(ARCH_DIR)/boot/interrupt.S \
@@ -133,7 +141,8 @@ ASM_SOURCES := \
 # Object files
 C_OBJECTS := $(patsubst %.c,$(BUILDDIR)/%.o,$(C_SOURCES))
 ASM_OBJECTS := $(patsubst %.S,$(BUILDDIR)/%.o,$(ASM_SOURCES))
-OBJECTS := $(C_OBJECTS) $(ASM_OBJECTS)
+ZIG_OBJECTS := $(patsubst %.zig,$(BUILDDIR)/%.o,$(ZIG_SOURCES))
+OBJECTS := $(C_OBJECTS) $(ASM_OBJECTS) $(ZIG_OBJECTS)
 
 # Dependency files
 DEPS := $(C_OBJECTS:.o=.d)
@@ -156,6 +165,11 @@ $(BUILDDIR)/%.o: %.S | $(BUILDDIR)
 	@mkdir -p $(dir $@)
 	@echo "  AS      $<"
 	@$(AS) $(ASFLAGS) $< -o $@
+
+$(BUILDDIR)/%.o: %.zig | $(BUILDDIR)
+	@mkdir -p $(dir $@)
+	@echo "  ZIG     $<"
+	@$(ZIG) build-obj $< -target x86_64-freestanding-none -O ReleaseSmall -mcmodel=large -femit-bin=$@
 
 # Link kernel
 $(KERNEL): $(OBJECTS)

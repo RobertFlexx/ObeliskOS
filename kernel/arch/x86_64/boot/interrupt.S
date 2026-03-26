@@ -132,6 +132,7 @@ isr_common_stub:
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
+    cld
     
     /* Pass pointer to register frame as argument */
     movq %rsp, %rdi
@@ -202,6 +203,7 @@ irq_common_stub:
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
+    cld
     
     /* Pass pointer to register frame as argument */
     movq %rsp, %rdi
@@ -361,6 +363,7 @@ syscall_entry:
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
+    cld
 
     /* rdi=syscall nr, rsi=frame */
     movq 112(%rsp), %rdi

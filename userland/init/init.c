@@ -146,13 +146,15 @@ static void fallback_shell(void) {
         } else if (strcmp(line, "uname") == 0) {
             print("Obelisk OS\n");
         } else if (strcmp(line, "reboot") == 0) {
+            print("Requesting kernel reboot (hardware reset)...\n");
             (void)reboot_cmd(0x01234567);
-            print("Reboot syscall failed.\n");
+            print("reboot: syscall returned unexpectedly.\n");
         } else if (strcmp(line, "shutdown") == 0 ||
                    strcmp(line, "poweroff") == 0 ||
                    strcmp(line, "halt") == 0) {
+            print("Requesting kernel shutdown (power off / halt)...\n");
             (void)reboot_cmd(0x4321FEDC);
-            print("Shutdown syscall failed.\n");
+            print("shutdown: syscall returned unexpectedly.\n");
         } else if (strcmp(line, "exit") == 0) {
             print("Staying alive as PID 1.\n");
         } else if (line[0] != '\0') {
