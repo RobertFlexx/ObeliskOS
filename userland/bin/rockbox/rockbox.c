@@ -2179,15 +2179,15 @@ static void parse_sudoers_line(char *line, const char *username, const char *cmd
     }
 }
 
-static __attribute__((unused)) struct sudo_policy sudo_lookup_policy(const char *username, const char *cmd0) {
+static struct sudo_policy sudo_lookup_policy(const char *username, const char *cmd0) {
     struct sudo_policy pol;
     pol.allowed = 0;
     pol.nopasswd = 0;
     pol.cmd_all = 0;
     pol.cmd[0] = '\0';
 
-    long euid = syscall0(SYS_GETEUID);
-    if (euid == 0) {
+    long ruid = syscall0(SYS_GETUID);
+    if (ruid == 0) {
         pol.allowed = 1;
         pol.nopasswd = 1;
         pol.cmd_all = 1;
@@ -2231,8 +2231,10 @@ static int applet_su(int argc, char **argv) {
         return 1;
     }
 
-    long euid = syscall0(SYS_GETEUID);
-    if (euid != 0 && u.pass[0]) {
+    /* If su is setuid-root, euid may be 0 already; we still require a password
+     * whenever the caller is not root (real uid != 0). */
+    long ruid = syscall0(SYS_GETUID);
+    if (ruid != 0 && u.pass[0]) {
         char input[64];
         if (prompt_password(input, sizeof(input)) < 0 || !verify_password(u.pass, input)) {
             write_str("su: authentication failure\n");
@@ -2291,9 +2293,35 @@ static int applet_sudo(int argc, char **argv) {
         return 1;
     }
 
-    if (syscall0(SYS_GETEUID) != 0) {
-        write_str("sudo: minimal mode active, only root may run sudo\n");
+    long ruid = syscall0(SYS_GETUID);
+    if (ruid < 0) {
+        write_str("sudo: failed to read uid\n");
         return 1;
+    }
+
+    struct user_record caller;
+    if (lookup_uid_record((unsigned)ruid, &caller) < 0) {
+        write_str("sudo: unknown user\n");
+        return 1;
+    }
+
+    const char *cmd0 = base_name(argv[1]);
+    struct sudo_policy pol = sudo_lookup_policy(caller.name, cmd0);
+    if (!pol.allowed) {
+        write_str("sudo: permission denied (not in sudoers)\n");
+        return 1;
+    }
+
+    if (!pol.nopasswd) {
+        if (!caller.pass[0]) {
+            write_str("sudo: password required but not set\n");
+            return 1;
+        }
+        char input[64];
+        if (prompt_password(input, sizeof(input)) < 0 || !verify_password(caller.pass, input)) {
+            write_str("sudo: authentication failure\n");
+            return 1;
+        }
     }
 
     long pid = syscall0(SYS_FORK);

@@ -97,7 +97,7 @@ static __always_inline void fpu_init(void) {
 /* Context switch function (implemented in assembly) */
 extern void context_switch(struct cpu_context *old, struct cpu_context *new);
 extern void context_switch_initial(struct cpu_context *new);
-extern void user_mode_enter(uint64_t entry, uint64_t stack);
+extern void user_mode_enter(uint64_t entry, uint64_t stack, uint64_t fs_base);
 
 /* Helper to get syscall arguments from frame */
 static inline void syscall_get_args(struct syscall_frame *frame,

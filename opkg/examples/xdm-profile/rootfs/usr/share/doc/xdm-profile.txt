@@ -1,0 +1,11 @@
+Obelisk xdm-profile package
+
+This is a meta/profile package.
+It intentionally contains no real desktop runtime executables.
+
+Real runtime payload packages:
+- xorg
+- xinit
+- xdm
+- gtk3-runtime
+- xfce-runtime

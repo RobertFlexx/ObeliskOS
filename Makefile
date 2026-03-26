@@ -101,6 +101,9 @@ rootfs: userland
 	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sudo" ]; then \
 		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/sudo"; \
 	fi
+	@# Make su/sudo setuid-root so exec-time privilege switching works.
+	@if [ -f "$(ROOTFS_DIR)/bin/su" ]; then chmod 4755 "$(ROOTFS_DIR)/bin/su"; fi
+	@if [ -f "$(ROOTFS_DIR)/bin/sudo" ]; then chmod 4755 "$(ROOTFS_DIR)/bin/sudo"; fi
 	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ]; then \
 		for app in ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date echo head tail wc sort uniq cut tr tee sleep true false env printenv find time; do \
 			if [ ! -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
@@ -131,7 +134,12 @@ rootfs: userland
 	elif [ -f "/etc/pki/tls/certs/ca-bundle.crt" ]; then \
 		cp "/etc/pki/tls/certs/ca-bundle.crt" "$(ROOTFS_DIR)/etc/ssl/certs/ca-certificates.crt"; \
 	fi
+	# Pre-create opkg runtime/cache directories.
+	# Non-root "obelisk" user must be able to write without needing sudo/su.
+	@mkdir -p "$(ROOTFS_DIR)/var/lib/opkg/installed" "$(ROOTFS_DIR)/var/lib/opkg/repos" "$(ROOTFS_DIR)/var/lib/opkg/cache"
 	@mkdir -p "$(ROOTFS_DIR)/var/cache/opkg/repo/packages"
+	@chmod 0777 "$(ROOTFS_DIR)/var/lib/opkg" "$(ROOTFS_DIR)/var/lib/opkg/installed" "$(ROOTFS_DIR)/var/lib/opkg/repos" "$(ROOTFS_DIR)/var/lib/opkg/cache"
+	@chmod 0777 "$(ROOTFS_DIR)/var/cache/opkg" "$(ROOTFS_DIR)/var/cache/opkg/repo" "$(ROOTFS_DIR)/var/cache/opkg/repo/packages"
 	@if [ -d "opkg/examples/samplepkg" ]; then \
 		echo "Preparing bundled opkg demo repository..."; \
 		if [ ! -x "opkg/opkg" ]; then \
@@ -147,8 +155,11 @@ rootfs: userland
 		if [ -d "opkg/examples/xorg" ]; then \
 			./opkg/opkg build opkg/examples/xorg "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xorg-1.0.0-x86_64.opk"; \
 		fi; \
+		if [ -d "opkg/examples/xinit" ]; then \
+			./opkg/opkg build opkg/examples/xinit "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xinit-1.0.0-x86_64.opk"; \
+		fi; \
 		if [ -d "opkg/examples/xfce" ]; then \
-			./opkg/opkg build opkg/examples/xfce "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xfce-1.0.0-x86_64.opk"; \
+			./opkg/opkg build opkg/examples/xfce "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xfce-profile-1.0.0-x86_64.opk"; \
 		fi; \
 		if [ -d "opkg/examples/desktop-base" ]; then \
 			./opkg/opkg build opkg/examples/desktop-base "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/desktop-base-1.0.0-x86_64.opk"; \
@@ -161,6 +172,9 @@ rootfs: userland
 		fi; \
 		if [ -d "opkg/examples/xdm" ]; then \
 			./opkg/opkg build opkg/examples/xdm "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xdm-1.0.0-x86_64.opk"; \
+		fi; \
+		if [ -d "opkg/examples/xdm-profile" ]; then \
+			./opkg/opkg build opkg/examples/xdm-profile "$(ROOTFS_DIR)/var/cache/opkg/repo/packages/xdm-profile-1.0.0-x86_64.opk"; \
 		fi; \
 		./opkg/opkg repo index "$(ROOTFS_DIR)/var/cache/opkg/repo"; \
 	fi

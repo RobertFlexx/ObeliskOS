@@ -252,6 +252,14 @@ void sysctl_register_system_nodes(void) {
                            sysctl_input_mouse_drops_handler, NULL, SYSCTL_RO);
     sysctl_register_handler("system.input.ps2.mice_packet_drops",
                            sysctl_input_mice_drops_handler, NULL, SYSCTL_RO);
+
+    /* Loader/exec debugging knobs (disabled by default). */
+    extern int loader_trace_enabled;
+    extern int loader_trace_budget;
+    extern int loader_exec_debug_enabled;
+    sysctl_register_int("system.debug.loader_trace_enabled", &loader_trace_enabled, SYSCTL_RW);
+    sysctl_register_int("system.debug.loader_trace_budget", &loader_trace_budget, SYSCTL_RW);
+    sysctl_register_int("system.debug.loader_exec_debug_enabled", &loader_exec_debug_enabled, SYSCTL_RW);
 }
 
 /* Initialize CPU information */

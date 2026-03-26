@@ -134,6 +134,20 @@ Still failing:
   - interpreter PT_DYNAMIC remains valid
 - This isolates current blocker to main executable ELF mapping/copy correctness, not missing AF_UNIX/poll/session/syscall primitives.
 
+### Loader Exception Handling Crash (Now Characterized)
+
+- Both `execprobe /usr/bin/xinit` and `execprobe /usr/bin/xdm` die in the dynamic linker’s exception wrapper:
+  - fault site RIP: `ld-linux-x86-64.so.2` `+0x1d89c` from interpreter base (instruction sequence `mov 0x68(%rdi),%rdx` then `mov 0x8(%rdx),%rbx`)
+  - fault VA: `0x8` (null-derived pointer dereference)
+- New gated loader diagnostics show:
+  - `%rdi` points to a non-null “catch state” object (`[rdi+0x0]` and `[rdi+0x8]` are non-zero pointers), but `[rdi+0x68] == 0`
+  - TLS readback at `fs_base+0x68` (`rtld_catch`-slot) is also `0`, confirming the catch-state pointer the loader expects to exist is still missing/empty at the crash point.
+- Two surgical runtime tweaks were attempted and did not change the fault:
+  - initializing the `map_user_tls_stub()` page header-self fields (to make glibc’s `THREAD_SELF` stable)
+  - skipping kernel-side “placeholder” handling for `R_X86_64_IRELATIVE`
+
+Next focus: dynamic-loader internal ABI correctness for the `dl-catch`/`_dl_catch_error` control flow (setjmp/longjmp + catch-state initialization), not basic syscall gaps.
+
 ## Validation Gates
 
 ## Gate D1 - Desktop Prereq Smoke

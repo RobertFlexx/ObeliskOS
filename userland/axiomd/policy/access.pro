@@ -165,3 +165,51 @@ critical_path_denied(UID, Path, delete) :-
 :- assertz(access_rule('/home/*', read, allow, owner)).
 :- assertz(access_rule('/var/backups/*', delete, deny, not(owner))).
 :- assertz(access_rule('/srv/shares/*', read, allow, true)).
+
+%% Allow non-root opkg runtime writes (repo cache + installed metadata).
+%% Required for “daily usable” package installs without forcing sudo/su.
+:- assertz(access_rule('/var/lib/opkg/*', read,  allow, true)).
+:- assertz(access_rule('/var/lib/opkg/*', write, allow, true)).
+:- assertz(access_rule('/var/cache/opkg/*', read,  allow, true)).
+:- assertz(access_rule('/var/cache/opkg/*', write, allow, true)).
+
+%% Also add explicit directory-level allow rules.
+%% Wildcard matching in path_matches/2 is conservative, so exact paths keep this reliable.
+:- assertz(access_rule('/var/lib/opkg',        read,    allow, true)).
+:- assertz(access_rule('/var/lib/opkg',        write,   allow, true)).
+:- assertz(access_rule('/var/lib/opkg',        execute, allow, true)).
+:- assertz(access_rule('/var/lib/opkg/repos',  read,    allow, true)).
+:- assertz(access_rule('/var/lib/opkg/repos',  write,   allow, true)).
+:- assertz(access_rule('/var/lib/opkg/repos',  execute, allow, true)).
+:- assertz(access_rule('/var/lib/opkg/installed', read,    allow, true)).
+:- assertz(access_rule('/var/lib/opkg/installed', write,   allow, true)).
+:- assertz(access_rule('/var/lib/opkg/installed', execute, allow, true)).
+:- assertz(access_rule('/var/lib/opkg/cache',   read,    allow, true)).
+:- assertz(access_rule('/var/lib/opkg/cache',   write,   allow, true)).
+:- assertz(access_rule('/var/lib/opkg/cache',   execute, allow, true)).
+
+:- assertz(access_rule('/var/cache/opkg',      read,    allow, true)).
+:- assertz(access_rule('/var/cache/opkg',      write,   allow, true)).
+:- assertz(access_rule('/var/cache/opkg',      execute, allow, true)).
+:- assertz(access_rule('/var/cache/opkg/repo', read,    allow, true)).
+:- assertz(access_rule('/var/cache/opkg/repo', write,   allow, true)).
+:- assertz(access_rule('/var/cache/opkg/repo', execute, allow, true)).
+:- assertz(access_rule('/var/cache/opkg/repo/packages', read,    allow, true)).
+:- assertz(access_rule('/var/cache/opkg/repo/packages', write,   allow, true)).
+:- assertz(access_rule('/var/cache/opkg/repo/packages', execute, allow, true)).
+
+%% opkg also needs to traverse /var, /var/lib, /var/cache during open()/mkdir().
+:- assertz(access_rule('/var',      read,    allow, true)).
+:- assertz(access_rule('/var',      write,   allow, true)).
+:- assertz(access_rule('/var',      execute, allow, true)).
+:- assertz(access_rule('/var/lib',  read,    allow, true)).
+:- assertz(access_rule('/var/lib',  write,   allow, true)).
+:- assertz(access_rule('/var/lib',  execute, allow, true)).
+:- assertz(access_rule('/var/cache',read,    allow, true)).
+:- assertz(access_rule('/var/cache',write,   allow, true)).
+:- assertz(access_rule('/var/cache',execute, allow, true)).
+
+%% opkg update writes the repo index to this exact file name.
+:- assertz(access_rule('/var/lib/opkg/repos/core.json', read,    allow, true)).
+:- assertz(access_rule('/var/lib/opkg/repos/core.json', write,   allow, true)).
+:- assertz(access_rule('/var/lib/opkg/repos/core.json', execute, allow, true)).

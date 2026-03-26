@@ -301,6 +301,7 @@ Validated:
 Still blocking first real XFCE boot:
 
 - Real `xinit` and `xdm` binaries now execute far enough to enter dynamic loader but fault very early in loader startup (`RIP` in `ld-linux` region, user page fault on null+8 access).
+- Targeted diagnostics show the crash is inside dynamic-loader exception handling (`_dl_catch_error` control flow): the faulting instruction loads from `0x68(%rdi)` and then dereferences `0x8(%rdx)` where `rdx==0`.
 - This indicates remaining dynamic loader/runtime ABI incompatibility (post-exec startup path), now the top-priority blocker.
 
 ## Milestone Status: Loader-Focused Runtime ABI Hardening (Current Pass)
@@ -323,7 +324,7 @@ Validated:
 
 Current highest-confidence blocker:
 
-- Main ET_DYN image mapping/copy path corrupts or zeroes PT_DYNAMIC in memory before control reaches loader, causing early `ld-linux` null-deref startup failure.
+- Main ET_DYN image mapping/copy path remains the primary suspect for corrupting the loader’s runtime internal state (PT_DYNAMIC mapping/copy mismatch was observed), with the current concrete failure site now pinned to `ld-linux` dynamic-loader exception handling (`_dl_catch_error` deref via `0x68(%rdi)`).
 
 Next immediate milestone:
 

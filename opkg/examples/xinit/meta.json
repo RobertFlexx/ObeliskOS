@@ -1,0 +1,12 @@
+{
+  "name": "xinit",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "Real xinit binary package",
+  "description": "Ships a real ELF /usr/bin/xinit binary for dynamic-loader bring-up and desktop stack bootstrap.",
+  "depends": ["xorg"],
+  "provides": ["xinit"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "desktop"
+}

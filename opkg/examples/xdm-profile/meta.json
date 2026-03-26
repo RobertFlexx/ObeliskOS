@@ -1,0 +1,12 @@
+{
+  "name": "xdm-profile",
+  "version": "1.0.0",
+  "arch": "x86_64",
+  "summary": "XDM desktop profile meta package",
+  "description": "Meta/profile package for GUI login with xdm. Pulls real runtime components and ships profile marker docs.",
+  "depends": ["desktop-base", "xorg", "xinit", "gtk3-runtime", "xfce-runtime", "xfce-profile", "xdm"],
+  "provides": ["desktop-profile", "display-manager-profile"],
+  "conflicts": [],
+  "maintainer": "Obelisk Project",
+  "section": "desktop-profile"
+}

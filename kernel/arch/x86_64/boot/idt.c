@@ -35,6 +35,36 @@ struct idt_ptr {
 #define IRQ_BASE            32
 #define IRQ_COUNT           16
 
+/* Minimal auxv constants for targeted loader diagnostics. */
+#define AT_NULL         0
+#define AT_PHDR         3
+#define AT_PHENT        4
+#define AT_PHNUM        5
+#define AT_PAGESZ       6
+#define AT_BASE         7
+#define AT_ENTRY        9
+#define AT_UID          11
+#define AT_EUID         12
+#define AT_GID          13
+#define AT_EGID         14
+#define AT_RANDOM       25
+#define AT_HWCAP        16
+#define AT_HWCAP2       26
+#define AT_SECURE       23
+
+/* ELF dynamic tags (subset) — for interpreting faulting %rdi as glibc struct link_map *. */
+#define DYN_DT_NULL       0
+#define DYN_DT_HASH       4
+#define DYN_DT_STRTAB     5
+#define DYN_DT_SYMTAB     6
+#define DYN_DT_GNU_HASH   0x6ffffef5ULL
+
+/* glibc struct link_map: l_info[] starts at offset 0x40 (see glibc include/link.h). */
+#define LINK_MAP_L_INFO_OFF 0x40ULL
+
+/* Kernel ET_DYN load bias for main PIE (must match kernel/proc/exec.c ET_DYN_MAIN_BIAS). */
+#define KERNEL_MAIN_PIE_BIAS 0x0000555555554000ULL
+
 static struct idt_entry idt[IDT_ENTRIES] __aligned(16);
 static struct idt_ptr idt_desc;
 static irq_handler_fn_t irq_handlers[IRQ_COUNT];
@@ -153,6 +183,263 @@ static void idt_dump_regs(const struct cpu_regs *regs) {
     printk(KERN_ERR "RFLAGS: 0x%016lx  SS: 0x%04lx\n", regs->rflags, regs->ss);
 }
 
+static bool diag_read_user_byte(struct process *p, uint64_t uaddr, uint8_t *out) {
+    if (!p || !p->mm || !p->mm->pt) {
+        return false;
+    }
+    uint64_t phys = mmu_resolve(p->mm->pt, uaddr);
+    if (!phys) {
+        return false;
+    }
+    *out = *(const volatile uint8_t *)PHYS_TO_VIRT(phys);
+    return true;
+}
+
+static bool diag_read_user_u64(struct process *p, uint64_t uaddr, uint64_t *out) {
+    uint64_t v = 0;
+    for (size_t i = 0; i < 8; i++) {
+        uint8_t b = 0;
+        if (!diag_read_user_byte(p, uaddr + i, &b)) {
+            return false;
+        }
+        v |= ((uint64_t)b) << (i * 8);
+    }
+    *out = v;
+    return true;
+}
+
+static bool streq(const char *a, const char *b) {
+    if (!a || !b) {
+        return false;
+    }
+    for (;;) {
+        if (a[0] != b[0]) return false;
+        if (a[0] == '\0') return true;
+        a++;
+        b++;
+    }
+}
+
+static void maybe_diag_ldso_page_fault(const struct cpu_regs *regs) {
+    struct process *p = current;
+    if (!regs || !p) {
+        return;
+    }
+    if (regs->vector != PF_VECTOR) {
+        return;
+    }
+
+    /* Only for the known dynamic startup repros (targeted, not broad). */
+    if (!streq(p->comm, "xinit") && !streq(p->comm, "xdm")) {
+        return;
+    }
+
+    /* Parse auxv from the initial stack pointer recorded at exec-time. */
+    uint64_t sp0 = p->mm ? p->mm->start_stack : 0;
+    if (!sp0) {
+        return;
+    }
+
+    uint64_t argc = 0;
+    if (!diag_read_user_u64(p, sp0, &argc)) {
+        return;
+    }
+
+    uint64_t cur = sp0 + 8; /* argv[0] pointer */
+    uint64_t ptr = 0;
+
+    /* Skip argv pointers until NULL. */
+    for (size_t guard = 0; guard < 256; guard++) {
+        if (!diag_read_user_u64(p, cur, &ptr)) return;
+        cur += 8;
+        if (ptr == 0) break;
+    }
+    /* Skip envp pointers until NULL. */
+    for (size_t guard = 0; guard < 256; guard++) {
+        if (!diag_read_user_u64(p, cur, &ptr)) return;
+        cur += 8;
+        if (ptr == 0) break;
+    }
+
+    uint64_t at_base = 0, at_entry = 0, at_phdr = 0, at_phent = 0, at_phnum = 0;
+    uint64_t at_pagesz = 0, at_uid = 0, at_euid = 0, at_gid = 0, at_egid = 0;
+    uint64_t at_secure = 0, at_hwcap = 0, at_hwcap2 = 0;
+    uint64_t at_random = 0;
+
+    /* Auxv is a (type,value) stream ending in AT_NULL. */
+    for (size_t guard = 0; guard < 64; guard++) {
+        uint64_t type = 0, val = 0;
+        if (!diag_read_user_u64(p, cur, &type)) return;
+        if (!diag_read_user_u64(p, cur + 8, &val)) return;
+        cur += 16;
+        if (type == AT_NULL) break;
+        switch (type) {
+        case AT_BASE:   at_base = val; break;
+        case AT_ENTRY:  at_entry = val; break;
+        case AT_PHDR:   at_phdr = val; break;
+        case AT_PHENT:  at_phent = val; break;
+        case AT_PHNUM:  at_phnum = val; break;
+        case AT_PAGESZ: at_pagesz = val; break;
+        case AT_UID:    at_uid = val; break;
+        case AT_EUID:   at_euid = val; break;
+        case AT_GID:    at_gid = val; break;
+        case AT_EGID:   at_egid = val; break;
+        case AT_SECURE: at_secure = val; break;
+        case AT_HWCAP:  at_hwcap = val; break;
+        case AT_HWCAP2: at_hwcap2 = val; break;
+        case AT_RANDOM: at_random = val; break;
+        default: break;
+        }
+    }
+
+    /* If we can locate the interpreter base, only dump when RIP is in it. */
+    if (at_base) {
+        uint64_t rip = regs->rip;
+        if (rip < at_base || rip >= at_base + 0x4000000ULL) {
+            return;
+        }
+    }
+
+    /*
+     * ld.so may fault with: mov 0x68(%rdi),%rdx ; mov 0x8(%rdx),%rbx when %rdi is
+     * struct link_map * (see glibc include/link.h): offset 0x68 is l_info[DT_STRTAB]
+     * (DT_STRTAB == 5), not pthread::rtld_catch. fs_base+0x68 is tcbhead_t::__private_tm[3]
+     * (glibc sysdeps/x86_64/nptl/tls.h), unrelated.
+     */
+    uint64_t rdi = regs->rdi;
+
+    uint64_t tls_self = 0, tls_tcb = 0;
+    if (p->fs_base) {
+        /* x86-64 glibc: tcbhead_t at fs base — tcb @0, dtv @8, self @0x10 (THREAD_SELF). */
+        diag_read_user_u64(p, p->fs_base + 0x10, &tls_self);
+        diag_read_user_u64(p, p->fs_base + 0x0, &tls_tcb);
+    }
+
+    /* +0x68 in tcbhead_t is __private_tm[3] (TM ABI reservation), not rtld_catch. */
+    uint64_t tls_private_tm3 = 0;
+    if (p->fs_base) {
+        diag_read_user_u64(p, p->fs_base + 0x68, &tls_private_tm3);
+    }
+
+    uint64_t at_rdi_0 = 0, at_rdi_8 = 0, at_rdi_10 = 0, at_rdi_18 = 0, at_rdi_20 = 0, at_rdi_28 = 0;
+    uint64_t at_rdi_60 = 0;
+    diag_read_user_u64(p, rdi + 0x0, &at_rdi_0);
+    diag_read_user_u64(p, rdi + 0x8, &at_rdi_8);
+    diag_read_user_u64(p, rdi + 0x10, &at_rdi_10);
+    diag_read_user_u64(p, rdi + 0x18, &at_rdi_18);
+    diag_read_user_u64(p, rdi + 0x20, &at_rdi_20);
+    diag_read_user_u64(p, rdi + 0x28, &at_rdi_28);
+    diag_read_user_u64(p, rdi + 0x60, &at_rdi_60);
+
+    /* l_info[DT_*] at 8-byte slots indexed by tag for small tags (glibc link_map). */
+    uint64_t li0 = 0, li1 = 0, li2 = 0, li3 = 0, li4 = 0, li5 = 0, li6 = 0, li7 = 0;
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 0 * 8, &li0);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 1 * 8, &li1);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 2 * 8, &li2);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 3 * 8, &li3);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 4 * 8, &li4);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 5 * 8, &li5);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 6 * 8, &li6);
+    diag_read_user_u64(p, rdi + LINK_MAP_L_INFO_OFF + 7 * 8, &li7);
+
+    uint64_t l_ld = at_rdi_10;
+    bool dyn_has_strtab = false, dyn_has_symtab = false, dyn_has_gnu_hash = false;
+    uint64_t dyn_d_strtab = 0, dyn_d_symtab = 0;
+    size_t dyn_nz = 0;
+
+    if (l_ld) {
+        for (size_t i = 0; i < 48; i++) {
+            uint64_t tag = 0, val = 0;
+            uint64_t ent = l_ld + (uint64_t)i * 16;
+            if (!diag_read_user_u64(p, ent, &tag)) {
+                break;
+            }
+            if (!diag_read_user_u64(p, ent + 8, &val)) {
+                break;
+            }
+            if (tag == DYN_DT_NULL) {
+                dyn_nz = i;
+                break;
+            }
+            if (tag == DYN_DT_STRTAB) {
+                dyn_has_strtab = true;
+                dyn_d_strtab = val;
+            } else if (tag == DYN_DT_SYMTAB) {
+                dyn_has_symtab = true;
+                dyn_d_symtab = val;
+            } else if (tag == DYN_DT_GNU_HASH) {
+                dyn_has_gnu_hash = true;
+            }
+        }
+    }
+
+    printk(KERN_ERR "\n=== LOADER DIAG (link_map vs .dynamic) ===\n");
+    printk(KERN_ERR "comm=%s exec=%s\n", p->comm, p->exec_path);
+    printk(KERN_ERR "fault rip=0x%lx cr2=0x%lx fs_base=0x%lx\n",
+           regs->rip, read_cr2(), p->fs_base);
+    printk(KERN_ERR "link_map@%lx: l_addr=0x%lx l_name=0x%lx l_ld=0x%lx l_next=0x%lx l_prev=0x%lx l_real=0x%lx\n",
+           rdi, at_rdi_0, at_rdi_8, at_rdi_10, at_rdi_18, at_rdi_20, at_rdi_28);
+    printk(KERN_ERR "l_info[0..7] @+0x40..0x77: [0]=0x%lx [1]=0x%lx [2]=0x%lx [3]=0x%lx [4]=0x%lx [5]=0x%lx [6]=0x%lx [7]=0x%lx\n",
+           li0, li1, li2, li3, li4, li5, li6, li7);
+    printk(KERN_ERR "l_info[4] duplicate read +0x60 -> 0x%lx (should match [4] above)\n", at_rdi_60);
+    printk(KERN_ERR "l_info[DT_STRTAB] slot +0x68 -> 0x%lx  l_info[DT_SYMTAB] slot +0x70 -> 0x%lx\n", li5, li6);
+    printk(KERN_ERR "auxv: AT_BASE(ld.so)=0x%lx AT_ENTRY(main)=0x%lx AT_PHDR=0x%lx AT_PHENT=0x%lx AT_PHNUM=0x%lx\n",
+           at_base, at_entry, at_phdr, at_phent, at_phnum);
+    printk(KERN_ERR "auxv: AT_PAGESZ=0x%lx AT_SECURE=0x%lx uid/euid=%lu/%lu gid/egid=%lu/%lu AT_HWCAP=0x%lx AT_HWCAP2=0x%lx AT_RANDOM=0x%lx\n",
+           at_pagesz, at_secure, at_uid, at_euid, at_gid, at_egid, at_hwcap, at_hwcap2, at_random);
+    if (at_entry >= at_rdi_0) {
+        printk(KERN_ERR "main map check: AT_ENTRY-l_addr=0x%lx (expect PIE e_entry e.g. 0x2140 for xinit)\n",
+               at_entry - at_rdi_0);
+    }
+    printk(KERN_ERR "main map check: l_addr==KERNEL_MAIN_PIE_BIAS(0x%lx) -> %s\n",
+           (unsigned long)KERNEL_MAIN_PIE_BIAS, (at_rdi_0 == KERNEL_MAIN_PIE_BIAS) ? "yes" : "no");
+    printk(KERN_ERR "main map check: l_ld in main object high VA [l_addr..l_addr+8MiB) -> %s\n",
+           (at_rdi_0 && l_ld >= at_rdi_0 && l_ld < at_rdi_0 + (8ULL << 20)) ? "yes" : "no");
+    printk(KERN_ERR "in-memory .dynamic@%lx: DT_STRTAB present=%d d_ptr=0x%lx  DT_SYMTAB present=%d d_ptr=0x%lx  GNU_HASH=%d  nz~%lu\n",
+           l_ld, dyn_has_strtab ? 1 : 0, dyn_d_strtab, dyn_has_symtab ? 1 : 0, dyn_d_symtab,
+           dyn_has_gnu_hash ? 1 : 0, (unsigned long)dyn_nz);
+    if (at_rdi_0 && dyn_d_strtab && dyn_d_strtab < (1ULL << 24)) {
+        printk(KERN_ERR "dyn DT_STRTAB d_ptr looks like file-relative; l_addr+d_ptr=0x%lx\n",
+               at_rdi_0 + dyn_d_strtab);
+    }
+    if (at_rdi_0 && dyn_d_symtab && dyn_d_symtab < (1ULL << 24)) {
+        printk(KERN_ERR "dyn DT_SYMTAB d_ptr looks like file-relative; l_addr+d_ptr=0x%lx\n",
+               at_rdi_0 + dyn_d_symtab);
+    }
+
+    /* First 14 dynamic entries for context (tag, val). */
+    if (l_ld) {
+        for (size_t i = 0; i < 14; i++) {
+            uint64_t tag = 0, val = 0;
+            uint64_t ent = l_ld + (uint64_t)i * 16;
+            if (!diag_read_user_u64(p, ent, &tag)) {
+                break;
+            }
+            if (!diag_read_user_u64(p, ent + 8, &val)) {
+                break;
+            }
+            if (tag == DYN_DT_NULL) {
+                printk(KERN_ERR "  .dynamic[%lu] DT_NULL\n", (unsigned long)i);
+                break;
+            }
+            printk(KERN_ERR "  .dynamic[%lu] tag=0x%lx val=0x%lx\n", (unsigned long)i, tag, val);
+        }
+    }
+
+    if (dyn_has_strtab && dyn_d_strtab != 0 && li5 == 0) {
+        printk(KERN_ERR "VERDICT: .dynamic has DT_STRTAB d_ptr!=0 but l_info[DT_STRTAB]==NULL -> ld.so has not filled link_map (or wrong map)\n");
+    } else if (!dyn_has_strtab || dyn_d_strtab == 0) {
+        printk(KERN_ERR "VERDICT: .dynamic missing/zero DT_STRTAB in mapped memory -> suspect kernel mapping/copy of RW segment\n");
+    } else if (li5 != 0 && li5 == dyn_d_strtab) {
+        printk(KERN_ERR "VERDICT: l_info[5] matches .dynamic DT_STRTAB (unexpected at this fault)\n");
+    } else {
+        printk(KERN_ERR "VERDICT: inconclusive; compare l_info vs .dynamic above\n");
+    }
+
+    printk(KERN_ERR "fs_base: tcb=0x%lx self=0x%lx tcbhead+0x68(__private_tm[3])=0x%lx\n",
+           tls_tcb, tls_self, tls_private_tm3);
+}
+
 static void log_exception_header(uint64_t vector, uint64_t error_code) {
     if (vector == PF_VECTOR) {
         uint64_t fault_addr = read_cr2();
@@ -246,6 +533,7 @@ void exception_handler(struct cpu_regs *regs) {
     } else {
         log_exception_header(vector, regs->error_code);
     }
+    maybe_diag_ldso_page_fault(regs);
     idt_dump_regs(regs);
 
     /* Debug/breakpoint exceptions are non-fatal by design. */

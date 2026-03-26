@@ -135,7 +135,7 @@ fork_return:
     iretq
 
 /*
- * user_mode_enter(uint64_t entry, uint64_t user_stack)
+ * user_mode_enter(uint64_t entry, uint64_t user_stack, uint64_t fs_base)
  *
  * Enter user mode for the first time.
  */
@@ -146,14 +146,32 @@ user_mode_enter:
      * Arguments:
      *   rdi = entry point
      *   rsi = user stack pointer
+     *   rdx = IA32_FS_BASE (TLS / dynamic ELF)
      */
-    
+    movq %rdi, %r8
+    movq %rsi, %r9
+    movq %rdx, %r10
+
     /* Set up user segments */
     movw $0x1B, %ax         /* User data segment | RPL 3 */
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
     movw %ax, %gs
+
+    /*
+     * Set FS base last, immediately before iretq. Some paths rely on %fs-relative
+     * addressing in ld.so before arch_prctl; the segment load above must not leave
+     * IA32_FS_BASE stale relative to the new address space.
+     */
+    movl $0xC0000100, %ecx  /* MSR_IA32_FS_BASE */
+    movl %r10d, %eax
+    shrq $32, %r10
+    movl %r10d, %edx
+    wrmsr
+
+    movq %r8, %rdi
+    movq %r9, %rsi
     
     /* Prepare iretq frame */
     pushq $0x1B             /* User SS */

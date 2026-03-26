@@ -426,7 +426,11 @@ static int unix_socket_rx_pop(struct ksocket *sock, uint8_t *out, size_t len) {
 
 /* Syscall statistics (for debugging/profiling) */
 static uint64_t syscall_counts[NR_SYSCALLS];
-static int loader_trace_budget = 20000;
+/* Loader exec/trace debugging.
+ * Disabled by default to keep interactive and command execution responsive. */
+int loader_trace_enabled = 0;       /* 0=off, 1=on */
+int loader_trace_budget = 0;       /* max syscall trace lines */
+int loader_exec_debug_enabled = 0; /* extra exec/loader printk instrumentation */
 static int tty_kd_mode = KD_TEXT;
 static int tty_kb_mode = K_XLATE;
 
@@ -792,12 +796,11 @@ int64_t syscall_dispatch(uint64_t syscall_num, struct cpu_regs *regs) {
     uint64_t arg6 = regs->r9;
     
     int trace_loader = 0;
-    if (loader_trace_budget > 0 && current) {
+    if (loader_trace_enabled != 0 && loader_trace_budget > 0 && current) {
         const char *comm = current->comm;
-        if ((comm && (strcmp(comm, "xdm") == 0 ||
-                      strncmp(comm, "ld-linux", 8) == 0)) ||
-            syscall_num == SYS_EXECVE ||
-            syscall_num == SYS_ARCH_PRCTL) {
+        const bool is_loader_proc =
+            (comm && (strcmp(comm, "xdm") == 0 || strncmp(comm, "ld-linux", 8) == 0));
+        if (is_loader_proc && (syscall_num == SYS_EXECVE || syscall_num == SYS_ARCH_PRCTL)) {
             trace_loader = 1;
             loader_trace_budget--;
             printk(KERN_INFO

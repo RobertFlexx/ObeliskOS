@@ -13,6 +13,9 @@
 #include <fs/inode.h>
 #include <uapi/syscall.h>
 
+/* Off-by-default loader debug instrumentation for responsiveness. */
+extern int loader_exec_debug_enabled;
+
 /* ELF definitions */
 #define ELF_MAGIC       0x464C457F  /* "\x7FELF" */
 
@@ -27,6 +30,7 @@
 #define PT_INTERP       3
 #define PT_NOTE         4
 #define PT_PHDR         6
+#define PT_TLS          7
 
 #define PF_X            0x1
 #define PF_W            0x2
@@ -124,6 +128,36 @@ struct elf64_phdr {
 #define DT_RELR         0x24
 #define DT_RELRSZ       0x23
 #define DT_RELRENT      0x25
+#define DT_SYMENT       11
+#define DT_JMPREL       23
+#define DT_PLTRELSZ     2
+#define DT_PLTREL       20
+
+#define ELF64_R_SYM(i)  ((uint32_t)((uint64_t)(i) >> 32))
+#define ELF64_R_TYPE(i) ((uint32_t)((uint64_t)(i) & 0xffffffffUL))
+
+#define R_X86_64_RELATIVE   8
+#define R_X86_64_COPY       5
+#define R_X86_64_GLOB_DAT   6
+#define R_X86_64_JUMP_SLOT  7
+#define R_X86_64_IRELATIVE  37
+
+#define SHN_UNDEF 0
+
+struct elf64_rela {
+    uint64_t r_offset;
+    uint64_t r_info;
+    int64_t  r_addend;
+} __packed;
+
+struct elf64_sym {
+    uint32_t st_name;
+    uint8_t  st_info;
+    uint8_t  st_other;
+    uint16_t st_shndx;
+    uint64_t st_value;
+    uint64_t st_size;
+} __packed;
 
 struct exec_image_info {
     uint64_t entry;
@@ -131,6 +165,8 @@ struct exec_image_info {
     uint64_t phdr;
     uint64_t phent;
     uint64_t phnum;
+    bool has_tls;
+    uint64_t tls_base; /* x86_64 TLS variant II: initial thread pointer (end of TLS block, aligned). */
 };
 
 struct auxv_pair {
@@ -152,6 +188,13 @@ static int read_user_memory(struct process *proc, uint64_t uaddr, void *dst, siz
         uint64_t phys = mmu_resolve(proc->mm->pt, uaddr);
         if (!phys) {
             return -EFAULT;
+        }
+        /* Debug-only: ensure the mapping we are touching looks like user memory. */
+        if (loader_exec_debug_enabled) {
+            uint64_t flags = mmu_get_flags(proc->mm->pt, uaddr);
+            if (!(flags & PTE_PRESENT) || !(flags & PTE_USER)) {
+                return -EFAULT;
+            }
         }
         size_t off = (size_t)(uaddr & (PAGE_SIZE - 1));
         size_t chunk = MIN(len, PAGE_SIZE - off);
@@ -206,7 +249,7 @@ static bool path_contains_ld_linux(const char *filename) {
 static void exec_debug_dump_dynamic(struct process *proc, struct file *src_file,
                                     const struct elf64_hdr *hdr, const struct exec_image_info *img,
                                     const char *label, const char *filename) {
-    if (!proc || !hdr || !img || !path_contains_ld_linux(filename)) {
+    if (!proc || !hdr || !img || !loader_exec_debug_enabled || !path_contains_ld_linux(filename)) {
         return;
     }
     if (hdr->e_phentsize != sizeof(struct elf64_phdr) || hdr->e_phnum == 0) {
@@ -264,7 +307,7 @@ static void exec_debug_dump_dynamic(struct process *proc, struct file *src_file,
 }
 
 static void exec_debug_dump_stack(struct process *proc, uint64_t sp, int argc, int envc, const char *filename) {
-    if (!path_contains_ld_linux(filename)) {
+    if (!loader_exec_debug_enabled || !path_contains_ld_linux(filename)) {
         return;
     }
 
@@ -339,6 +382,13 @@ static int write_user_memory(struct process *proc, uint64_t uaddr, const void *s
         if (!phys) {
             return -EFAULT;
         }
+        /* Debug-only: ensure the mapping is writable user memory before memcpy(). */
+        if (loader_exec_debug_enabled) {
+            uint64_t flags = mmu_get_flags(proc->mm->pt, uaddr);
+            if (!(flags & PTE_PRESENT) || !(flags & PTE_USER) || !(flags & PTE_WRITABLE)) {
+                return -EFAULT;
+            }
+        }
         size_t off = (size_t)(uaddr & (PAGE_SIZE - 1));
         size_t chunk = MIN(len, PAGE_SIZE - off);
         memcpy((uint8_t *)PHYS_TO_VIRT(phys), p, chunk);
@@ -351,6 +401,276 @@ static int write_user_memory(struct process *proc, uint64_t uaddr, const void *s
 
 static int write_user_u64(struct process *proc, uint64_t uaddr, uint64_t value) {
     return write_user_memory(proc, uaddr, &value, sizeof(value));
+}
+
+/*
+ * Apply DT_RELR (packed relative relocs). Matches musl ldso/dlstart.c.
+ */
+static int apply_dt_relr(struct process *proc, uint64_t load_bias, uint64_t relr_va, size_t relr_sz) {
+    uint64_t where_va = 0;
+    bool have_where = false;
+
+    for (size_t o = 0; o < relr_sz; o += sizeof(uint64_t)) {
+        uint64_t rel = 0;
+        if (read_user_u64(proc, relr_va + o, &rel) < 0) {
+            return -EFAULT;
+        }
+        if ((rel & 1ULL) == 0) {
+            uint64_t addr = load_bias + rel;
+            uint64_t val = 0;
+            if (read_user_u64(proc, addr, &val) < 0) {
+                return -EFAULT;
+            }
+            val += load_bias;
+            if (write_user_u64(proc, addr, val) < 0) {
+                return -EFAULT;
+            }
+            where_va = addr + sizeof(uint64_t);
+            have_where = true;
+        } else {
+            if (!have_where) {
+                return -ENOEXEC;
+            }
+            for (size_t i = 0, bitmap = (size_t)rel; bitmap >>= 1; i++) {
+                if (bitmap & 1) {
+                    uint64_t addr = where_va + (uint64_t)i * sizeof(uint64_t);
+                    uint64_t val = 0;
+                    if (read_user_u64(proc, addr, &val) < 0) {
+                        return -EFAULT;
+                    }
+                    val += load_bias;
+                    if (write_user_u64(proc, addr, val) < 0) {
+                        return -EFAULT;
+                    }
+                }
+            }
+            where_va += (uint64_t)(8 * sizeof(uint64_t) - 1) * (uint64_t)sizeof(uint64_t);
+        }
+    }
+    return 0;
+}
+
+static int elf_vaddr_to_file_offset(struct elf64_hdr *hdr, struct file *file, uint64_t vaddr,
+                                    uint64_t *out_off) {
+    for (int i = 0; i < hdr->e_phnum; i++) {
+        struct elf64_phdr ph;
+        off_t po = hdr->e_phoff + (off_t)i * (off_t)sizeof(ph);
+        if (vfs_read(file, &ph, sizeof(ph), &po) != sizeof(ph)) {
+            return -EIO;
+        }
+        if (ph.p_type != PT_LOAD) {
+            continue;
+        }
+        if (vaddr >= ph.p_vaddr && vaddr < ph.p_vaddr + ph.p_memsz) {
+            if (vaddr - ph.p_vaddr > ph.p_filesz) {
+                return -ENOENT;
+            }
+            *out_off = ph.p_offset + (vaddr - ph.p_vaddr);
+            return 0;
+        }
+    }
+    return -ENOENT;
+}
+
+static int find_pt_dynamic(struct elf64_hdr *hdr, struct file *file, uint64_t *dyn_off,
+                           size_t *dyn_sz) {
+    for (int i = 0; i < hdr->e_phnum; i++) {
+        struct elf64_phdr ph;
+        off_t po = hdr->e_phoff + (off_t)i * (off_t)sizeof(ph);
+        if (vfs_read(file, &ph, sizeof(ph), &po) != sizeof(ph)) {
+            return -EIO;
+        }
+        if (ph.p_type != PT_DYNAMIC) {
+            continue;
+        }
+        if (ph.p_memsz < sizeof(struct elf64_dyn)) {
+            return -ENOEXEC;
+        }
+        *dyn_off = ph.p_offset;
+        *dyn_sz = (size_t)ph.p_memsz;
+        return 0;
+    }
+    return -ENOENT;
+}
+
+static int read_elf_sym_at(struct file *file, uint64_t sym_file_off, uint32_t idx, uint64_t syment,
+                           struct elf64_sym *out) {
+    off_t o = (off_t)sym_file_off + (off_t)idx * (off_t)syment;
+    return vfs_read(file, out, sizeof(*out), &o) == sizeof(*out) ? 0 : -EIO;
+}
+
+static int apply_rela_range(struct process *proc, struct file *file, uint64_t load_bias,
+                            uint64_t rela_file_off, size_t relasz, uint64_t relaent,
+                            uint64_t symtab_file_off, uint64_t syment) {
+    if (relaent != sizeof(struct elf64_rela)) {
+        return -ENOEXEC;
+    }
+    if (relasz % relaent != 0) {
+        return -ENOEXEC;
+    }
+    size_t n = relasz / relaent;
+    if (n > 0x100000) {
+        return -ENOEXEC;
+    }
+
+    for (size_t k = 0; k < n; k++) {
+        struct elf64_rela rela;
+        off_t ro = (off_t)rela_file_off + (off_t)k * (off_t)relaent;
+        if (vfs_read(file, &rela, sizeof(rela), &ro) != sizeof(rela)) {
+            return -EIO;
+        }
+        uint32_t type = ELF64_R_TYPE(rela.r_info);
+        uint32_t symidx = ELF64_R_SYM(rela.r_info);
+        uint64_t target = load_bias + rela.r_offset;
+
+        switch (type) {
+        case R_X86_64_RELATIVE:
+            if (write_user_u64(proc, target, load_bias + (uint64_t)rela.r_addend) < 0) {
+                return -EFAULT;
+            }
+            break;
+        case R_X86_64_IRELATIVE:
+            /* 
+             * IRELATIVE requires calling an IFUNC resolver in ring-3.
+             * The dynamic loader expects to perform this step itself; writing a
+             * placeholder value here can poison early bootstrap state.
+             *
+             * Therefore we intentionally leave the relocation target untouched.
+             */
+            break;
+        case R_X86_64_GLOB_DAT:
+        case R_X86_64_JUMP_SLOT: {
+            struct elf64_sym sym;
+            if (read_elf_sym_at(file, symtab_file_off, symidx, syment, &sym) < 0) {
+                return -EIO;
+            }
+            if (sym.st_shndx == SHN_UNDEF) {
+                EXEC_LOG("exec: interp reloc: undefined sym idx %u\n", symidx);
+                return -ENOEXEC;
+            }
+            uint64_t val = load_bias + sym.st_value;
+            if (write_user_u64(proc, target, val) < 0) {
+                return -EFAULT;
+            }
+            break;
+        }
+        default:
+            EXEC_LOG("exec: interp reloc: unsupported type %u\n", type);
+            return -ENOEXEC;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Apply DT_RELR (file) + RELA/JMPREL for the interpreter image only.
+ * The main executable is still relocated by ld.so when present.
+ */
+static int apply_elf_interp_relocations(struct process *proc, struct file *file,
+                                      struct elf64_hdr *hdr, uint64_t load_bias) {
+    uint64_t dyn_off = 0;
+    size_t dyn_sz = 0;
+    int dr = find_pt_dynamic(hdr, file, &dyn_off, &dyn_sz);
+    if (dr < 0) {
+        return -ENOEXEC;
+    }
+
+    uint64_t relr_ptr = 0, relrsz = 0;
+    uint64_t rela_ptr = 0, relasz = 0, relaent = sizeof(struct elf64_rela);
+    uint64_t jmprel_ptr = 0, pltrelsz = 0;
+    uint64_t pltrel = 0;
+    uint64_t symtab_ptr = 0;
+    uint64_t syment = sizeof(struct elf64_sym);
+    int err;
+
+    for (size_t di = 0; di * sizeof(struct elf64_dyn) < dyn_sz; di++) {
+        struct elf64_dyn d;
+        off_t o = (off_t)dyn_off + (off_t)di * (off_t)sizeof(d);
+        if (vfs_read(file, &d, sizeof(d), &o) != sizeof(d)) {
+            return -EIO;
+        }
+        int64_t tag = d.d_tag;
+        if (tag == DT_NULL) {
+            break;
+        }
+        switch (tag) {
+        case DT_RELR:
+            relr_ptr = d.d_un.d_ptr;
+            break;
+        case DT_RELRSZ:
+            relrsz = d.d_un.d_val;
+            break;
+        case DT_RELA:
+            rela_ptr = d.d_un.d_ptr;
+            break;
+        case DT_RELASZ:
+            relasz = d.d_un.d_val;
+            break;
+        case DT_RELAENT:
+            relaent = d.d_un.d_val;
+            break;
+        case DT_JMPREL:
+            jmprel_ptr = d.d_un.d_ptr;
+            break;
+        case DT_PLTRELSZ:
+            pltrelsz = d.d_un.d_val;
+            break;
+        case DT_PLTREL:
+            pltrel = d.d_un.d_val;
+            break;
+        case DT_SYMTAB:
+            symtab_ptr = d.d_un.d_ptr;
+            break;
+        case DT_SYMENT:
+            syment = d.d_un.d_val;
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (relrsz > 0) {
+        uint64_t relr_va = load_bias + relr_ptr;
+        err = apply_dt_relr(proc, load_bias, relr_va, relrsz);
+        if (err < 0) {
+            return err;
+        }
+    }
+
+    if (symtab_ptr == 0) {
+        return -ENOEXEC;
+    }
+    uint64_t symtab_off = 0;
+    if (elf_vaddr_to_file_offset(hdr, file, symtab_ptr, &symtab_off) < 0) {
+        return -ENOEXEC;
+    }
+
+    if (relasz > 0) {
+        uint64_t rela_off = 0;
+        if (elf_vaddr_to_file_offset(hdr, file, rela_ptr, &rela_off) < 0) {
+            return -ENOEXEC;
+        }
+        err = apply_rela_range(proc, file, load_bias, rela_off, relasz, relaent, symtab_off, syment);
+        if (err < 0) {
+            return err;
+        }
+    }
+
+    if (pltrelsz > 0) {
+        if (pltrel != 0 && pltrel != DT_RELA) {
+            return -ENOEXEC;
+        }
+        uint64_t jmp_off = 0;
+        if (elf_vaddr_to_file_offset(hdr, file, jmprel_ptr, &jmp_off) < 0) {
+            return -ENOEXEC;
+        }
+        err = apply_rela_range(proc, file, load_bias, jmp_off, pltrelsz, relaent, symtab_off, syment);
+        if (err < 0) {
+            return err;
+        }
+    }
+
+    return 0;
 }
 
 static int read_elf_interp_path(struct file *file, struct elf64_hdr *hdr,
@@ -473,16 +793,124 @@ static int load_elf_segments(struct process *proc, struct file *file,
             img->phdr = phdr.p_vaddr + load_bias;
             phdr_found = true;
         }
+
+        if (phdr.p_type == PT_TLS) {
+            /* Map TLS template like PT_LOAD; ld.so / libc need this mapped before early %fs-relative access. */
+            if (phdr.p_filesz > phdr.p_memsz) {
+                return -ENOEXEC;
+            }
+            if (phdr.p_memsz == 0) {
+                continue;
+            }
+            if (load_bias != 0 && phdr.p_vaddr > (~(uint64_t)0 - load_bias)) {
+                return -ENOEXEC;
+            }
+            uint64_t seg_vaddr_tls = phdr.p_vaddr + load_bias;
+            if (phdr.p_memsz > (~(uint64_t)0 - seg_vaddr_tls)) {
+                return -ENOEXEC;
+            }
+            EXEC_LOG("exec: PT_TLS[%d] vaddr=0x%lx filesz=%lu memsz=%lu align=%lu flags=0x%x\n",
+                     i, seg_vaddr_tls, phdr.p_filesz, phdr.p_memsz, phdr.p_align, phdr.p_flags);
+
+            uint64_t start_tls = ALIGN_DOWN(seg_vaddr_tls, PAGE_SIZE);
+            uint64_t end_tls = ALIGN_UP(seg_vaddr_tls + phdr.p_memsz, PAGE_SIZE);
+            if (end_tls <= start_tls) {
+                return -ENOEXEC;
+            }
+
+            int prot_tls = 0;
+            if (phdr.p_flags & PF_R) {
+                prot_tls |= PROT_READ;
+            }
+            if (phdr.p_flags & PF_W) {
+                prot_tls |= PROT_WRITE;
+            }
+            if (phdr.p_flags & PF_X) {
+                prot_tls |= PROT_EXEC;
+            }
+            if (prot_tls == 0) {
+                prot_tls = PROT_READ | PROT_WRITE;
+            }
+
+            void *addr_tls = vmm_mmap(proc->mm, (void *)start_tls, end_tls - start_tls,
+                                      prot_tls, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
+                                      NULL, 0);
+            if (addr_tls == MAP_FAILED) {
+                return -ENOMEM;
+            }
+            for (uint64_t page_vaddr = start_tls; page_vaddr < end_tls; page_vaddr += PAGE_SIZE) {
+                uint64_t phys = pmm_alloc_page();
+                if (!phys) {
+                    return -ENOMEM;
+                }
+                memset(PHYS_TO_VIRT(phys), 0, PAGE_SIZE);
+                mmu_map(proc->mm->pt, page_vaddr, phys, vmm_prot_to_pte_flags(prot_tls));
+            }
+            if (phdr.p_filesz > 0) {
+                uint64_t copied = 0;
+                while (copied < phdr.p_filesz) {
+                    uint64_t dst_vaddr = seg_vaddr_tls + copied;
+                    uint64_t phys = mmu_resolve(proc->mm->pt, dst_vaddr);
+                    if (!phys) {
+                        return -EFAULT;
+                    }
+                    size_t page_off = (size_t)(dst_vaddr & (PAGE_SIZE - 1));
+                    size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), phdr.p_filesz - copied);
+                    void *dst = (uint8_t *)PHYS_TO_VIRT(phys) + page_off;
+                    uint64_t read_off_u = phdr.p_offset + copied;
+                    if (read_off_u < phdr.p_offset) {
+                        return -ENOEXEC;
+                    }
+                    off_t read_off = (off_t)read_off_u;
+                    ret = vfs_read(file, dst, chunk, &read_off);
+                    if (ret != (int)chunk) {
+                        return (ret < 0) ? ret : -EIO;
+                    }
+                    copied += chunk;
+                }
+            }
+
+            uint64_t tls_align = phdr.p_align;
+            if (tls_align < sizeof(uint64_t)) {
+                tls_align = sizeof(uint64_t);
+            }
+            img->tls_base = ALIGN_UP(seg_vaddr_tls + phdr.p_memsz, tls_align);
+            img->has_tls = true;
+
+            if (end_tls > brk_start) {
+                brk_start = end_tls;
+            }
+            continue;
+        }
+
         if (phdr.p_type != PT_LOAD) {
             continue;
         }
+        /* Basic ELF sanity: p_filesz must not exceed p_memsz. */
+        if (phdr.p_filesz > phdr.p_memsz) {
+            return -ENOEXEC;
+        }
+        if (phdr.p_memsz == 0) {
+            /* Nothing to map/copy. */
+            continue;
+        }
+        /* Overflow-safe calculations for ET_DYN load bias. */
+        if (load_bias != 0 && phdr.p_vaddr > (~(uint64_t)0 - load_bias)) {
+            return -ENOEXEC;
+        }
         uint64_t seg_vaddr = phdr.p_vaddr + load_bias;
+        if (phdr.p_memsz > (~(uint64_t)0 - seg_vaddr)) {
+            return -ENOEXEC;
+        }
         EXEC_LOG("exec: PT_LOAD[%d] vaddr=0x%lx filesz=%lu memsz=%lu flags=0x%x\n",
                  i, seg_vaddr, phdr.p_filesz, phdr.p_memsz, phdr.p_flags);
         
         /* Calculate memory region */
         uint64_t start = ALIGN_DOWN(seg_vaddr, PAGE_SIZE);
         uint64_t end = ALIGN_UP(seg_vaddr + phdr.p_memsz, PAGE_SIZE);
+        if (end <= start) {
+            return -ENOEXEC;
+        }
         
         /* Set up protection flags */
         uint32_t vma_flags = VMA_PRIVATE;
@@ -533,7 +961,11 @@ static int load_elf_segments(struct process *proc, struct file *file,
                 size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), phdr.p_filesz - copied);
                 void *dst = (uint8_t *)PHYS_TO_VIRT(phys) + page_off;
 
-                off_t read_off = phdr.p_offset + copied;
+                uint64_t read_off_u = phdr.p_offset + copied;
+                if (read_off_u < phdr.p_offset) {
+                    return -ENOEXEC;
+                }
+                off_t read_off = (off_t)read_off_u;
                 ret = vfs_read(file, dst, chunk, &read_off);
                 if (ret != (int)chunk) {
                     return (ret < 0) ? ret : -EIO;
@@ -549,38 +981,6 @@ static int load_elf_segments(struct process *proc, struct file *file,
         }
     }
 
-    /* Defensive refresh for PT_DYNAMIC bytes.
-     * Ensures loader metadata is present exactly at p_vaddr+p_offset mapping,
-     * even when segments use non-trivial file/virtual alignment. */
-    for (int i = 0; i < hdr->e_phnum; i++) {
-        off_t offset = hdr->e_phoff + (i * sizeof(phdr));
-        ret = vfs_read(file, &phdr, sizeof(phdr), &offset);
-        if (ret != sizeof(phdr)) {
-            return -EIO;
-        }
-        if (phdr.p_type != PT_DYNAMIC || phdr.p_filesz == 0) {
-            continue;
-        }
-        uint64_t dyn_vaddr = phdr.p_vaddr + load_bias;
-        uint64_t copied = 0;
-        while (copied < phdr.p_filesz) {
-            uint64_t dst_vaddr = dyn_vaddr + copied;
-            uint64_t phys = mmu_resolve(proc->mm->pt, dst_vaddr);
-            if (!phys) {
-                return -EFAULT;
-            }
-            size_t page_off = (size_t)(dst_vaddr & (PAGE_SIZE - 1));
-            size_t chunk = MIN((uint64_t)(PAGE_SIZE - page_off), phdr.p_filesz - copied);
-            void *dst = (uint8_t *)PHYS_TO_VIRT(phys) + page_off;
-            off_t read_off = phdr.p_offset + copied;
-            int n = vfs_read(file, dst, chunk, &read_off);
-            if (n != (int)chunk) {
-                return (n < 0) ? n : -EIO;
-            }
-            copied += chunk;
-        }
-    }
-    
     /* Set up heap */
     proc->mm->brk_start = ALIGN_UP(brk_start, PAGE_SIZE);
     proc->mm->brk_end = proc->mm->brk_start;
@@ -597,11 +997,52 @@ static int load_elf_segments(struct process *proc, struct file *file,
 }
 
 /*
+ * One page immediately below the fixed user stack. Many glibc PIEs and ld-linux omit PT_TLS;
+ * TLS is described via DT_TLS and set up by the dynamic linker, but ld.so may touch %fs:offset
+ * before arch_prctl. Provide a minimal RW page so FS_BASE+offset is mapped.
+ *
+ * Note: imported glibc ld.so may still fault early for other reasons (e.g. mov 0x8(%rdx) with
+ * %rdx==0 in .text) if relocations / link-map bootstrap are incomplete — that is separate from
+ * IA32_FS_BASE.
+ */
+#define USER_TLS_STUB_VADDR (USER_STACK_TOP - CONFIG_USER_STACK_SIZE - PAGE_SIZE)
+
+static int map_user_tls_stub(struct process *proc) {
+    void *m = vmm_mmap(proc->mm, (void *)USER_TLS_STUB_VADDR, PAGE_SIZE,
+                       PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
+                       NULL, 0);
+    if (m == MAP_FAILED) {
+        return -ENOMEM;
+    }
+    uint64_t phys = pmm_alloc_page();
+    if (!phys) {
+        return -ENOMEM;
+    }
+    /* Minimal x86_64 glibc TLS head initialization.
+     * glibc reads header.tcb/header.self via %fs offsets very early (before TLS
+     * dtv/dtv handling is set up). With no PT_TLS in main/interp we provide
+     * a stub page, but it must at least return a non-NULL thread descriptor
+     * through THREAD_SELF. */
+    uint8_t *stub = (uint8_t *)PHYS_TO_VIRT(phys);
+    memset(stub, 0, PAGE_SIZE);
+    /* tcbhead_t (glibc sysdeps/x86_64/nptl/tls.h): tcb @0, dtv @8, self @0x10.
+     * Offset 0x68 is __private_tm[3] (TM ABI reservation), not struct pthread::rtld_catch.
+     * THREAD_SELF uses %fs:offsetof(tcbhead_t,self)=0x10. */
+    *(uint64_t *)(stub + 0x0) = USER_TLS_STUB_VADDR;
+    *(uint64_t *)(stub + 0x8) = 0; /* dtv filled by ld.so after TLS init; keep 0 for bootstrap */
+    *(uint64_t *)(stub + 0x10) = USER_TLS_STUB_VADDR;
+    mmu_map(proc->mm->pt, USER_TLS_STUB_VADDR, phys, PTE_PRESENT | PTE_WRITABLE | PTE_USER);
+    return 0;
+}
+
+/*
  * Set up user stack with arguments and environment
  */
 static int setup_user_stack(struct process *proc, char *const argv[],
                             char *const envp[], const char *filename,
-                            const struct exec_image_info *img, uint64_t *sp) {
+                            const struct exec_image_info *img, uint64_t *sp,
+                            int at_secure) {
     /* Allocate stack region */
     uint64_t stack_top = USER_STACK_TOP;
     uint64_t stack_size = CONFIG_USER_STACK_SIZE;
@@ -723,7 +1164,7 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     auxv[auxc++] = (struct auxv_pair){ AT_PLATFORM, platform_ptr };
     auxv[auxc++] = (struct auxv_pair){ AT_HWCAP, HWCAP_X86_64_BASELINE };
     auxv[auxc++] = (struct auxv_pair){ AT_CLKTCK, 100 };
-    auxv[auxc++] = (struct auxv_pair){ AT_SECURE, 0 };
+    auxv[auxc++] = (struct auxv_pair){ AT_SECURE, at_secure ? 1 : 0 };
     auxv[auxc++] = (struct auxv_pair){ AT_RANDOM, random_ptr };
     auxv[auxc++] = (struct auxv_pair){ AT_HWCAP2, HWCAP2_X86_64_BASELINE };
     auxv[auxc++] = (struct auxv_pair){ AT_EXECFN, execfn_ptr };
@@ -768,7 +1209,9 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     proc->mm->start_stack = sp_val;
     EXEC_LOG("exec: user stack ready top=0x%lx sp=0x%lx argc=%d envc=%d\n",
              stack_top, sp_val, argc, envc);
-    exec_debug_dump_stack(proc, sp_val, argc, envc, filename);
+    if (loader_exec_debug_enabled) {
+        exec_debug_dump_stack(proc, sp_val, argc, envc, filename);
+    }
     
     return 0;
 }
@@ -791,6 +1234,12 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     struct exec_image_info stack_img;
     uint64_t user_entry = 0;
     bool use_interp = false;
+    bool apply_setuid = false;
+    bool apply_setgid = false;
+    int at_secure = 0;
+    mode_t exec_mode = 0;
+    uid_t exec_uid = 0;
+    gid_t exec_gid = 0;
     memset(&img, 0, sizeof(img));
     memset(&main_img, 0, sizeof(main_img));
     memset(&interp_img, 0, sizeof(interp_img));
@@ -825,6 +1274,33 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     if (ret < 0) {
         vfs_close(file);
         return ret;
+    }
+
+    /* Exec-time setuid/setgid handling (real UNIX semantics baseline).
+     * We preserve real uid/gid (cred->uid/gid) and update effective/fs ids. */
+    if (proc && proc->cred && file->f_dentry && file->f_dentry->d_inode) {
+        exec_mode = file->f_dentry->d_inode->i_mode;
+        exec_uid = file->f_dentry->d_inode->i_uid;
+        exec_gid = file->f_dentry->d_inode->i_gid;
+
+        const bool has_group_or_other_write = (exec_mode & 022) != 0;
+        const bool caller_is_exec_owner = proc->cred->uid == exec_uid;
+        const bool caller_is_root = proc->cred->euid == 0;
+
+        if ((exec_mode & S_ISUID) != 0) {
+            /* Very small “unsafe executable” defense: ignore setuid if it is group/other writable
+             * and the caller is not the executable owner (unless the caller is already root). */
+            if (!has_group_or_other_write || caller_is_exec_owner || caller_is_root) {
+                apply_setuid = true;
+                at_secure = 1;
+            }
+        }
+        if ((exec_mode & S_ISGID) != 0) {
+            if (!has_group_or_other_write || caller_is_exec_owner || caller_is_root) {
+                apply_setgid = true;
+                at_secure = 1;
+            }
+        }
     }
     
     /* Read ELF header */
@@ -1024,7 +1500,8 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     }
     
     /* Point of no return - start modifying process */
-    
+    uint64_t old_fs_base = proc ? proc->fs_base : 0;
+
     /* Create new address space */
     struct address_space *new_mm = vmm_create_address_space();
     if (!new_mm) {
@@ -1053,8 +1530,16 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
             vfs_close(file);
             return ret;
         }
+        ret = apply_elf_interp_relocations(proc, interp_file, &interp_hdr, interp_img.load_bias);
+        if (ret < 0) {
+            proc->mm = old_mm;
+            vmm_destroy_address_space(new_mm);
+            vfs_close(interp_file);
+            vfs_close(file);
+            return ret;
+        }
         EXEC_LOG("exec: segments loaded for %s and interpreter %s\n", filename, interp_path);
-        if (path_contains_ld_linux(filename)) {
+        if (loader_exec_debug_enabled && path_contains_ld_linux(filename)) {
             printk(KERN_INFO "exec: main image base=0x%lx entry=0x%lx phdr=0x%lx phnum=%lu phent=%lu\n",
                    main_img.load_bias, main_img.entry, main_img.phdr, main_img.phnum, main_img.phent);
             printk(KERN_INFO "exec: interp image base=0x%lx entry=0x%lx phdr=0x%lx phnum=%lu phent=%lu\n",
@@ -1079,8 +1564,45 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     }
     
     /* Set up user stack */
-    ret = setup_user_stack(proc, argv, envp, filename, &stack_img, &sp);
+    uid_t old_euid = 0, old_suid = 0, old_fsuid = 0;
+    gid_t old_egid = 0, old_sgid = 0, old_fsgid = 0;
+    if (apply_setuid || apply_setgid) {
+        if (proc && proc->cred) {
+            old_euid = proc->cred->euid;
+            old_suid = proc->cred->suid;
+            old_fsuid = proc->cred->fsuid;
+            old_egid = proc->cred->egid;
+            old_sgid = proc->cred->sgid;
+            old_fsgid = proc->cred->fsgid;
+            if (apply_setuid) {
+                proc->cred->euid = exec_uid;
+                proc->cred->suid = exec_uid;
+                proc->cred->fsuid = exec_uid;
+            }
+            if (apply_setgid) {
+                proc->cred->egid = exec_gid;
+                proc->cred->sgid = exec_gid;
+                proc->cred->fsgid = exec_gid;
+            }
+        }
+    }
+
+    ret = setup_user_stack(proc, argv, envp, filename, &stack_img, &sp, at_secure);
     if (ret < 0) {
+        /* Exec failed; restore credentials to pre-exec values. */
+        if (apply_setuid || apply_setgid) {
+            if (proc && proc->cred) {
+                proc->cred->euid = old_euid;
+                proc->cred->suid = old_suid;
+                proc->cred->fsuid = old_fsuid;
+                proc->cred->egid = old_egid;
+                proc->cred->sgid = old_sgid;
+                proc->cred->fsgid = old_fsgid;
+            }
+        }
+        if (proc) {
+            proc->fs_base = old_fs_base;
+        }
         proc->mm = old_mm;
         vmm_destroy_address_space(new_mm);
         if (interp_file) {
@@ -1089,7 +1611,43 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         vfs_close(file);
         return ret;
     }
-    if (path_contains_ld_linux(filename)) {
+
+    /* Initial %fs base for dynamic ELF / TLS (ld.so may touch %fs:offset before arch_prctl). */
+    if (proc) {
+        uint64_t new_fs = 0;
+        if (use_interp) {
+            new_fs = interp_img.has_tls ? interp_img.tls_base : main_img.tls_base;
+        } else {
+            new_fs = img.has_tls ? img.tls_base : 0;
+        }
+        if (new_fs == 0) {
+            ret = map_user_tls_stub(proc);
+            if (ret < 0) {
+                if (apply_setuid || apply_setgid) {
+                    if (proc->cred) {
+                        proc->cred->euid = old_euid;
+                        proc->cred->suid = old_suid;
+                        proc->cred->fsuid = old_fsuid;
+                        proc->cred->egid = old_egid;
+                        proc->cred->sgid = old_sgid;
+                        proc->cred->fsgid = old_fsgid;
+                    }
+                }
+                proc->fs_base = old_fs_base;
+                proc->mm = old_mm;
+                vmm_destroy_address_space(new_mm);
+                if (interp_file) {
+                    vfs_close(interp_file);
+                }
+                vfs_close(file);
+                return ret;
+            }
+            new_fs = USER_TLS_STUB_VADDR;
+        }
+        proc->fs_base = new_fs;
+    }
+
+    if (loader_exec_debug_enabled && path_contains_ld_linux(filename)) {
         printk(KERN_INFO "exec: final rsp=0x%lx (mod16=%lu) entry=0x%lx at_base=0x%lx\n",
                sp, sp & 0xFULL, user_entry, stack_img.load_bias);
     }
@@ -1130,14 +1688,14 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     /* Switch to new address space */
     mmu_switch(new_mm->pt);
     EXEC_LOG("exec: switching to user mode entry=0x%lx sp=0x%lx\n", user_entry, sp);
-    if (path_contains_ld_linux(filename)) {
+    if (loader_exec_debug_enabled && path_contains_ld_linux(filename)) {
         printk(KERN_INFO "exec: user transition begin entry=0x%lx sp=0x%lx for %s\n",
                user_entry, sp, filename);
     }
     
-    /* Jump to user mode */
-    extern void user_mode_enter(uint64_t entry, uint64_t stack);
-    user_mode_enter(user_entry, sp);
+    /* Jump to user mode (FS base applied in user_mode_enter immediately before iretq). */
+    extern void user_mode_enter(uint64_t entry, uint64_t stack, uint64_t fs_base);
+    user_mode_enter(user_entry, sp, proc ? proc->fs_base : 0);
     
     /* Should never reach here */
     panic("exec: user_mode_enter returned unexpectedly");

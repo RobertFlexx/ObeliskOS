@@ -587,11 +587,18 @@ private int unpackOpk(const char* opkPath, const char* filesTarOut, char* metaOu
     }
 
     ubyte[TAR_BLOCK] hdr = void;
+    /* Some opk toolchains omit the final 0-block(s) from the embedded files.tar,
+     * relying on the outer tar's padding to align the next member. We mirror
+     * that outer padding into filesTarOut so our inner tar parser can reliably
+     * detect end-of-archive. */
+    ubyte[512] zeroBlock = void;
     int gotMeta = 0;
     int gotFilesTar = 0;
     metaOut[0] = 0;
+    int lastWasFilesTar = 0;
 
     while (true) {
+        lastWasFilesTar = 0;
         if (readExact(fd, hdr.ptr, TAR_BLOCK) < 0) {
             close(outfd);
             close(fd);
@@ -630,6 +637,7 @@ private int unpackOpk(const char* opkPath, const char* filesTarOut, char* metaOu
                 rem -= now;
             }
             gotFilesTar = 1;
+            lastWasFilesTar = 1;
         } else {
             // Accept tar metadata members (e.g. PAX headers) and ignore
             // any non-opkg payload entries rather than rejecting package.
@@ -641,10 +649,19 @@ private int unpackOpk(const char* opkPath, const char* filesTarOut, char* metaOu
         }
 
         ulong pad = (TAR_BLOCK - (size % TAR_BLOCK)) % TAR_BLOCK;
-        if (pad > 0 && skipBytes(fd, pad) < 0) {
+        if (pad > 0) {
+            if (lastWasFilesTar) {
+                if (writeExact(outfd, zeroBlock.ptr, pad) < 0) {
+                    close(outfd);
+                    close(fd);
+                    return -1;
+                }
+            }
+            if (skipBytes(fd, pad) < 0) {
             close(outfd);
             close(fd);
             return -1;
+            }
         }
     }
 
@@ -1061,12 +1078,13 @@ private int saveOwners(const char* path, OwnerEntry* owners, int n) {
 private int ensureDbDirs() {
     mkdir("/var".ptr, 493);
     mkdir("/var/cache".ptr, 493);
-    mkdir("/var/cache/opkg".ptr, 493);
+    /* Allow non-root users to write opkg runtime cache/index files. */
+    mkdir("/var/cache/opkg".ptr, 511);
     mkdir("/var/lib".ptr, 493);
-    mkdir("/var/lib/opkg".ptr, 493);
-    mkdir("/var/lib/opkg/installed".ptr, 493);
-    mkdir("/var/lib/opkg/repos".ptr, 493);
-    mkdir("/var/lib/opkg/cache".ptr, 493);
+    mkdir("/var/lib/opkg".ptr, 511);
+    mkdir("/var/lib/opkg/installed".ptr, 511);
+    mkdir("/var/lib/opkg/repos".ptr, 511);
+    mkdir("/var/lib/opkg/cache".ptr, 511);
     return 0;
 }
 
@@ -2045,9 +2063,14 @@ private void installOptionalFirstAvailable(const char** names, int n) {
 private int cmdInstallProfile(const char* profile) {
     if (streq(profile, "xorg".ptr)) {
         const(char)*[3] xorgCandidates = [ "xorg".ptr, "xorg-base".ptr, "xorg-server".ptr ];
+        const(char)*[3] xinitCandidates = [ "xinit".ptr, "xinit-real".ptr, "x11-xinit".ptr ];
         const(char)*[3] desktopCandidates = [ "desktop-base".ptr, "x11-runtime".ptr, "desktop-runtime".ptr ];
         if (installFirstAvailable(xorgCandidates.ptr, xorgCandidates.length) < 0) {
             printf("opkg profile: no xorg package found in cached repositories\n");
+            return 1;
+        }
+        if (installFirstAvailable(xinitCandidates.ptr, xinitCandidates.length) < 0) {
+            printf("opkg profile: xorg profile requires xinit package in repositories\n");
             return 1;
         }
         installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
@@ -2055,40 +2078,60 @@ private int cmdInstallProfile(const char* profile) {
     }
     if (streq(profile, "xfce".ptr)) {
         const(char)*[3] xorgCandidates = [ "xorg".ptr, "xorg-base".ptr, "xorg-server".ptr ];
+        const(char)*[3] xinitCandidates = [ "xinit".ptr, "xinit-real".ptr, "x11-xinit".ptr ];
         const(char)*[3] desktopCandidates = [ "desktop-base".ptr, "x11-runtime".ptr, "desktop-runtime".ptr ];
         const(char)*[3] gtkCandidates = [ "gtk3-runtime".ptr, "gtk-runtime".ptr, "gtk-stack".ptr ];
-        const(char)*[4] xfceCandidates = [ "xfce".ptr, "xfce-runtime".ptr, "xfce4".ptr, "xfce-desktop".ptr ];
+        const(char)*[5] xfceProfileCandidates = [ "xfce-profile".ptr, "xfce".ptr, "xfce4-profile".ptr, "desktop-session-profile".ptr, "xfce-desktop".ptr ];
+        const(char)*[3] xfceRuntimeCandidates = [ "xfce-runtime".ptr, "xfce4".ptr, "xfce-session".ptr ];
         if (installFirstAvailable(xorgCandidates.ptr, xorgCandidates.length) < 0) {
             printf("opkg profile: xfce requires xorg package in repositories\n");
             return 1;
         }
+        if (installFirstAvailable(xinitCandidates.ptr, xinitCandidates.length) < 0) {
+            printf("opkg profile: xfce requires xinit package in repositories\n");
+            return 1;
+        }
         installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
         installOptionalFirstAvailable(gtkCandidates.ptr, gtkCandidates.length);
-        if (installFirstAvailable(xfceCandidates.ptr, xfceCandidates.length) < 0) {
-            printf("opkg profile: no xfce package found in cached repositories\n");
+        if (installFirstAvailable(xfceRuntimeCandidates.ptr, xfceRuntimeCandidates.length) < 0) {
+            printf("opkg profile: xfce requires xfce-runtime package in repositories\n");
+            return 1;
+        }
+        if (installFirstAvailable(xfceProfileCandidates.ptr, xfceProfileCandidates.length) < 0) {
+            printf("opkg profile: no xfce profile package found in cached repositories\n");
             return 1;
         }
         return 0;
     }
     if (streq(profile, "xdm".ptr)) {
         const(char)*[3] xorgCandidates = [ "xorg".ptr, "xorg-base".ptr, "xorg-server".ptr ];
+        const(char)*[3] xinitCandidates = [ "xinit".ptr, "xinit-real".ptr, "x11-xinit".ptr ];
         const(char)*[3] desktopCandidates = [ "desktop-base".ptr, "x11-runtime".ptr, "desktop-runtime".ptr ];
         const(char)*[3] gtkCandidates = [ "gtk3-runtime".ptr, "gtk-runtime".ptr, "gtk-stack".ptr ];
-        const(char)*[4] xfceCandidates = [ "xfce".ptr, "xfce-runtime".ptr, "xfce4".ptr, "xfce-desktop".ptr ];
+        const(char)*[5] xfceProfileCandidates = [ "xfce-profile".ptr, "xfce".ptr, "xfce4-profile".ptr, "desktop-session-profile".ptr, "xfce-desktop".ptr ];
+        const(char)*[3] xfceRuntimeCandidates = [ "xfce-runtime".ptr, "xfce4".ptr, "xfce-session".ptr ];
         const(char)*[4] xdmCandidates = [ "xdm".ptr, "x11-xdm".ptr, "xorg-xdm".ptr, "display-manager".ptr ];
+        const(char)*[4] xdmProfileCandidates = [ "xdm-profile".ptr, "desktop-profile".ptr, "display-manager-profile".ptr, "xdm-meta".ptr ];
         if (installFirstAvailable(xorgCandidates.ptr, xorgCandidates.length) < 0) {
             printf("opkg profile: xdm requires xorg package in repositories\n");
             return 1;
         }
-        installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
-        installOptionalFirstAvailable(gtkCandidates.ptr, gtkCandidates.length);
-        if (installFirstAvailable(xfceCandidates.ptr, xfceCandidates.length) < 0) {
-            printf("opkg profile: xdm requires xfce package in repositories\n");
+        if (installFirstAvailable(xinitCandidates.ptr, xinitCandidates.length) < 0) {
+            printf("opkg profile: xdm requires xinit package in repositories\n");
             return 1;
         }
-        if (installFirstAvailable(xdmCandidates.ptr, xdmCandidates.length) < 0) {
-            printf("opkg profile: no xdm package found; using xdm-compat launcher from xorg profile\n");
+        installOptionalFirstAvailable(desktopCandidates.ptr, desktopCandidates.length);
+        installOptionalFirstAvailable(gtkCandidates.ptr, gtkCandidates.length);
+        if (installFirstAvailable(xfceRuntimeCandidates.ptr, xfceRuntimeCandidates.length) < 0) {
+            printf("opkg profile: xdm requires xfce-runtime package in repositories\n");
+            return 1;
         }
+        installOptionalFirstAvailable(xfceProfileCandidates.ptr, xfceProfileCandidates.length);
+        if (installFirstAvailable(xdmCandidates.ptr, xdmCandidates.length) < 0) {
+            printf("opkg profile: no xdm runtime package found in repositories\n");
+            return 1;
+        }
+        installOptionalFirstAvailable(xdmProfileCandidates.ptr, xdmProfileCandidates.length);
         return 0;
     }
     printf("opkg profile: unknown profile '%s' (supported: xorg, xfce, xdm)\n", profile);

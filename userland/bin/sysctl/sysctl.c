@@ -108,6 +108,9 @@ static const char *const known_sysctls[] = {
     "system.fs.axiomfs.cache_size",
     "system.fs.axiomfs.daemon_timeout",
     "system.fs.axiomfs.policy_enabled",
+    "system.debug.loader_trace_enabled",
+    "system.debug.loader_trace_budget",
+    "system.debug.loader_exec_debug_enabled",
     NULL
 };
 
