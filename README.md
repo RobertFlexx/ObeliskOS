@@ -5,6 +5,8 @@
 
 **Also, i lost my sanity in some of the network drivers, ignore that.**
 
+**Please go to docs directory and see scaffolds, and roadmaps. Contributions needed, and welcomed always!**
+
 **From Axioms, Order.** <- (peak tagline)
 
 Obelisk is a standalone Unix-like OS focused on a practical minimal base system
