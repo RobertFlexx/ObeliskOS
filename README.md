@@ -1,5 +1,10 @@
 # Obelisk OS, the not so minimal, minimal UNIX-like kernel.
 
+
+### Welcome newcomers! this repo has just passed basic testing and now has become public. Feel free to read source code, and jump through docs.
+
+**Also, i lost my sanity in some of the network drivers, ignore that.**
+
 **From Axioms, Order.** <- (peak tagline)
 
 Obelisk is a standalone Unix-like OS focused on a practical minimal base system
