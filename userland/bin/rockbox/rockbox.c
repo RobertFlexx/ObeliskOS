@@ -3061,15 +3061,15 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
                 }
                 if (b == 'C') { /* Right */
                     if (cursor < len) {
-                        write_ch(line[cursor]);
                         cursor++;
+                        redraw_line(prompt, line, cursor);
                     }
                     continue;
                 }
                 if (b == 'D') { /* Left */
                     if (cursor > 0) {
-                        write_ch('\b');
                         cursor--;
+                        redraw_line(prompt, line, cursor);
                     }
                     continue;
                 }

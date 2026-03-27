@@ -487,7 +487,7 @@ static uint64_t syscall_counts[NR_SYSCALLS];
  * Disabled by default to keep interactive and command execution responsive. */
 int loader_trace_enabled = 0;       /* 0=off, 1=on */
 int loader_trace_budget = 0;       /* max syscall trace lines */
-int loader_exec_debug_enabled = 0; /* extra exec/loader printk instrumentation */
+int loader_exec_debug_enabled = 1; /* extra exec/loader printk instrumentation */
 static int tty_kd_mode = KD_TEXT;
 static int tty_kb_mode = K_XLATE;
 
