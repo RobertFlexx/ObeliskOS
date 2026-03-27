@@ -30,7 +30,7 @@
 **Please go to docs directory and see scaffolds, and roadmaps. Contributions needed, and welcomed always!**
 
 Obelisk is a standalone Unix-like OS focused on a practical minimal base system
-that is CLI-first and desktop-capable.
+that is CLI-first and desktop-capable. (in the future, desktop support in works)
 
 > Repo: [https://github.com/RobertFlexx/ObeliskOS](https://github.com/RobertFlexx/ObeliskOS)
 
