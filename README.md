@@ -1,5 +1,5 @@
 # Obelisk OS, the not so minimal, minimal UNIX-like kernel.
-
+# Minimalist and educational in nature, born from nightmares.
 
 ### Welcome newcomers! this repo has just passed basic testing and now has become public. Feel free to read source code, and jump through docs.
 
