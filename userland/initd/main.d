@@ -48,6 +48,9 @@ int getpid();
 int _exit(int status);
 int setuid(int uid);
 int setgid(int gid);
+int chdir(const char* path);
+int chown(const char* path, int owner, int group);
+int chmod(const char* path, uint mode);
 
 struct Config {
     char[64] profile;
@@ -633,6 +636,31 @@ private void runServices(const Config* cfg) {
     }
 }
 
+private void prepareInteractiveSession(uid_t uid, gid_t gid) {
+    /*
+     * Still running as root: fix ownership/permissions that the build may not
+     * have been able to set (setuid root bits require root-owned inodes).
+     */
+    if (uid != 0) {
+        chown("/home/obelisk".ptr, cast(int)uid, cast(int)gid);
+    }
+    chown("/bin/su".ptr, 0, 0);
+    chown("/bin/sudo".ptr, 0, 0);
+    /* 04755 */
+    chmod("/bin/su".ptr, 2541u);
+    chmod("/bin/sudo".ptr, 2541u);
+}
+
+private void chdirSessionHome(uid_t uid) {
+    if (uid == 0) {
+        chdir("/".ptr);
+        return;
+    }
+    if (chdir("/home/obelisk".ptr) < 0) {
+        chdir("/tmp".ptr);
+    }
+}
+
 private void launchInteractive(const Config* cfg) {
     BootState state = void;
     char[192] logLine = void;
@@ -734,8 +762,10 @@ private void launchInteractive(const Config* cfg) {
         saveBootState(&state);
     }
 
+    prepareInteractiveSession(uid, gid);
     setgid(cast(int)gid);
     setuid(cast(int)uid);
+    chdirSessionHome(uid);
     char*[3] argv = [ cast(char*)cfg.shellArg0.ptr, cast(char*)cfg.shellArg1.ptr, null ];
     if (execve(cfg.shellPath.ptr, argv.ptr, envp.ptr) < 0) {
         statusLine(C_RED, "[!!]".ptr, "primary shell failed, trying /sbin/init-legacy".ptr);

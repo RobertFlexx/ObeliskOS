@@ -8,6 +8,7 @@
 #include <arch/cpu.h>
 #include <sysctl/sysctl.h>
 #include <mm/pmm.h>
+#include <proc/process.h>
 #include <proc/scheduler.h>
 
 /* ==========================================================================
@@ -175,6 +176,67 @@ static int sysctl_input_mice_drops_handler(struct sysctl_node *node, void *buf,
     return 0;
 }
 
+static void proc_list_append_u32(char *buf, size_t cap, size_t *pos, uint32_t v) {
+    char tmp[12];
+    int i = 0;
+    if (v == 0) {
+        tmp[i++] = '0';
+    } else {
+        while (v > 0 && i < (int)sizeof(tmp)) {
+            tmp[i++] = (char)('0' + (v % 10u));
+            v /= 10u;
+        }
+    }
+    while (i > 0 && *pos + 1 < cap) {
+        buf[(*pos)++] = tmp[--i];
+    }
+}
+
+static int sysctl_proc_list_handler(struct sysctl_node *node, void *buf, size_t *len,
+                                    loff_t *ppos, bool write) {
+    char *out = buf;
+    size_t cap;
+    size_t pos = 0;
+    pid_t i;
+    struct process *p;
+
+    (void)node;
+    (void)ppos;
+    if (write) {
+        return -EPERM;
+    }
+    if (!out || !len) {
+        return -EINVAL;
+    }
+    cap = *len;
+    if (cap < 32) {
+        return -EINVAL;
+    }
+    for (i = 1; i < PID_MAX; i++) {
+        p = pid_table[i];
+        if (!p) {
+            continue;
+        }
+        proc_list_append_u32(out, cap, &pos, (uint32_t)p->pid);
+        if (pos + 1 >= cap) {
+            return -ENOMEM;
+        }
+        out[pos++] = ' ';
+        {
+            size_t j = 0;
+            while (j < sizeof(p->comm) && p->comm[j] && pos + 1 < cap) {
+                out[pos++] = p->comm[j++];
+            }
+        }
+        if (pos + 1 >= cap) {
+            return -ENOMEM;
+        }
+        out[pos++] = '\n';
+    }
+    *len = pos;
+    return 0;
+}
+
 static int sysctl_hostname_handler(struct sysctl_node *node, void *buf,
                                    size_t *len, loff_t *ppos, bool write) {
     (void)node; (void)ppos;
@@ -215,6 +277,7 @@ void sysctl_register_system_nodes(void) {
                            NULL, SYSCTL_RO);
     sysctl_register_handler("system.memory.free", sysctl_mem_free_handler,
                            NULL, SYSCTL_RO);
+    sysctl_register_handler("system.proc.list", sysctl_proc_list_handler, NULL, SYSCTL_RO);
     sysctl_register_ulong("system.memory.cached", &mem_cached, SYSCTL_RO);
     
     /* Kernel nodes */

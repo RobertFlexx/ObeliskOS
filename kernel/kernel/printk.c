@@ -8,7 +8,7 @@
 #include <obelisk/types.h>
 #include <obelisk/kernel.h>
 #include <obelisk/bootinfo.h>
-#include <obelisk/zig_mul.h>
+#include <obelisk/zig_safe_arith.h>
 #include <mm/vmm.h>
 #include <stdarg.h>
 
@@ -531,11 +531,23 @@ void console_fb_init(void) {
     if (!fb || !fb->available || fb->width == 0 || fb->height == 0 || fb->pitch == 0) return;
     if (!(fb->bpp == 24 || fb->bpp == 32)) return;
 
-    fb_bytes = (uint64_t)fb->pitch * (uint64_t)fb->height;
-    if (fb_bytes == 0 || fb_bytes > (uint64_t)SIZE_MAX) return;
+    if (zig_u64_mul_ok((uint64_t)fb->pitch, (uint64_t)fb->height, &fb_bytes) != 0 ||
+        fb_bytes == 0 || fb_bytes > (uint64_t)SIZE_MAX) {
+        return;
+    }
 
     map_phys = ALIGN_DOWN(fb->phys_addr, PAGE_SIZE);
-    map_size = ALIGN_UP((fb->phys_addr - map_phys) + fb_bytes, PAGE_SIZE);
+    {
+        uint64_t span;
+
+        if (zig_u64_add_ok(fb->phys_addr - map_phys, fb_bytes, &span) != 0) {
+            return;
+        }
+        if (zig_u64_align_up_pow2_ok(span, PAGE_SIZE, &map_size) != 0 ||
+            map_size > (uint64_t)SIZE_MAX) {
+            return;
+        }
+    }
     virt_base = (uint64_t)PHYS_TO_VIRT(map_phys);
     ret = mmu_map_range(mmu_get_kernel_pt(), virt_base, map_phys, (size_t)map_size, PTE_WRITABLE | PTE_NOCACHE);
     if (ret < 0) return;

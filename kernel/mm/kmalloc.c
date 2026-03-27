@@ -10,6 +10,7 @@
 #include <mm/kmalloc.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
+#include <obelisk/zig_safe_arith.h>
 
 /* Size classes for general-purpose allocation */
 static const size_t size_classes[] = {
@@ -453,18 +454,39 @@ void *kmalloc(size_t size) {
     }
     
     /* Large allocation - use page allocator directly */
-    size_t pages = ALIGN_UP(size + sizeof(size_t), PAGE_SIZE) / PAGE_SIZE;
-    uint64_t phys = pmm_alloc_pages(pages);
-    if (!phys) {
-        return NULL;
+    {
+        uint64_t need_u64;
+        size_t aligned;
+        size_t pages;
+
+        if (zig_u64_add_ok((uint64_t)size, (uint64_t)sizeof(size_t), &need_u64) != 0 ||
+            need_u64 > (uint64_t)SIZE_MAX) {
+            return NULL;
+        }
+        {
+            uint64_t aligned64;
+
+            if (zig_u64_align_up_pow2_ok(need_u64, PAGE_SIZE, &aligned64) != 0 ||
+                aligned64 > (uint64_t)SIZE_MAX) {
+                return NULL;
+            }
+            aligned = (size_t)aligned64;
+        }
+        pages = aligned / PAGE_SIZE;
+        uint64_t phys = pmm_alloc_pages(pages);
+        if (!phys) {
+            return NULL;
+        }
+
+        {
+            void *ptr = PHYS_TO_VIRT(phys);
+
+            /* Store size for kfree */
+            *(size_t *)ptr = size;
+
+            return (uint8_t *)ptr + sizeof(size_t);
+        }
     }
-    
-    void *ptr = PHYS_TO_VIRT(phys);
-    
-    /* Store size for kfree */
-    *(size_t *)ptr = size;
-    
-    return (uint8_t *)ptr + sizeof(size_t);
 }
 
 /* Allocate and zero memory */
@@ -478,14 +500,16 @@ void *kzalloc(size_t size) {
 
 /* Allocate array */
 void *kcalloc(size_t n, size_t size) {
-    size_t total = n * size;
-    
-    /* Check for overflow */
-    if (size != 0 && total / size != n) {
+    uint64_t total;
+
+    if (zig_u64_mul_ok((uint64_t)n, (uint64_t)size, &total) != 0) {
         return NULL;
     }
-    
-    return kzalloc(total);
+    if (total > (uint64_t)SIZE_MAX) {
+        return NULL;
+    }
+
+    return kzalloc((size_t)total);
 }
 
 /* Reallocate memory */

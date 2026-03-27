@@ -261,9 +261,10 @@
 #define SYS_OBELISK_POLICY      401     /* Policy query (internal) */
 #define SYS_OBELISK_AXIOM_QUERY 402     /* Direct axiom query (privileged) */
 #define SYS_OBELISK_CACHE_FLUSH 403     /* Flush policy cache */
+#define SYS_OBELISK_PROC_LIST   404     /* Process list snapshot (text, see sysctl system.proc.list) */
 
 /* Maximum system call number */
-#define NR_SYSCALLS         404
+#define NR_SYSCALLS         405
 
 /* System call register convention (x86_64):
  *

@@ -72,6 +72,8 @@ context_switch:
     fxrstor 64(%rsi)
 
 .skip_fpu_restore:
+    /* SysV ABI requires DF=0 before calling/returning through C paths. */
+    cld
     /* Resume by returning through the restored call frame.
      * %rsp points to the saved return address in that task's stack. */
     ret
@@ -95,6 +97,8 @@ context_switch_initial:
     
     /* Restore stack pointer */
     movq 48(%rdi), %rsp
+
+    cld
     
     /* Jump to entry point */
     movq 56(%rdi), %rax
@@ -132,6 +136,7 @@ fork_return:
     popq %rax
 
     addq $16, %rsp                  /* drop vector + error code */
+    cld
     iretq
 
 /*
@@ -196,7 +201,8 @@ user_mode_enter:
     xorq %r13, %r13
     xorq %r14, %r14
     xorq %r15, %r15
-    
+
+    cld
     /* Return to user mode */
     iretq
 

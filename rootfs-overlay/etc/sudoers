@@ -1,3 +1,5 @@
 # Minimal sudoers for Obelisk Phase 2
 root ALL=(ALL) ALL
 obelisk ALL=(ALL) ALL
+# Later lines override policy bits for the same user; needed for non-interactive smoke (mount/umount).
+obelisk ALL=(ALL) NOPASSWD: ALL

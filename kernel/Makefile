@@ -131,7 +131,8 @@ ZIG_SOURCES := \
     support/elf_validate.zig \
     support/initramfs_scan.zig \
     support/path_validate.zig \
-    support/mul_overflow.zig
+    support/safe_arith.zig \
+    support/exec_string.zig
 
 ASM_SOURCES := \
     $(ARCH_DIR)/boot/boot.S \

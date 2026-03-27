@@ -61,8 +61,24 @@ LOADER_ELF_PROBE := $(OUTDIR)/loader-elf-probe
 OBWM := $(OUTDIR)/obwm
 OTERM := $(OUTDIR)/oterm
 OFILES := $(OUTDIR)/ofiles
+USERADD := $(OUTDIR)/useradd
+USERMOD := $(OUTDIR)/usermod
+USERDEL := $(OUTDIR)/userdel
+PASSWD := $(OUTDIR)/passwd
+GROUPS := $(OUTDIR)/groups
+LOGIN := $(OUTDIR)/login
+WHICH := $(OUTDIR)/which
+PS := $(OUTDIR)/ps
+KILL := $(OUTDIR)/kill
+DF := $(OUTDIR)/df
+DU := $(OUTDIR)/du
+MOUNT := $(OUTDIR)/mount
+UMOUNT := $(OUTDIR)/umount
 
-PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED) $(RUNTIME_ABI_PROBE) $(LOADER_ELF_PROBE) $(OBWM) $(OTERM) $(OFILES)
+PASSWD_DB_OBJ := $(BUILDDIR)/lib/passwd_db.o
+ACCOUNT_COMMON_OBJ := $(BUILDDIR)/lib/account_common.o
+
+PROGRAMS := $(INIT) $(OBELISKD) $(SYSCTL) $(INSTALLER) $(INSTALLER_TUI) $(ROCKBOX) $(IDCPP) $(STATCPP) $(CREDPROBE) $(SETUIDCHECK) $(EXECPROBE) $(TRAVERSEPROBE) $(MKSTATPROBE) $(OPKG) $(DPROBE) $(PING) $(NSLOOKUP) $(CURL) $(FETCH) $(FBINFO) $(XORG_SMOKE) $(DESKTOP_SESSION) $(OED) $(RUNTIME_ABI_PROBE) $(LOADER_ELF_PROBE) $(OBWM) $(OTERM) $(OFILES) $(USERADD) $(USERMOD) $(USERDEL) $(PASSWD) $(GROUPS) $(LOGIN) $(WHICH) $(PS) $(KILL) $(DF) $(DU) $(MOUNT) $(UMOUNT)
 
 CFLAGS := \
 	-ffreestanding \
@@ -231,6 +247,68 @@ $(OTERM): $(BUILDDIR)/bin/oterm/oterm.o $(NATIVE_GUI_OBJS) $(LIBC) | $(OUTDIR)
 $(OFILES): $(BUILDDIR)/bin/ofiles/ofiles.o $(NATIVE_GUI_OBJS) $(LIBC) | $(OUTDIR)
 	@echo "  LD      $@"
 	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/ofiles/ofiles.o $(NATIVE_GUI_OBJS) $(LIBC)
+
+$(USERADD): $(BUILDDIR)/bin/useradd/useradd.o $(PASSWD_DB_OBJ) $(ACCOUNT_COMMON_OBJ) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/useradd/useradd.o $(PASSWD_DB_OBJ) $(ACCOUNT_COMMON_OBJ) $(LIBC)
+
+$(USERMOD): $(BUILDDIR)/bin/usermod/usermod.o $(PASSWD_DB_OBJ) $(ACCOUNT_COMMON_OBJ) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/usermod/usermod.o $(PASSWD_DB_OBJ) $(ACCOUNT_COMMON_OBJ) $(LIBC)
+
+$(USERDEL): $(BUILDDIR)/bin/userdel/userdel.o $(PASSWD_DB_OBJ) $(ACCOUNT_COMMON_OBJ) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/userdel/userdel.o $(PASSWD_DB_OBJ) $(ACCOUNT_COMMON_OBJ) $(LIBC)
+
+$(PASSWD): $(BUILDDIR)/bin/passwd/passwd.o $(PASSWD_DB_OBJ) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/passwd/passwd.o $(PASSWD_DB_OBJ) $(LIBC)
+
+$(GROUPS): $(BUILDDIR)/bin/groups/groups.o $(PASSWD_DB_OBJ) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/groups/groups.o $(PASSWD_DB_OBJ) $(LIBC)
+
+$(LOGIN): $(BUILDDIR)/bin/login/login.o $(PASSWD_DB_OBJ) $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/login/login.o $(PASSWD_DB_OBJ) $(LIBC)
+
+$(WHICH): $(BUILDDIR)/bin/which/which.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/which/which.o $(LIBC)
+
+$(PS): $(BUILDDIR)/bin/ps/ps.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/ps/ps.o $(LIBC)
+
+$(KILL): $(BUILDDIR)/bin/kill/kill.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/kill/kill.o $(LIBC)
+
+$(DF): $(BUILDDIR)/bin/df/df.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/df/df.o $(LIBC)
+
+$(DU): $(BUILDDIR)/bin/du/du.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/du/du.o $(LIBC)
+
+$(MOUNT): $(BUILDDIR)/bin/mount/mount.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/mount/mount.o $(LIBC)
+
+$(UMOUNT): $(BUILDDIR)/bin/umount/umount.o $(LIBC) | $(OUTDIR)
+	@echo "  LD      $@"
+	@$(CC) $(LDFLAGS) -o $@ $(BUILDDIR)/bin/umount/umount.o $(LIBC)
+
+$(PASSWD_DB_OBJ): lib/passwd_db.c lib/passwd_db.h | $(BUILDDIR)
+	@mkdir -p $(dir $@)
+	@echo "  CC      $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(ACCOUNT_COMMON_OBJ): lib/account_common.c lib/account_common.h | $(BUILDDIR)
+	@mkdir -p $(dir $@)
+	@echo "  CC      $<"
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
 	@echo "  CLEAN"

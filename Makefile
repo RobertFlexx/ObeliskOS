@@ -103,7 +103,7 @@ rootfs: userland
 	@cp $(USERLAND_DIR)/axiomd/policy/access.pro $(ROOTFS_DIR)/etc/axiomd/policy/access.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/allocation.pro $(ROOTFS_DIR)/etc/axiomd/policy/allocation.pro
 	@cp $(USERLAND_DIR)/axiomd/policy/inheritance.pro $(ROOTFS_DIR)/etc/axiomd/policy/inheritance.pro
-	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session obwm oterm ofiles oed runtime-abi-probe loader-elf-probe ls cat cp mv rm mkdir ln chmod chown sync mount umount dmesg ps kill grep awk sed tar find time; do \
+	@for tool in rockbox osh sh su sudo idcpp statcpp credprobe setuidcheck execprobe traverseprobe mkstatprobe opkg dprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session obwm oterm ofiles oed runtime-abi-probe loader-elf-probe useradd usermod userdel passwd groups login which ps kill df du mount umount ls cat cp mv rm mkdir ln chmod chown sync dmesg grep awk sed tar find time; do \
 		if [ -f "$(USERLAND_OUT_DIR)/$$tool" ]; then \
 			cp "$(USERLAND_OUT_DIR)/$$tool" "$(ROOTFS_DIR)/bin/$$tool"; \
 		fi; \
@@ -120,7 +120,7 @@ rootfs: userland
 	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ] && [ ! -f "$(ROOTFS_DIR)/bin/sudo" ]; then \
 		cp "$(ROOTFS_DIR)/bin/rockbox" "$(ROOTFS_DIR)/bin/sudo"; \
 	fi
-	@# Make su/sudo setuid-root so exec-time privilege switching works.
+	@# Initial setuid bits (obeliskd also chown+chmod at boot — build tree may lack root ownership).
 	@if [ -f "$(ROOTFS_DIR)/bin/su" ]; then chmod 4755 "$(ROOTFS_DIR)/bin/su"; fi
 	@if [ -f "$(ROOTFS_DIR)/bin/sudo" ]; then chmod 4755 "$(ROOTFS_DIR)/bin/sudo"; fi
 	@if [ -f "$(ROOTFS_DIR)/bin/rockbox" ]; then \
@@ -130,7 +130,7 @@ rootfs: userland
 			fi; \
 		done; \
 	fi
-	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date echo head tail wc cut true false env printenv stat opkg dprobe execprobe traverseprobe mkstatprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session obwm oterm ofiles oed runtime-abi-probe loader-elf-probe find time; do \
+	@for app in osh sh rockbox ls cat cp mv rm mkdir rmdir ln chmod chown pwd whoami id users uname date echo head tail wc cut true false env printenv stat opkg dprobe execprobe traverseprobe mkstatprobe ping nslookup curl fetch fbinfo xorg-smoke desktop-session obwm oterm ofiles oed runtime-abi-probe loader-elf-probe useradd usermod userdel passwd groups login which ps kill df du mount umount find time; do \
 		if [ -f "$(ROOTFS_DIR)/bin/$$app" ]; then \
 			cp "$(ROOTFS_DIR)/bin/$$app" "$(ROOTFS_DIR)/usr/bin/$$app"; \
 		fi; \
@@ -139,6 +139,9 @@ rootfs: userland
 		echo "Applying rootfs overlay from $(ROOTFS_OVERLAY_DIR)..."; \
 		cp -a "$(ROOTFS_OVERLAY_DIR)/." "$(ROOTFS_DIR)/"; \
 	fi
+	@# Overlay may replace bin/su or bin/sudo; restore setuid bits for the image.
+	@if [ -f "$(ROOTFS_DIR)/bin/su" ]; then chmod 4755 "$(ROOTFS_DIR)/bin/su"; fi
+	@if [ -f "$(ROOTFS_DIR)/bin/sudo" ]; then chmod 4755 "$(ROOTFS_DIR)/bin/sudo"; fi
 	@# POSIX: sudoers must not be world-writable; keep root-owned.
 	@if [ -f "$(ROOTFS_DIR)/etc/sudoers" ]; then chmod 0440 "$(ROOTFS_DIR)/etc/sudoers"; fi
 	@if [ "$(DESKTOP_MODE)" != "tty" ]; then \
@@ -474,7 +477,7 @@ help:
 	@echo "  diag-symbolicate - Map panic addresses to symbols (LOG=<path>)"
 	@echo "  diag-triage      - Capture + extract + symbolicate in one step"
 	@echo "  diag-triage-repro - Repro capture + extract + symbolicate in one step"
-	@echo "  validate-regression - Run boot/userland smoke regression suite"
+	@echo "  validate-regression - Run boot/userland smoke (incl. devfs mount/umount)"
 	@echo "  demo-smoke   - Run a short guided demo command sequence"
 	@echo "  clean      - Remove all build artifacts"
 	@echo "  help       - Show this help message"

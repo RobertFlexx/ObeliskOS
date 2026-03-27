@@ -19,6 +19,8 @@
 #include <mm/pmm.h>
 #include <obelisk/limits.h>
 #include <obelisk/zig_path.h>
+#include <obelisk/zig_safe_arith.h>
+#include <obelisk/zig_exec_string.h>
 #include <obelisk/power.h>
 #include <sysctl/sysctl.h>
 #include <net/net.h>
@@ -95,6 +97,9 @@ static int64_t sys_kill(pid_t pid, int sig);
 static int64_t sys_uname(void *buf);
 static int64_t sys_reboot(int magic1, int magic2, unsigned int cmd, void *arg);
 static int64_t sys_statfs(const char *pathname, void *buf);
+static int64_t sys_mount(char *source, char *target, char *fstype, unsigned long flags, void *data);
+static int64_t sys_umount2(const char *target, int flags);
+static int64_t sys_obelisk_proc_list(void *ubuf, size_t *ulenp);
 static int64_t sys_sysctl(void *args);
 static int64_t sys_socket(int domain, int type, int protocol);
 static int64_t sys_connect(int sockfd, const void *addr, int addrlen);
@@ -505,21 +510,24 @@ static int kernel_user_cstring_ok(const char *kstr, size_t cap) {
 }
 
 static int copy_user_cstring(const char *user_ptr, char *kernel_buf, size_t cap) {
+    int64_t nul_at;
+
     if (!user_ptr || !kernel_buf || cap == 0) {
         return -EFAULT;
     }
-    for (size_t i = 0; i < cap; i++) {
-        char c = '\0';
-        if (vmm_copy_from_user(&c, (const void *)((uintptr_t)user_ptr + i), 1) < 0) {
-            return -EFAULT;
-        }
-        kernel_buf[i] = c;
-        if (c == '\0') {
-            return 0;
-        }
+    /*
+     * One verified user->kernel copy (see vmm_copy_from_user), then find NUL.
+     * Replaces per-byte copy (syscall hot path for paths, argv, env).
+     */
+    if (vmm_copy_from_user(kernel_buf, user_ptr, cap) < 0) {
+        return -EFAULT;
     }
-    kernel_buf[cap - 1] = '\0';
-    return -ENAMETOOLONG;
+    nul_at = zig_cstring_first_nul_index(kernel_buf, (uint64_t)cap);
+    if (nul_at < 0) {
+        kernel_buf[cap - 1] = '\0';
+        return -ENAMETOOLONG;
+    }
+    return 0;
 }
 
 static void free_exec_string_vector(char **vec) {
@@ -575,6 +583,10 @@ static int copy_user_string_vector(char *const user_vec[], char ***kernel_vec_ou
         if (ret < 0) {
             free_exec_string_vector(kernel_vec);
             return ret;
+        }
+        if (zig_kernel_exec_line_ok(kernel_vec[i], (uint64_t)EXEC_USER_MAX_STRLEN) != 0) {
+            free_exec_string_vector(kernel_vec);
+            return -EINVAL;
         }
     }
 
@@ -694,8 +706,11 @@ static void syscall_table_init(void) {
     syscall_table[SYS_KILL] = (syscall_fn_t)sys_kill;
     syscall_table[SYS_UNAME] = (syscall_fn_t)sys_uname;
     syscall_table[SYS_STATFS] = (syscall_fn_t)sys_statfs;
+    syscall_table[SYS_MOUNT] = (syscall_fn_t)sys_mount;
+    syscall_table[SYS_UMOUNT2] = (syscall_fn_t)sys_umount2;
     syscall_table[SYS_REBOOT] = (syscall_fn_t)sys_reboot;
     syscall_table[SYS_OBELISK_SYSCTL] = (syscall_fn_t)sys_sysctl;
+    syscall_table[SYS_OBELISK_PROC_LIST] = (syscall_fn_t)sys_obelisk_proc_list;
     /*
      * Networking ABI placeholders:
      * syscalls are explicitly wired so userspace gets deterministic
@@ -1128,8 +1143,17 @@ static int64_t sys_pread64(int fd, void *buf, size_t count, loff_t offset) {
     uint8_t kbuf[256];
     size_t done = 0;
 
-    if (!buf) {
+    if (offset < 0) {
+        return -EINVAL;
+    }
+    if (!buf && count != 0) {
         return -EFAULT;
+    }
+    if (count != 0) {
+        uint64_t sum_end;
+        if (zig_u64_add_ok((uint64_t)offset, (uint64_t)count, &sum_end) != 0) {
+            return -EOVERFLOW;
+        }
     }
 
     if (proc && proc->files && fd >= 0 && fd < (int)proc->files->max_fds) {
@@ -1175,7 +1199,8 @@ static int64_t sys_write(int fd, const void *buf, size_t count) {
     uint8_t kbuf[256];
     size_t done = 0;
 
-    if (!buf) {
+    /* POSIX/Linux: write(fd, NULL, 0) returns 0 without faulting. */
+    if (!buf && count != 0) {
         return -EFAULT;
     }
 
@@ -1245,6 +1270,7 @@ static int64_t sys_writev(int fd, const void *iov, int iovcnt) {
     const struct iovec *uvec = (const struct iovec *)iov;
     struct iovec kv;
     int64_t total = 0;
+    uint64_t iov_sum = 0;
 
     if (!uvec || iovcnt < 0) {
         return -EINVAL;
@@ -1262,6 +1288,12 @@ static int64_t sys_writev(int fd, const void *iov, int iovcnt) {
         }
         if (kv.iov_len == 0) {
             continue;
+        }
+        if (zig_u64_add_ok(iov_sum, (uint64_t)kv.iov_len, &iov_sum) != 0) {
+            return -EINVAL;
+        }
+        if (zig_user_copy_len_ok(iov_sum) != 0) {
+            return -EINVAL;
         }
         int64_t n = sys_write(fd, kv.iov_base, kv.iov_len);
         if (n < 0) {
@@ -1433,20 +1465,150 @@ static int64_t sys_statfs(const char *pathname, void *buf) {
     return 0;
 }
 
-static int64_t sys_access(const char *pathname, int mode) {
-    char resolved[PATH_MAX];
-    struct dentry *dentry;
-    int ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
+static bool syscall_require_fsuid_root(void) {
+    struct process *p = current;
+    return p && p->cred && p->cred->fsuid == 0;
+}
+
+static int64_t sys_mount(char *source, char *target, char *fstype, unsigned long flags, void *data) {
+    char ksrc[PATH_MAX];
+    char ktgt[PATH_MAX];
+    char kfs[64];
+    const char *psrc = NULL;
+    int ret;
+
+    (void)data;
+    if (!syscall_require_fsuid_root()) {
+        return -EPERM;
+    }
+    if (!target || !fstype) {
+        return -EINVAL;
+    }
+    memset(ksrc, 0, sizeof(ksrc));
+    memset(ktgt, 0, sizeof(ktgt));
+    memset(kfs, 0, sizeof(kfs));
+    if (source) {
+        ret = copy_user_cstring(source, ksrc, sizeof(ksrc));
+        if (ret < 0) {
+            return ret;
+        }
+        ret = kernel_user_cstring_ok(ksrc, sizeof(ksrc));
+        if (ret < 0) {
+            return ret;
+        }
+        psrc = ksrc;
+    }
+    ret = copy_user_cstring(target, ktgt, sizeof(ktgt));
     if (ret < 0) {
         return ret;
     }
-    (void)mode;
+    ret = kernel_user_cstring_ok(ktgt, sizeof(ktgt));
+    if (ret < 0) {
+        return ret;
+    }
+    ret = copy_user_cstring(fstype, kfs, sizeof(kfs));
+    if (ret < 0) {
+        return ret;
+    }
+    ret = kernel_user_cstring_ok(kfs, sizeof(kfs));
+    if (ret < 0) {
+        return ret;
+    }
+    return vfs_mount(psrc, ktgt, kfs, flags, NULL);
+}
+
+static int64_t sys_umount2(const char *target, int flags) {
+    char ktgt[PATH_MAX];
+    int ret;
+
+    if (!syscall_require_fsuid_root()) {
+        return -EPERM;
+    }
+    if (!target) {
+        return -EINVAL;
+    }
+    ret = copy_user_cstring(target, ktgt, sizeof(ktgt));
+    if (ret < 0) {
+        return ret;
+    }
+    ret = kernel_user_cstring_ok(ktgt, sizeof(ktgt));
+    if (ret < 0) {
+        return ret;
+    }
+    return vfs_umount(ktgt, flags);
+}
+
+static int64_t sys_obelisk_proc_list(void *ubuf, size_t *ulenp) {
+    size_t cap;
+    size_t out;
+    char *kbuf;
+    int ret;
+
+    if (!ubuf || !ulenp) {
+        return -EFAULT;
+    }
+    if (vmm_copy_from_user(&cap, ulenp, sizeof(cap)) < 0) {
+        return -EFAULT;
+    }
+    if (cap < 64 || cap > 65536) {
+        return -EINVAL;
+    }
+    kbuf = kmalloc(cap);
+    if (!kbuf) {
+        return -ENOMEM;
+    }
+    out = cap;
+    ret = sysctl_read("system.proc.list", kbuf, &out);
+    if (ret < 0) {
+        kfree(kbuf);
+        return ret;
+    }
+    if (vmm_copy_to_user(ubuf, kbuf, out) < 0) {
+        kfree(kbuf);
+        return -EFAULT;
+    }
+    if (vmm_copy_to_user(ulenp, &out, sizeof(out)) < 0) {
+        kfree(kbuf);
+        return -EFAULT;
+    }
+    kfree(kbuf);
+    return 0;
+}
+
+static int64_t sys_access(const char *pathname, int mode) {
+    char resolved[PATH_MAX];
+    struct dentry *dentry;
+    int ret;
+    int mask = 0;
+
+    ret = resolve_user_path_checked(pathname, resolved, sizeof(resolved));
+    if (ret < 0) {
+        return ret;
+    }
     dentry = vfs_lookup(resolved);
-    if (!dentry) {
+    if (!dentry || !dentry->d_inode) {
+        if (dentry) {
+            dput(dentry);
+        }
         return -ENOENT;
     }
+    /* F_OK (0): existence only. R_OK/W_OK/X_OK match Linux bitmask → MAY_* in inode.h */
+    if (mode == F_OK) {
+        dput(dentry);
+        return 0;
+    }
+    if (mode & R_OK) {
+        mask |= MAY_READ;
+    }
+    if (mode & W_OK) {
+        mask |= MAY_WRITE;
+    }
+    if (mode & X_OK) {
+        mask |= MAY_EXEC;
+    }
+    ret = generic_permission(dentry->d_inode, mask);
     dput(dentry);
-    return 0;
+    return ret;
 }
 
 static int64_t sys_lseek(int fd, off_t offset, int whence) {
@@ -2589,9 +2751,13 @@ static int64_t sys_poll(void *fds, uint64_t nfds, int timeout) {
             if (vmm_copy_from_user(&pf, (const void *)((uintptr_t)fds + (i * sizeof(pf))), sizeof(pf)) < 0) {
                 return -EFAULT;
             }
-            pf.revents = 0;
-            if (poll_check_single_fd(pf.fd, pf.events, &pf.revents)) {
-                ready++;
+            {
+                int16_t revents_out = 0;
+
+                if (poll_check_single_fd(pf.fd, pf.events, &revents_out)) {
+                    ready++;
+                }
+                pf.revents = revents_out;
             }
             if (vmm_copy_to_user((void *)((uintptr_t)fds + (i * sizeof(pf))), &pf, sizeof(pf)) < 0) {
                 return -EFAULT;
@@ -3287,7 +3453,10 @@ static int64_t sys_sendto(int sockfd, const void *buf, size_t len, int flags, co
     if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
     }
-    if (!buf || len == 0 || len > sizeof(payload)) {
+    if (len == 0) {
+        return 0;
+    }
+    if (!buf || len > sizeof(payload)) {
         return -EMSGSIZE;
     }
     if (vmm_copy_from_user(payload, buf, len) < 0) {
@@ -3414,8 +3583,11 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
         (void)flags;
         (void)src_addr;
         (void)addrlen;
-        if (!buf || len == 0) {
-            return -EINVAL;
+        if (len == 0) {
+            return 0;
+        }
+        if (!buf) {
+            return -EFAULT;
         }
         if (len > sizeof(kbuf)) {
             len = sizeof(kbuf);
@@ -3438,8 +3610,11 @@ static int64_t sys_recvfrom(int sockfd, void *buf, size_t len, int flags, void *
     if (sock->domain != AF_INET) {
         return -EAFNOSUPPORT;
     }
-    if (!buf || len == 0) {
-        return -EINVAL;
+    if (len == 0) {
+        return 0;
+    }
+    if (!buf) {
+        return -EFAULT;
     }
 
     if (sock->type == SOCK_RAW && sock->protocol == IPPROTO_ICMP) {

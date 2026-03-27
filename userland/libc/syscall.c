@@ -226,6 +226,16 @@ int unlink(const char *pathname) {
     return ob_syscall1(87, (long)pathname);
 }
 
+/* Change owner/group (root only in kernel) */
+int chown(const char *pathname, int owner, int group) {
+    return ob_syscall3(92, (long)pathname, owner, group);
+}
+
+/* Change mode (owner or root in kernel) */
+int chmod(const char *pathname, unsigned int mode) {
+    return ob_syscall2(90, (long)pathname, (long)mode);
+}
+
 /* Rename file */
 int rename(const char *oldpath, const char *newpath) {
     return ob_syscall2(82, (long)oldpath, (long)newpath);
@@ -294,6 +304,33 @@ int kill(int pid, int sig) {
 /* sysctl */
 int sysctl(void *args) {
     return ob_syscall1(400, (long)args);
+}
+
+/* Test path accessibility (mode: F_OK=0, X_OK=1, W_OK=2, R_OK=4) */
+int access(const char *pathname, int mode) {
+    return ob_syscall2(21, (long)pathname, mode);
+}
+
+/* statfs — buf must match kernel struct statfs_compat (see df.c) */
+int statfs(const char *pathname, void *buf) {
+    return ob_syscall2(137, (long)pathname, (long)buf);
+}
+
+int mount(const char *source, const char *target, const char *fstype, unsigned long flags, const void *data) {
+    return ob_syscall5(165, (long)source, (long)target, (long)fstype, flags, (long)data);
+}
+
+int umount2(const char *target, int flags) {
+    return ob_syscall2(166, (long)target, flags);
+}
+
+ssize_t getdents64(int fd, void *dirp, size_t count) {
+    return ob_syscall3(217, fd, (long)dirp, count);
+}
+
+/* Snapshot of running processes (kernel sysctl system.proc.list); sets *len to bytes used */
+int obelisk_proc_list(void *buf, size_t *lenp) {
+    return ob_syscall2(404, (long)buf, (long)lenp);
 }
 
 /*

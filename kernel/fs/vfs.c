@@ -202,12 +202,6 @@ int vfs_mount(const char *source, const char *target,
     return 0;
 }
 
-int vfs_umount(const char *target, int flags) {
-    /* TODO: Implement unmount */
-    (void)target;
-    (void)flags;
-    return -ENOSYS;
-}
 
 /* ==========================================================================
  * Path Lookup
@@ -277,7 +271,11 @@ static struct dentry *lookup_one(struct dentry *parent, const char *name, int le
     return dentry;
 }
 
-struct dentry *vfs_lookup(const char *pathname) {
+/*
+ * Path resolution. When follow_mounts is false, do not cross into mounted
+ * filesystems (used for umount so the final dentry is the mountpoint).
+ */
+static struct dentry *vfs_lookup_at(const char *pathname, bool follow_mounts) {
     struct dentry *dentry;
     const char *p;
     int len;
@@ -356,7 +354,11 @@ struct dentry *vfs_lookup(const char *pathname) {
             return NULL;
         }
 
-        dentry = vfs_follow_mounts(next);
+        if (follow_mounts) {
+            dentry = vfs_follow_mounts(next);
+        } else {
+            dentry = next;
+        }
         if (!dentry) {
             return NULL;
         }
@@ -373,6 +375,71 @@ struct dentry *vfs_lookup(const char *pathname) {
                dentry ? dentry->d_inode : NULL);
     }
     return dentry;
+}
+
+struct dentry *vfs_lookup(const char *pathname) {
+    return vfs_lookup_at(pathname, true);
+}
+
+int vfs_umount(const char *target, int flags) {
+    struct dentry *d;
+    struct vfsmount *mnt = NULL;
+    struct super_block *sb;
+    struct dentry *mp;
+    int i;
+
+    (void)flags;
+
+    if (!target || !*target) {
+        return -EINVAL;
+    }
+    if (!root_dentry) {
+        return -ENOENT;
+    }
+
+    d = vfs_lookup_at(target, false);
+    if (!d) {
+        return -ENOENT;
+    }
+
+    for (i = 0; i < num_mounts; i++) {
+        mnt = mount_table[i];
+        if (mnt && mnt->mnt_mountpoint == d) {
+            break;
+        }
+        mnt = NULL;
+    }
+    if (!mnt) {
+        dput(d);
+        return -EINVAL;
+    }
+    if (mnt == root_mount) {
+        dput(d);
+        return -EINVAL;
+    }
+
+    sb = mnt->mnt_sb;
+    if (!sb || !sb->s_type || !sb->s_type->kill_sb) {
+        dput(d);
+        return -EINVAL;
+    }
+
+    mp = mnt->mnt_mountpoint;
+    sb->s_type->kill_sb(sb);
+
+    mount_table[i] = mount_table[num_mounts - 1];
+    mount_table[num_mounts - 1] = NULL;
+    num_mounts--;
+
+    if (mnt->mnt_devname) {
+        kfree((void *)mnt->mnt_devname);
+    }
+    kfree(mnt);
+
+    /* One dput for the vfsmount's mountpoint ref; one for vfs_lookup_at. */
+    dput(mp);
+    dput(d);
+    return 0;
 }
 
 /* ==========================================================================

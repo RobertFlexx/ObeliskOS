@@ -38,6 +38,12 @@ typedef long ssize_t;
 #define SYS_SETGID  106
 #define SYS_REBOOT  169
 #define SYS_OBELISK_SYSCTL 400
+
+#define S_IFMT      0170000
+#define S_IFDIR     0040000
+
+#define COMP_MAX_MATCHES    256
+#define COMP_ASK_THRESHOLD  100
 #define AT_NULL     0
 #define AT_EXECFN   31
 #define TIOCGWINSZ  0x5413
@@ -240,6 +246,26 @@ static const char *base_name(const char *path) {
 
 static void write_str(const char *s) {
     syscall3(SYS_WRITE, 1, (long)s, (long)str_len(s));
+}
+
+static void write_str_err(const char *s) {
+    syscall3(SYS_WRITE, 2, (long)s, (long)str_len(s));
+}
+
+static void write_u32_dec(uint32_t v) {
+    char buf[16];
+    int i = 0;
+    if (v == 0) {
+        write_ch('0');
+        return;
+    }
+    while (v > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = (char)('0' + (v % 10U));
+        v /= 10U;
+    }
+    while (i > 0) {
+        write_ch(buf[--i]);
+    }
 }
 
 static const char *lookup_env_value(const char *key) {
@@ -1515,11 +1541,44 @@ static const char *find_basename(const char *path) {
     return bn;
 }
 
+static void sort_find_names(char names[][256], int n) {
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (str_cmp(names[i], names[j]) > 0) {
+                char tmp[256];
+                str_copy(tmp, names[i], sizeof(tmp));
+                str_copy(names[i], names[j], sizeof(names[i]));
+                str_copy(names[j], tmp, sizeof(names[j]));
+            }
+        }
+    }
+}
+
+static int find_path_join(const char *dir, const char *name, char *out, size_t cap) {
+    size_t plen = str_len(dir);
+    size_t nlen = str_len(name);
+    if (plen == 0 || nlen == 0) {
+        return -1;
+    }
+    if (plen == 1 && dir[0] == '/') {
+        if (1 + nlen + 1 >= cap) {
+            return -1;
+        }
+        out[0] = '/';
+        str_copy(out + 1, name, cap - 1);
+        return 0;
+    }
+    if (plen + 1 + nlen + 1 >= cap) {
+        return -1;
+    }
+    str_copy(out, dir, cap);
+    str_append(out, "/", cap);
+    str_append(out, name, cap);
+    return 0;
+}
+
 static void applet_find_walk(const char *path, const char *name_pat) {
     struct ob_stat st;
-    long sret;
-    long fd;
-    char buf[1024];
     const char *bn = find_basename(path);
     if (!path || path[0] == '\0') {
         return;
@@ -1529,45 +1588,45 @@ static void applet_find_walk(const char *path, const char *name_pat) {
         write_ch('\n');
     }
 
-    sret = syscall2(SYS_STAT, (long)path, (long)&st);
-    if (sret < 0) {
+    if (syscall2(SYS_STAT, (long)path, (long)&st) < 0) {
         return;
     }
-    if ((st.st_mode & 0170000) != 0040000) {
+    if ((st.st_mode & S_IFMT) != S_IFDIR) {
         return;
     }
 
-    fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
+    long fd = syscall3(SYS_OPEN, (long)path, O_RDONLY | O_DIRECTORY, 0);
     if (fd < 0) {
+        write_str_err("find: ");
+        write_str_err(path);
+        write_str_err(": cannot open directory\n");
         return;
     }
+
+    char buf[1024];
+    char names[256][256];
+    int ncnt = 0;
 
     while (1) {
         long nread = syscall3(SYS_GETDENTS64, fd, (long)buf, sizeof(buf));
-        if (nread < 0) {
-            break;
-        }
-        if (nread == 0) {
+        if (nread <= 0) {
             break;
         }
         long bpos = 0;
         while (bpos < nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
-            if (!(d->d_name[0] == '.' &&
-                  (d->d_name[1] == '\0' ||
-                   (d->d_name[1] == '.' && d->d_name[2] == '\0')))) {
-                char child[512];
-                size_t plen = str_len(path);
-                size_t nlen = str_len(d->d_name);
-                if (plen + 1 + nlen + 1 < sizeof(child)) {
-                    str_copy(child, path, sizeof(child));
-                    if (!(plen == 1 && child[0] == '/')) {
-                        child[plen++] = '/';
-                        child[plen] = '\0';
-                    }
-                    str_copy(child + plen, d->d_name, sizeof(child) - plen);
-                    applet_find_walk(child, name_pat);
+            if (d->d_name[0] == '.' &&
+                (d->d_name[1] == '\0' ||
+                 (d->d_name[1] == '.' && d->d_name[2] == '\0'))) {
+                if (d->d_reclen == 0) {
+                    break;
                 }
+                bpos += d->d_reclen;
+                continue;
+            }
+            if (ncnt < 256) {
+                str_copy(names[ncnt], d->d_name, sizeof(names[0]));
+                ncnt++;
             }
             if (d->d_reclen == 0) {
                 break;
@@ -1576,6 +1635,21 @@ static void applet_find_walk(const char *path, const char *name_pat) {
         }
     }
     syscall1(SYS_CLOSE, fd);
+
+    sort_find_names(names, ncnt);
+
+    for (int i = 0; i < ncnt; i++) {
+        char child[1024];
+        if (find_path_join(path, names[i], child, sizeof(child)) != 0) {
+            write_str_err("find: ");
+            write_str_err(path);
+            write_str_err("/");
+            write_str_err(names[i]);
+            write_str_err(": path too long\n");
+            continue;
+        }
+        applet_find_walk(child, name_pat);
+    }
 }
 
 static void applet_find(int argc, char **argv) {
@@ -1592,7 +1666,8 @@ static void applet_find(int argc, char **argv) {
             continue;
         }
         if (str_cmp(argv[i], "-h") == 0 || str_cmp(argv[i], "--help") == 0) {
-            write_str("Usage: find [path ...] [-name pattern]\n");
+            write_str("Usage: find [path ...] [-name glob]\n");
+            write_str("  Recurses in sorted order; -name globs use * and ?.\n");
             return;
         }
         if (argv[i][0] == '-') {
@@ -1609,6 +1684,13 @@ static void applet_find(int argc, char **argv) {
         paths[pathc++] = ".";
     }
     for (int i = 0; i < pathc; i++) {
+        struct ob_stat st;
+        if (syscall2(SYS_STAT, (long)paths[i], (long)&st) < 0) {
+            write_str_err("find: ");
+            write_str_err(paths[i]);
+            write_str_err(": No such file or directory\n");
+            continue;
+        }
         applet_find_walk(paths[i], name_pat);
     }
 }
@@ -2385,19 +2467,36 @@ static const char *builtin_names[] = {
     "sysctl", "installer", "installer-tui", NULL
 };
 
-static int add_candidate(char out[][128], int count, int max, const char *name) {
+static int completion_is_command(const char *line, size_t start) {
+    size_t p = start;
+    while (p > 0 && (line[p - 1] == ' ' || line[p - 1] == '\t')) {
+        p--;
+    }
+    if (p == 0) {
+        return 1;
+    }
+    if (line[p - 1] == '|' || line[p - 1] == ';') {
+        return 1;
+    }
+    if (line[p - 1] == '&' && p >= 2 && line[p - 2] == '&') {
+        return 1;
+    }
+    return 0;
+}
+
+static int add_candidate(char out[][256], int count, int max, const char *name) {
     for (int i = 0; i < count; i++) {
         if (str_cmp(out[i], name) == 0) return count;
     }
     if (count < max) {
-        str_copy(out[count], name, 128);
+        str_copy(out[count], name, 256);
         return count + 1;
     }
     return count;
 }
 
 static int collect_matches_from_dir(const char *dir, const char *prefix,
-                                    char out[][128], int count, int max) {
+                                    char out[][256], int count, int max) {
     long fd = syscall3(SYS_OPEN, (long)dir, O_RDONLY | O_DIRECTORY, 0);
     if (fd < 0) return count;
     size_t plen = str_len(prefix);
@@ -2408,10 +2507,18 @@ static int collect_matches_from_dir(const char *dir, const char *prefix,
         long bpos = 0;
         while (bpos < nread) {
             struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + bpos);
-            if (d->d_name[0] && d->d_name[0] != '.') {
-                if (str_ncmp(d->d_name, prefix, plen) == 0) {
-                    count = add_candidate(out, count, max, d->d_name);
-                }
+            if (!d->d_name[0]) {
+                if (d->d_reclen == 0) break;
+                bpos += d->d_reclen;
+                continue;
+            }
+            if (plen == 0 && d->d_name[0] == '.') {
+                if (d->d_reclen == 0) break;
+                bpos += d->d_reclen;
+                continue;
+            }
+            if (str_ncmp(d->d_name, prefix, plen) == 0) {
+                count = add_candidate(out, count, max, d->d_name);
             }
             if (d->d_reclen == 0) break;
             bpos += d->d_reclen;
@@ -2429,7 +2536,20 @@ static int str_has_char(const char *s, char ch) {
     return 0;
 }
 
-static int common_prefix_len(char vals[][128], int n) {
+static void sort_matches(char m[][256], int n) {
+    for (int i = 0; i < n - 1; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (str_cmp(m[i], m[j]) > 0) {
+                char tmp[256];
+                str_copy(tmp, m[i], sizeof(tmp));
+                str_copy(m[i], m[j], sizeof(m[i]));
+                str_copy(m[j], tmp, sizeof(m[j]));
+            }
+        }
+    }
+}
+
+static int common_prefix_len(char vals[][256], int n) {
     if (n <= 0) return 0;
     int len = (int)str_len(vals[0]);
     for (int i = 1; i < n; i++) {
@@ -2464,10 +2584,10 @@ static int replace_span(char *line, size_t cap, size_t start, size_t end,
     return 0;
 }
 
-static int collect_path_matches(const char *token, char out[][128], int count, int max) {
+static int collect_path_matches(const char *token, char out[][256], int count, int max) {
     char dir[256];
-    char base[128];
-    char candidate[128];
+    char base[256];
+    char candidate[256];
     const char *slash = NULL;
     int has_slash = 0;
 
@@ -2525,10 +2645,61 @@ static int collect_path_matches(const char *token, char out[][128], int count, i
     return count;
 }
 
+static void build_candidate_path(const char *token, const char *match, char *out, size_t cap) {
+    const char *slash = NULL;
+    for (const char *p = token; *p; p++) {
+        if (*p == '/') slash = p;
+    }
+    if (slash) {
+        size_t dlen = (size_t)(slash - token);
+        if (dlen == 0) {
+            str_copy(out, "/", cap);
+            str_append(out, match, cap);
+        } else {
+            size_t i;
+            for (i = 0; i < dlen && i + 1 < cap; i++) {
+                out[i] = token[i];
+            }
+            out[i] = '\0';
+            str_append(out, "/", cap);
+            str_append(out, match, cap);
+        }
+    } else {
+        char cwd[256];
+        if (syscall2(SYS_GETCWD, (long)cwd, sizeof(cwd)) < 0) {
+            str_copy(out, match, cap);
+            return;
+        }
+        str_copy(out, cwd, cap);
+        str_append(out, "/", cap);
+        str_append(out, match, cap);
+    }
+}
+
+static int candidate_path_is_dir(const char *token, const char *match) {
+    char path[512];
+    struct ob_stat st;
+    build_candidate_path(token, match, path, sizeof(path));
+    if (syscall2(SYS_STAT, (long)path, (long)&st) < 0) {
+        return 0;
+    }
+    return ((st.st_mode & S_IFMT) == S_IFDIR);
+}
+
+static int read_yesno_line(void) {
+    char ch = 0;
+    long n = syscall3(SYS_READ, 0, (long)&ch, 1);
+    if (n <= 0) {
+        return 0;
+    }
+    write_ch('\n');
+    return (ch == 'y' || ch == 'Y');
+}
+
 static int complete_at_cursor(char *line, size_t *cursor, size_t cap) {
-    char token[128];
-    char matches[64][128];
-    char repl[128];
+    char token[256];
+    char matches[COMP_MAX_MATCHES][256];
+    char repl[256];
     int mcount = 0;
     size_t len = str_len(line);
     size_t cur = *cursor;
@@ -2541,7 +2712,7 @@ static int complete_at_cursor(char *line, size_t *cursor, size_t cap) {
         start--;
     }
     tlen = cur - start;
-    if (tlen == 0 || tlen >= sizeof(token)) {
+    if (tlen >= sizeof(token)) {
         return 0;
     }
     for (size_t i = 0; i < tlen; i++) {
@@ -2549,26 +2720,36 @@ static int complete_at_cursor(char *line, size_t *cursor, size_t cap) {
     }
     token[tlen] = '\0';
 
-    if (start == 0 && !str_has_char(token, '/')) {
+    int cmd_mode = completion_is_command(line, start) && !str_has_char(token, '/');
+
+    if (cmd_mode) {
         for (int i = 0; builtin_names[i]; i++) {
             if (str_ncmp(builtin_names[i], token, tlen) == 0) {
-                mcount = add_candidate(matches, mcount, 64, builtin_names[i]);
+                mcount = add_candidate(matches, mcount, COMP_MAX_MATCHES, builtin_names[i]);
             }
         }
-        mcount = collect_matches_from_dir("/bin", token, matches, mcount, 64);
-        mcount = collect_matches_from_dir("/sbin", token, matches, mcount, 64);
-        mcount = collect_matches_from_dir("/usr/bin", token, matches, mcount, 64);
+        mcount = collect_matches_from_dir("/bin", token, matches, mcount, COMP_MAX_MATCHES);
+        mcount = collect_matches_from_dir("/sbin", token, matches, mcount, COMP_MAX_MATCHES);
+        mcount = collect_matches_from_dir("/usr/bin", token, matches, mcount, COMP_MAX_MATCHES);
     } else {
-        mcount = collect_path_matches(token, matches, 0, 64);
+        mcount = collect_path_matches(token, matches, 0, COMP_MAX_MATCHES);
     }
 
     if (mcount == 0) {
         return 0;
     }
 
+    sort_matches(matches, mcount);
+
     if (mcount == 1) {
         str_copy(repl, matches[0], sizeof(repl));
-        str_append(repl, " ", sizeof(repl));
+        if (cmd_mode) {
+            str_append(repl, " ", sizeof(repl));
+        } else if (candidate_path_is_dir(token, matches[0])) {
+            str_append(repl, "/", sizeof(repl));
+        } else {
+            str_append(repl, " ", sizeof(repl));
+        }
         if (replace_span(line, cap, start, cur, repl, cursor) == 0) {
             return 1;
         }
@@ -2577,7 +2758,7 @@ static int complete_at_cursor(char *line, size_t *cursor, size_t cap) {
 
     int cplen = common_prefix_len(matches, mcount);
     if (cplen > (int)tlen) {
-        char cpbuf[128];
+        char cpbuf[256];
         for (int i = 0; i < cplen && i < (int)sizeof(cpbuf) - 1; i++) {
             cpbuf[i] = matches[0][i];
         }
@@ -2586,6 +2767,15 @@ static int complete_at_cursor(char *line, size_t *cursor, size_t cap) {
             return 1;
         }
         return 0;
+    }
+
+    if (mcount > COMP_ASK_THRESHOLD) {
+        write_str("\nDisplay all ");
+        write_u32_dec((uint32_t)mcount);
+        write_str(" possibilities? (y or n) ");
+        if (!read_yesno_line()) {
+            return 2;
+        }
     }
 
     for (int i = 0; i < mcount; i++) {
@@ -2627,7 +2817,13 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
             write_str(prompt);
             continue;
         }
-        if (n <= 0) {
+        if (n == 0) {
+            if (len == 0 && cursor == 0) {
+                return -1;
+            }
+            continue;
+        }
+        if (n < 0) {
             continue;
         }
 
@@ -2635,6 +2831,52 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
             write_ch('\n');
             line[len] = '\0';
             return 0;
+        }
+
+        if (c == 0x03) { /* Ctrl-C delivered as raw ETX on some serial paths */
+            line[0] = '\0';
+            len = 0;
+            cursor = 0;
+            write_str("^C\n");
+            write_str(prompt);
+            continue;
+        }
+
+        if (c == 0x04) { /* Ctrl-D: EOF on empty line, else delete forward */
+            if (len == 0 && cursor == 0) {
+                return -1;
+            }
+            if (cursor < len) {
+                for (size_t i = cursor; i < len; i++) {
+                    line[i] = line[i + 1];
+                }
+                len--;
+                line[len] = '\0';
+                redraw_line(prompt, line, cursor);
+            }
+            continue;
+        }
+
+        if (c == 0x14) { /* Ctrl-T: transpose previous two characters */
+            if (cursor >= 2) {
+                char t = line[cursor - 1];
+                line[cursor - 1] = line[cursor - 2];
+                line[cursor - 2] = t;
+                redraw_line(prompt, line, cursor);
+            } else if (cursor == 1 && len >= 2) {
+                char t = line[0];
+                line[0] = line[1];
+                line[1] = t;
+                redraw_line(prompt, line, cursor);
+            }
+            continue;
+        }
+
+        if (c == 0x1a) { /* Ctrl-Z */
+            write_str("^Z\n");
+            write_str("osh: job control not supported (use Ctrl-C to interrupt)\n");
+            redraw_line(prompt, line, cursor);
+            continue;
         }
 
         if (c == '\t') {
@@ -2646,8 +2888,14 @@ static int read_line_interactive(const char *prompt, char *line, size_t cap,
             continue;
         }
 
-        if (c == 0x01) { /* Ctrl-A */
+        if (c == 0x01) { /* Ctrl-A: beginning of line */
             cursor = 0;
+            redraw_line(prompt, line, cursor);
+            continue;
+        }
+
+        if (c == 0x05) { /* Ctrl-E: end of line */
+            cursor = len;
             redraw_line(prompt, line, cursor);
             continue;
         }
@@ -3181,8 +3429,8 @@ static int execute_simple_command(const char *prompt, char *line) {
     }
 
     if (str_cmp(args[0], "help") == 0) {
-        write_str("builtins: help echo uname clear reboot shutdown exit osh sh rockbox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut find time true false users su sudo whoami id opkg\n");
-        write_str("shell: quotes, $VAR expansion, && || ;, minimal pipes |, redirects < > >>, Ctrl-A Home/End Left/Right, Up/Down history, TAB completion\n");
+        write_str("builtins: help echo uname clear reboot shutdown exit osh sh rockbox cd pwd ls cat touch mkdir rm rmdir write chmod chown stat head tail wc cut find time true false users whoami id opkg\n");
+        write_str("shell: quotes, $VAR, && || ;, pipes |, redirects < > >>, Ctrl-A/E, arrows, history, TAB completion, Ctrl-D EOF/del, Ctrl-T transpose, Ctrl-Z notice\n");
         rc = 0;
     } else if (str_cmp(args[0], "echo") == 0) {
         applet_echo(argc, args);
@@ -3250,10 +3498,6 @@ static int execute_simple_command(const char *prompt, char *line) {
         rc = 0;
     } else if (str_cmp(args[0], "false") == 0) {
         rc = 1;
-    } else if (str_cmp(args[0], "su") == 0) {
-        rc = applet_su(argc, args);
-    } else if (str_cmp(args[0], "sudo") == 0) {
-        rc = applet_sudo(argc, args);
     } else if (str_cmp(args[0], "whoami") == 0) {
         applet_whoami();
         rc = 0;
@@ -3303,7 +3547,10 @@ static int run_shell(const char *prompt) {
     write_str("Obelisk osh ready. Type 'help' for commands.\n");
     while (1) {
         hist_pos = -1;
-        read_line_interactive(prompt, line, sizeof(line), history, hist_count, &hist_pos);
+        if (read_line_interactive(prompt, line, sizeof(line), history, hist_count, &hist_pos) < 0) {
+            write_str("\n");
+            return 0;
+        }
         str_copy(line_orig, line, sizeof(line_orig));
         if (trim_ws_inplace(line_orig)[0] == '\0') {
             continue;

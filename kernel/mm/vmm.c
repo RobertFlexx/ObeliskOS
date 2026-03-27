@@ -13,6 +13,7 @@
 #include <arch/mmu.h>
 #include <proc/process.h>
 #include <fs/vfs.h>
+#include <obelisk/zig_safe_arith.h>
 
 /* Kernel address space */
 static struct address_space kernel_as;
@@ -304,8 +305,7 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
         start = USER_HEAP_BASE;
         while (1) {
             struct vm_area *vma;
-            end = start + length;
-            if (end < start || end > USER_SPACE_END) {
+            if (zig_u64_add_ok(start, (uint64_t)length, &end) != 0 || end > USER_SPACE_END) {
                 return MAP_FAILED;
             }
             vma = vmm_find_vma_intersection(as, start, end);
@@ -315,14 +315,11 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
             start = ALIGN_UP(vma->end, PAGE_SIZE);
         }
     }
-    
-    end = start + length;
-    
-    /* Check for overflow */
-    if (end < start || end > USER_SPACE_END) {
+
+    if (zig_u64_add_ok(start, (uint64_t)length, &end) != 0 || end > USER_SPACE_END) {
         return MAP_FAILED;
     }
-    
+
     /* Linux-like MAP_FIXED semantics: replace overlapping mappings. */
     if (flags & MAP_FIXED) {
         if (vmm_munmap(as, (void *)start, length) != 0) {
@@ -394,7 +391,13 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
 /* Unmap memory region */
 int vmm_munmap(struct address_space *as, void *addr, size_t length) {
     uint64_t start = ALIGN_DOWN((uint64_t)addr, PAGE_SIZE);
-    uint64_t end = ALIGN_UP((uint64_t)addr + length, PAGE_SIZE);
+    uint64_t span_end;
+    uint64_t end;
+
+    if (zig_u64_add_ok((uint64_t)addr, (uint64_t)length, &span_end) != 0) {
+        return -EINVAL;
+    }
+    end = ALIGN_UP(span_end, PAGE_SIZE);
     
     /* Find and remove overlapping VMAs */
     struct vm_area *vma = as->vma_list;
@@ -636,12 +639,12 @@ static int vmm_verify_user_range(const void *addr, size_t size, bool write) {
     if (size == 0) {
         return 0;
     }
+    if (zig_user_copy_len_ok((uint64_t)size) != 0) {
+        return -EINVAL;
+    }
 
     start = (uintptr_t)addr;
     if (start >= USER_SPACE_END) {
-        return -EFAULT;
-    }
-    if (size > (USER_SPACE_END - start)) {
         return -EFAULT;
     }
 
@@ -649,7 +652,15 @@ static int vmm_verify_user_range(const void *addr, size_t size, bool write) {
         return -EFAULT;
     }
     as = proc->mm;
-    end = start + size;
+    {
+        uint64_t end64;
+
+        if (zig_u64_add_ok((uint64_t)start, (uint64_t)size, &end64) != 0 ||
+            end64 > (uint64_t)USER_SPACE_END) {
+            return -EFAULT;
+        }
+        end = (uintptr_t)end64;
+    }
 
     for (page = ALIGN_DOWN(start, PAGE_SIZE); page < end; page += PAGE_SIZE) {
         uint64_t phys = mmu_resolve(as->pt, page);
@@ -677,7 +688,6 @@ int vmm_copy_from_user(void *dst, const void *src, size_t size) {
     }
     ret = vmm_verify_user_range(src, size, false);
     if (ret < 0) {
-        printk(KERN_ERR "vmm_copy_from_user: src=%p size=%lu ret=%d\n", src, size, ret);
         return ret;
     }
     memcpy(dst, src, size);
@@ -692,7 +702,6 @@ int vmm_copy_to_user(void *dst, const void *src, size_t size) {
     }
     ret = vmm_verify_user_range(dst, size, true);
     if (ret < 0) {
-        printk(KERN_ERR "vmm_copy_to_user: dst=%p size=%lu ret=%d\n", dst, size, ret);
         return ret;
     }
     memcpy(dst, src, size);

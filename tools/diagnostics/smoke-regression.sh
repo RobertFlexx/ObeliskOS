@@ -36,6 +36,12 @@ commands = [
     "rm /tmp/smoke_file",
     "mkdir /tmp/smoke_dir",
     "rmdir /tmp/smoke_dir",
+    "mkdir -p /tmp/mnt_smoke",
+    "sudo mount -t devfs none /tmp/mnt_smoke",
+    "ls /tmp/mnt_smoke",
+    "sudo umount /tmp/mnt_smoke",
+    "rmdir /tmp/mnt_smoke",
+    "echo __MOUNT_SMOKE_OK__",
     "sysctl -a",
     "head /etc/motd",
     "wc /etc/motd",
@@ -50,12 +56,16 @@ required = [
     "system.kernel.version =",
     "Usage: opkg <command> [args]",
     "__SMOKE_DONE__",
+    "__MOUNT_SMOKE_OK__",
 ]
 
 forbidden = [
     "PAGE FAULT",
     "Kernel panic",
     "command not found",
+    "mount: failed",
+    "umount: failed",
+    "sudo: authentication failure",
 ]
 
 proc = subprocess.Popen(
@@ -108,7 +118,7 @@ with open(log_file, "wb") as log:
                 except BrokenPipeError:
                     pass
 
-        if sent and not sent_quit and sent_at is not None and (time.time() - sent_at) >= 4:
+        if sent and not sent_quit and sent_at is not None and (time.time() - sent_at) >= 12:
             try:
                 proc.stdin.write(b"\x01x")  # Ctrl+A then x
                 proc.stdin.flush()
