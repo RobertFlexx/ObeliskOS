@@ -56,7 +56,7 @@ Obelisk is converging on one clear daily-usable path:
 * package ecosystem: **binary-first `.opk` delivery**
 * single supported desktop path first (no KDE/GNOME parity work in this phase)
 
-> *future opkg repo mirror (here)[https://github.com/RobertFlexx/obelisk-pkg]*
+> *future opkg repo mirror [here](https://github.com/RobertFlexx/obelisk-pkg)*
 
 This project values coherence and reliability over feature count.
 
