@@ -34,6 +34,7 @@ This project values coherence and reliability over feature count.
 - **Userland**: small libc + compact base tools + `rockbox` shell/tool multiplexer
 - **Packages**: native `opkg` and `.opk` repository flow
 
+***OBELISK OPKG IS NOT OPENWRT OPKG!***
 ## Repository Layout
 
 - `kernel/` - kernel source
