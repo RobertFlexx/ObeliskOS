@@ -3,9 +3,10 @@ name: Publish opkg repo to GitHub Pages
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches:
+      - main
     paths:
-      - "opkg/obelisk-repo/**"
+      - "opkg/repo-site/**"
       - ".github/workflows/opkg-pages.yml"
 
 permissions:
@@ -14,7 +15,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: false
 
 jobs:
@@ -23,6 +24,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +35,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: opkg/repo-site
+          path: ./opkg/repo-site
 
       - name: Deploy to GitHub Pages
         id: deployment
