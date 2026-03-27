@@ -10,9 +10,41 @@ typedef long ssize_t;
 extern ssize_t write(int fd, const void *buf, size_t count);
 extern void _exit(int status);
 extern int kill(int pid, int sig);
+extern int getpid(void);
 
 static void wrerr(const char *s) {
     (void)write(2, s, strlen(s));
+}
+
+static void wrnum(int v) {
+    char buf[16];
+    int i = 0;
+    unsigned x = (v < 0) ? (unsigned)(-v) : (unsigned)v;
+    if (v < 0) {
+        (void)write(2, "-", 1);
+    }
+    if (x == 0) {
+        (void)write(2, "0", 1);
+        return;
+    }
+    while (x > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = (char)('0' + (x % 10U));
+        x /= 10U;
+    }
+    while (i > 0) {
+        (void)write(2, &buf[--i], 1);
+    }
+}
+
+static const char *err_text(int e) {
+    if (e < 0) e = -e;
+    switch (e) {
+        case 1: return "operation not permitted";
+        case 2: return "no such process";
+        case 3: return "no such process";
+        case 22: return "invalid argument";
+        default: return "failed";
+    }
 }
 
 static int parse_int(const char *s, int *out) {
@@ -45,6 +77,7 @@ static int parse_int(const char *s, int *out) {
 int main(int argc, char **argv) {
     int sig = 15;
     int first = 1;
+    int self = getpid();
 
     if (argc < 2) {
         wrerr("usage: kill [-s n | -n] pid ...\n");
@@ -81,9 +114,23 @@ int main(int argc, char **argv) {
             wrerr("kill: invalid pid\n");
             return 1;
         }
+        if (pid <= 1) {
+            wrerr("kill: refusing dangerous pid ");
+            wrnum(pid);
+            wrerr("\n");
+            return 1;
+        }
+        if (pid == self) {
+            wrerr("kill: refusing to signal current shell process\n");
+            return 1;
+        }
         r = kill(pid, sig);
         if (r < 0) {
-            wrerr("kill: failed\n");
+            wrerr("kill: ");
+            wrerr(err_text(r));
+            wrerr(" (");
+            wrnum(-r);
+            wrerr(")\n");
             return 1;
         }
     }

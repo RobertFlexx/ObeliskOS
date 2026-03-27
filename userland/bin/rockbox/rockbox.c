@@ -356,8 +356,33 @@ static int parse_words_shell(const char *line, char out[][256], char **argv,
 }
 
 static void print_errno(const char *op, long err) {
+    const char *msg = NULL;
+    long e = err;
+    if (e < 0) {
+        e = -e;
+    }
+    switch (e) {
+        case 1: msg = "operation not permitted"; break;   /* EPERM */
+        case 2: msg = "no such file or directory"; break; /* ENOENT */
+        case 5: msg = "input/output error"; break;        /* EIO */
+        case 13: msg = "permission denied"; break;        /* EACCES */
+        case 16: msg = "resource busy"; break;            /* EBUSY */
+        case 17: msg = "file exists"; break;              /* EEXIST */
+        case 20: msg = "not a directory"; break;          /* ENOTDIR */
+        case 21: msg = "is a directory"; break;           /* EISDIR */
+        case 22: msg = "invalid argument"; break;         /* EINVAL */
+        case 30: msg = "read-only filesystem"; break;     /* EROFS */
+        case 39: msg = "directory not empty"; break;      /* ENOTEMPTY */
+        default: break;
+    }
     write_str(op);
-    write_str(": failed (");
+    write_str(": ");
+    if (msg) {
+        write_str(msg);
+        write_str(" (");
+    } else {
+        write_str("failed (");
+    }
     if (err < 0) {
         err = -err;
     }
@@ -393,7 +418,10 @@ static void applet_pwd(void) {
 }
 
 static void applet_cd(int argc, char **argv) {
-    const char *path = (argc > 1) ? argv[1] : "/";
+    const char *path = (argc > 1) ? argv[1] : lookup_env_value("HOME");
+    if (!path || path[0] == '\0') {
+        path = "/";
+    }
     long ret = syscall1(SYS_CHDIR, (long)path);
     if (ret < 0) {
         print_errno("cd", ret);
@@ -635,6 +663,18 @@ static void applet_cat(int argc, char **argv) {
         return;
     }
     for (int i = 1; i < argc; i++) {
+        struct ob_stat st;
+        long sret = syscall2(SYS_STAT, (long)argv[i], (long)&st);
+        if (sret < 0) {
+            print_errno("cat", sret);
+            continue;
+        }
+        if ((st.st_mode & 0170000) == 0040000) {
+            write_str("cat: ");
+            write_str(argv[i]);
+            write_str(": is a directory\n");
+            continue;
+        }
         long fd = syscall3(SYS_OPEN, (long)argv[i], O_RDONLY, 0);
         if (fd < 0) {
             print_errno("cat", fd);
@@ -731,6 +771,14 @@ static int rm_recursive_path(const char *path, int force) {
     return 0;
 }
 
+static int rm_is_protected_path(const char *path) {
+    if (!path || path[0] == '\0') return 1;
+    if (str_cmp(path, "/") == 0) return 1;
+    if (str_cmp(path, ".") == 0) return 1;
+    if (str_cmp(path, "..") == 0) return 1;
+    return 0;
+}
+
 static void applet_rm(int argc, char **argv) {
     int recursive = 0;
     int force = 0;
@@ -749,6 +797,12 @@ static void applet_rm(int argc, char **argv) {
         return;
     }
     for (int i = first; i < argc; i++) {
+        if (rm_is_protected_path(argv[i])) {
+            write_str("rm: refusing to remove protected path: ");
+            write_str(argv[i]);
+            write_ch('\n');
+            continue;
+        }
         long ret = syscall1(SYS_UNLINK, (long)argv[i]);
         if (ret == -21 && recursive) { /* EISDIR */
             rm_recursive_path(argv[i], force);
@@ -766,6 +820,10 @@ static void applet_rmdir(int argc, char **argv) {
         return;
     }
     for (int i = 1; i < argc; i++) {
+        if (str_cmp(argv[i], "/") == 0) {
+            write_str("rmdir: refusing to remove root directory\n");
+            continue;
+        }
         long ret = syscall1(SYS_RMDIR, (long)argv[i]);
         if (ret < 0) {
             print_errno("rmdir", ret);
