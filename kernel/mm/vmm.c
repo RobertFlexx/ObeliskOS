@@ -14,6 +14,7 @@
 #include <proc/process.h>
 #include <fs/vfs.h>
 #include <obelisk/zig_safe_arith.h>
+#include <obelisk/zig_mem.h>
 
 /* Kernel address space */
 static struct address_space kernel_as;
@@ -305,7 +306,7 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
         start = USER_HEAP_BASE;
         while (1) {
             struct vm_area *vma;
-            if (zig_u64_add_ok(start, (uint64_t)length, &end) != 0 || end > USER_SPACE_END) {
+            if (zig_range_end_le_cap_ok(start, (uint64_t)length, USER_SPACE_END, &end) != 0) {
                 return MAP_FAILED;
             }
             vma = vmm_find_vma_intersection(as, start, end);
@@ -316,7 +317,7 @@ void *vmm_mmap(struct address_space *as, void *addr, size_t length,
         }
     }
 
-    if (zig_u64_add_ok(start, (uint64_t)length, &end) != 0 || end > USER_SPACE_END) {
+    if (zig_range_end_le_cap_ok(start, (uint64_t)length, USER_SPACE_END, &end) != 0) {
         return MAP_FAILED;
     }
 
@@ -394,7 +395,7 @@ int vmm_munmap(struct address_space *as, void *addr, size_t length) {
     uint64_t span_end;
     uint64_t end;
 
-    if (zig_u64_add_ok((uint64_t)addr, (uint64_t)length, &span_end) != 0) {
+    if (zig_range_end_le_cap_ok((uint64_t)addr, (uint64_t)length, UINT64_MAX, &span_end) != 0) {
         return -EINVAL;
     }
     end = ALIGN_UP(span_end, PAGE_SIZE);

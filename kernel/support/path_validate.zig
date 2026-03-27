@@ -15,8 +15,9 @@ const MAX_SCAN: u64 = 16384;
 pub export fn zig_kernel_cstring_no_control(s: ?[*]const u8, cap: u64) c_int {
     if (s == null) return 1;
     if (cap == 0) return 1;
+    if (cap > MAX_SCAN) return 1;
     const p = s.?;
-    const limit = @min(cap, MAX_SCAN);
+    const limit = cap;
     var i: usize = 0;
     while (i < limit) : (i += 1) {
         const c = p[i];

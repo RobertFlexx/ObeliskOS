@@ -114,8 +114,8 @@ int main(int argc, char **argv) {
             wrerr("kill: invalid pid\n");
             return 1;
         }
-        if (pid <= 1) {
-            wrerr("kill: refusing dangerous pid ");
+        if (pid <= 2) {
+            wrerr("kill: refusing dangerous system pid ");
             wrnum(pid);
             wrerr("\n");
             return 1;

@@ -174,14 +174,15 @@ _start:
     movl $boot_pml4, %eax
     movl %eax, %cr3
     
-    /* Enable long mode in EFER MSR */
+    /* Enable long mode and NXE in EFER MSR */
     movl $0xC0000080, %ecx                           /* EFER MSR */
     rdmsr
-    orl $0x100, %eax                                 /* EFER.LME */
+    orl $0x900, %eax                                 /* EFER.LME | EFER.NXE */
     wrmsr
     
-    /* Enable paging (this activates long mode) */
+    /* Enable paging (this activates long mode) and write-protect in supervisor mode */
     movl %cr0, %eax
+    orl $0x10000, %eax                               /* CR0.WP */
     orl $0x80000000, %eax                            /* CR0.PG */
     movl %eax, %cr0
     

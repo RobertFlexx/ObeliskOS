@@ -1290,6 +1290,54 @@ static int setup_user_stack(struct process *proc, char *const argv[],
     return 0;
 }
 
+static void exec_free_strv(char *vec[], int count) {
+    for (int i = 0; i < count; i++) {
+        if (vec[i]) {
+            kfree(vec[i]);
+            vec[i] = NULL;
+        }
+    }
+}
+
+static int exec_clone_strv(char *const in[], char *out[], int *outc) {
+    int c = 0;
+    if (!out || !outc) {
+        return -EINVAL;
+    }
+    if (!in) {
+        *outc = 0;
+        out[0] = NULL;
+        return 0;
+    }
+    for (c = 0; c < MAX_ARGC; c++) {
+        size_t len;
+        char *dup;
+        if (!in[c]) {
+            break;
+        }
+        len = strlen(in[c]);
+        if (len == 0 || len > MAX_ARG_STRLEN) {
+            exec_free_strv(out, c);
+            return -E2BIG;
+        }
+        dup = kmalloc(len + 1);
+        if (!dup) {
+            exec_free_strv(out, c);
+            return -ENOMEM;
+        }
+        memcpy(dup, in[c], len);
+        dup[len] = '\0';
+        out[c] = dup;
+    }
+    if (c == MAX_ARGC) {
+        exec_free_strv(out, c);
+        return -E2BIG;
+    }
+    out[c] = NULL;
+    *outc = c;
+    return 0;
+}
+
 /*
  * do_execve - Execute a new program
  */
@@ -1314,10 +1362,15 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
     mode_t exec_mode = 0;
     uid_t exec_uid = 0;
     gid_t exec_gid = 0;
+    char *kargv[MAX_ARGC];
+    char *kenvp[MAX_ARGC];
+    int kargc = 0, kenvc = 0;
     memset(&img, 0, sizeof(img));
     memset(&main_img, 0, sizeof(main_img));
     memset(&interp_img, 0, sizeof(interp_img));
     memset(&stack_img, 0, sizeof(stack_img));
+    memset(kargv, 0, sizeof(kargv));
+    memset(kenvp, 0, sizeof(kenvp));
     
     EXEC_LOG("exec: begin %s pid=%d\n", filename, proc ? proc->pid : -1);
     
@@ -1582,6 +1635,21 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         vfs_close(file);
         return -ENOMEM;
     }
+
+    /* Clone argv/envp while old address space is still active. */
+    ret = exec_clone_strv(argv, kargv, &kargc);
+    if (ret < 0) {
+        vmm_destroy_address_space(new_mm);
+        vfs_close(file);
+        return ret;
+    }
+    ret = exec_clone_strv(envp, kenvp, &kenvc);
+    if (ret < 0) {
+        exec_free_strv(kargv, kargc);
+        vmm_destroy_address_space(new_mm);
+        vfs_close(file);
+        return ret;
+    }
     
     struct address_space *old_mm = proc->mm;
     proc->mm = new_mm;
@@ -1592,6 +1660,8 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
+            exec_free_strv(kenvp, kenvc);
+            exec_free_strv(kargv, kargc);
             vfs_close(interp_file);
             vfs_close(file);
             return ret;
@@ -1600,6 +1670,8 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
+            exec_free_strv(kenvp, kenvc);
+            exec_free_strv(kargv, kargc);
             vfs_close(interp_file);
             vfs_close(file);
             return ret;
@@ -1608,6 +1680,8 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
+            exec_free_strv(kenvp, kenvc);
+            exec_free_strv(kargv, kargc);
             vfs_close(interp_file);
             vfs_close(file);
             return ret;
@@ -1629,6 +1703,8 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         if (ret < 0) {
             proc->mm = old_mm;
             vmm_destroy_address_space(new_mm);
+            exec_free_strv(kenvp, kenvc);
+            exec_free_strv(kargv, kargc);
             vfs_close(file);
             return ret;
         }
@@ -1661,7 +1737,9 @@ int do_execve(const char *filename, char *const argv[], char *const envp[]) {
         }
     }
 
-    ret = setup_user_stack(proc, argv, envp, filename, &stack_img, &sp, at_secure);
+    ret = setup_user_stack(proc, kargv, kenvp, filename, &stack_img, &sp, at_secure);
+    exec_free_strv(kenvp, kenvc);
+    exec_free_strv(kargv, kargc);
     if (ret < 0) {
         /* Exec failed; restore credentials to pre-exec values. */
         if (apply_setuid || apply_setgid) {

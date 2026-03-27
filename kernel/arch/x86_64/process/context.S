@@ -49,9 +49,7 @@ context_switch:
     movq (%rsp), %rax
     movq %rax, 56(%rdi)
     
-    /* Check if FPU was used and save state */
-    cmpb $0, 576(%rdi)
-    je .restore_context
+    /* Always save FPU/SIMD state for isolation across tasks. */
     fxsave 64(%rdi)
 
 .restore_context:
@@ -66,12 +64,8 @@ context_switch:
     /* Restore stack pointer */
     movq 48(%rsi), %rsp
     
-    /* Check if FPU state needs to be restored */
-    cmpb $0, 576(%rsi)
-    je .skip_fpu_restore
+    /* Always restore FPU/SIMD state for the incoming task. */
     fxrstor 64(%rsi)
-
-.skip_fpu_restore:
     /* SysV ABI requires DF=0 before calling/returning through C paths. */
     cld
     /* Resume by returning through the restored call frame.

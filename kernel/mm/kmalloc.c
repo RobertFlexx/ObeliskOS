@@ -11,6 +11,7 @@
 #include <mm/pmm.h>
 #include <mm/vmm.h>
 #include <obelisk/zig_safe_arith.h>
+#include <obelisk/zig_mem.h>
 
 /* Size classes for general-purpose allocation */
 static const size_t size_classes[] = {
@@ -456,23 +457,18 @@ void *kmalloc(size_t size) {
     /* Large allocation - use page allocator directly */
     {
         uint64_t need_u64;
-        size_t aligned;
-        size_t pages;
+        uint64_t aligned64;
+        uint64_t pages64;
 
         if (zig_u64_add_ok((uint64_t)size, (uint64_t)sizeof(size_t), &need_u64) != 0 ||
             need_u64 > (uint64_t)SIZE_MAX) {
             return NULL;
         }
-        {
-            uint64_t aligned64;
-
-            if (zig_u64_align_up_pow2_ok(need_u64, PAGE_SIZE, &aligned64) != 0 ||
-                aligned64 > (uint64_t)SIZE_MAX) {
-                return NULL;
-            }
-            aligned = (size_t)aligned64;
+        if (zig_pages_for_bytes_ok(need_u64, PAGE_SIZE, &aligned64, &pages64) != 0 ||
+            aligned64 > (uint64_t)SIZE_MAX || pages64 > (uint64_t)SIZE_MAX) {
+            return NULL;
         }
-        pages = aligned / PAGE_SIZE;
+        size_t pages = (size_t)pages64;
         uint64_t phys = pmm_alloc_pages(pages);
         if (!phys) {
             return NULL;
@@ -559,7 +555,13 @@ void kfree(void *ptr) {
     /* Large allocation */
     size_t *size_ptr = (size_t *)((uint8_t *)ptr - sizeof(size_t));
     size_t size = *size_ptr;
-    size_t pages = ALIGN_UP(size + sizeof(size_t), PAGE_SIZE) / PAGE_SIZE;
+    uint64_t aligned64, pages64;
+    if (zig_pages_for_bytes_ok((uint64_t)size + (uint64_t)sizeof(size_t),
+                               PAGE_SIZE, &aligned64, &pages64) != 0 ||
+        pages64 > (uint64_t)SIZE_MAX) {
+        return;
+    }
+    size_t pages = (size_t)pages64;
     
     uint64_t phys = VIRT_TO_PHYS((uint64_t)size_ptr);
     pmm_free_pages(phys, pages);

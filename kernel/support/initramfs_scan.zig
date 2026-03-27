@@ -56,7 +56,12 @@ fn parse_octal_field(p: [*]const u8, n: usize) ?u64 {
     while (i < n) : (i += 1) {
         const c = p[i];
         if (c < '0' or c > '7') break;
-        v = (v << 3) + @as(u64, c - '0');
+        const d = @as(u64, c - '0');
+        const sh = @shlWithOverflow(v, 3);
+        if (sh[1] != 0) return null;
+        const add = @addWithOverflow(sh[0], d);
+        if (add[1] != 0) return null;
+        v = add[0];
     }
     return v;
 }
@@ -113,6 +118,7 @@ fn scan_tar_ustar(base: [*]const u8, total: u64) c_int {
         }
         const p = base + @as(usize, off);
         if (is_zero_block(p)) {
+            if (remain >= 1024 and !is_zero_block(p + 512)) return 1;
             return 0;
         }
         // Match initramfs_unpack_tar: empty name ends the archive (not an error).

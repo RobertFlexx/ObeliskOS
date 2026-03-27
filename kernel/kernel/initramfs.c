@@ -7,6 +7,7 @@
 #include <obelisk/kernel.h>
 #include <obelisk/initramfs.h>
 #include <obelisk/zig_initramfs.h>
+#include <obelisk/zig_bytes.h>
 #include <fs/vfs.h>
 #include <fs/inode.h>
 #include <fs/file.h>
@@ -90,12 +91,7 @@ static void normalize_tar_path(char *path) {
 }
 
 static bool is_zero_block(const uint8_t *block) {
-    for (size_t i = 0; i < 512; i++) {
-        if (block[i] != 0) {
-            return false;
-        }
-    }
-    return true;
+    return zig_mem_all_zero(block, 512) != 0;
 }
 
 static uint64_t parse_octal(const char *s, size_t n) {
@@ -277,6 +273,20 @@ int initramfs_unpack_tar(const void *archive, size_t archive_size) {
             path[sizeof(path) - 1] = '\0';
         }
         normalize_tar_path(path);
+        if (zig_path_has_dotdot_component(path, sizeof(path)) != 0) {
+            printk(KERN_WARNING "initramfs: skipping unsafe path with '..': %s\n", path);
+            failed++;
+            p += 512; /* move to next header baseline; final advance below requires parsed size */
+            /* Re-derive size and full advance conservatively from header to stay aligned. */
+            fsize = parse_octal(h->size, sizeof(h->size));
+            payload_bytes = (size_t)fsize;
+            advance = 512 + ALIGN_UP(payload_bytes, 512);
+            if (p + (advance - 512) > end) {
+                return -EINVAL;
+            }
+            p += (advance - 512);
+            continue;
+        }
 
         fsize = parse_octal(h->size, sizeof(h->size));
         fmode = (mode_t)(parse_octal(h->mode, sizeof(h->mode)) & 07777);

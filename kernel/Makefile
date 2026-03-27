@@ -89,6 +89,12 @@ C_SOURCES := \
     drivers/pci.c \
     net/core.c \
     net/e1000.c \
+    net/r8169.c \
+    net/wifi_ath.c \
+    net/wifi_brcm.c \
+    net/wifi_intel.c \
+    net/wifi_probe.c \
+    net/wifi_rtl.c \
     net/virtio_net.c \
     mm/pmm.c \
     mm/vmm.c \
@@ -96,6 +102,7 @@ C_SOURCES := \
     kernel/main.c \
     kernel/bootinfo.c \
     kernel/initramfs.c \
+    kernel/acpi_power.c \
     kernel/time.c \
     kernel/panic.c \
     kernel/printk.c \
@@ -132,7 +139,12 @@ ZIG_SOURCES := \
     support/initramfs_scan.zig \
     support/path_validate.zig \
     support/safe_arith.zig \
-    support/exec_string.zig
+    support/exec_string.zig \
+    support/mem_helpers.zig \
+    support/byte_ops.zig \
+    support/acpi_helpers.zig \
+    support/wifi_helpers.zig \
+    support/net_helpers.zig
 
 ASM_SOURCES := \
     $(ARCH_DIR)/boot/boot.S \

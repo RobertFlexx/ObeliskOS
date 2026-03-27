@@ -20,6 +20,12 @@
 #include <ipc/msgqueue.h>
 #include <sysctl/sysctl.h>
 #include <net/e1000.h>
+#include <net/r8169.h>
+#include <net/wifi_ath.h>
+#include <net/wifi_brcm.h>
+#include <net/wifi_intel.h>
+#include <net/wifi_probe.h>
+#include <net/wifi_rtl.h>
 
 /* Kernel banner */
 static const char *banner =
@@ -140,6 +146,14 @@ static void network_init_all(void) {
     if (!net_is_ready()) {
         e1000_init();
     }
+    if (!net_is_ready()) {
+        r8169_init();
+    }
+    wifi_ath_init();
+    wifi_brcm_init();
+    wifi_intel_init();
+    wifi_rtl_init();
+    wifi_probe_init();
     printk(KERN_INFO "Networking hardware initialization complete.\n");
 }
 
@@ -237,6 +251,10 @@ static void late_init(void) {
     printk(KERN_INFO "Late initialization...\n");
 
     import_boot_rootfs();
+    wifi_ath_late_init();
+    wifi_brcm_late_init();
+    wifi_intel_late_init();
+    wifi_rtl_late_init();
 
     /* Ensure PID 1 has a valid VFS root/cwd so relative paths and getcwd work. */
     if (init_process) {

@@ -9,6 +9,7 @@
 #include <obelisk/types.h>
 #include <obelisk/kernel.h>
 #include <obelisk/bootinfo.h>
+#include <obelisk/acpi_power.h>
 #include <arch/cpu.h>
 
 static void kernel_halt_forever(void) __attribute__((noreturn));
@@ -31,8 +32,16 @@ void kernel_poweroff_hardware(void) {
     if (rsdp && rsdplen >= 8) {
         printk(KERN_INFO "poweroff: ACPI RSDP from bootloader (sig %.8s, %lu bytes)\n",
                (const char *)rsdp, (unsigned long)rsdplen);
-        printk(KERN_NOTICE "poweroff: ACPI S5 / PM1 sleep control is not implemented; "
-                           "using legacy/emulated shutdown ports only.\n");
+        if (acpi_poweroff_s5()) {
+            printk(KERN_INFO "poweroff: ACPI S5 sequence issued; waiting for hardware off.\n");
+            for (int i = 0; i < 2000000; i++) {
+                pause();
+            }
+            printk(KERN_WARNING "poweroff: ACPI S5 write did not power off, trying legacy ports.\n");
+        } else {
+            printk(KERN_NOTICE "poweroff: ACPI RSDP found but S5 sequence unavailable; "
+                               "using legacy/emulated shutdown ports.\n");
+        }
     } else {
         printk(KERN_WARNING "poweroff: no ACPI RSDP tag from bootloader — ACPI-driven "
                             "soft-off unavailable.\n");

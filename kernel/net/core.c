@@ -2,12 +2,12 @@
  * Obelisk OS - Minimal Network Core
  * From Axioms, Order.
  *
- * Phase 3 scope:
+ * Phase 3 scope: (FINAL PHASE !!11!!1!!??/?)
  * - Ethernet parsing
  * - ARP request/reply
  * - IPv4 + ICMP echo reply
  * - Single registered NIC path
- */
+ * Also fuck mediatek support hah */
 
 #include <obelisk/types.h>
 #include <obelisk/kernel.h>

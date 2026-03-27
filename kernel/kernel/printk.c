@@ -493,7 +493,7 @@ static size_t log_write_idx = 0;
 static size_t log_read_idx = 0;
 
 /* Current log level */
-static int console_loglevel = 7;    /* Print everything */
+static int console_loglevel = 5;    /* Bare-metal default: reduce console overhead */
 static int default_loglevel = 4;    /* KERN_WARNING */
 
 /* Log level names */

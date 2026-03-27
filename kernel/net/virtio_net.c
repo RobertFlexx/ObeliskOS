@@ -11,6 +11,7 @@
 #include <mm/pmm.h>
 #include <net/net.h>
 #include <net/virtio_net.h>
+#include <obelisk/zig_net.h>
 
 #define VIRTIO_VENDOR_ID 0x1AF4
 #define VIRTIO_NET_DEV_LEGACY 0x1000
@@ -123,6 +124,10 @@ static const struct net_device_ops g_vnet_ops = {
     .poll = virtio_net_poll,
 };
 
+static bool vnet_mac_is_valid(const uint8_t mac[6]) {
+    return zig_net_mac_is_valid(mac, 6) == 1;
+}
+
 static inline uint8_t vnet_read8(struct virtio_net_state *s, uint32_t reg) {
     if (!s) return 0;
     if (s->mmio) {
@@ -185,11 +190,15 @@ static size_t virtq_total_bytes(uint16_t qsize) {
 static int virtio_legacy_queue_setup(struct virtio_net_state *s, uint16_t qindex, struct virtio_legacy_queue *q) {
     uint16_t qmax;
     size_t used_offset;
+    uint64_t desc_bytes = 0;
 
     vnet_write16(s, VIRTIO_PCI_QUEUE_SEL, qindex);
     qmax = vnet_read16(s, VIRTIO_PCI_QUEUE_NUM);
     if (qmax == 0) {
         return -ENOENT;
+    }
+    if (zig_net_ring_bytes_ok(qmax, sizeof(struct vring_desc), 16, (8U * PAGE_SIZE), &desc_bytes) != 0) {
+        return -EINVAL;
     }
 
     q->qsize = qmax;
@@ -279,7 +288,7 @@ static int virtio_tx_submit(struct virtio_net_state *s, const void *payload, siz
     }
 
     frame_len = sizeof(struct virtio_net_hdr) + len;
-    if (frame_len > NET_BUFFER_SIZE) {
+    if (zig_net_frame_len_ok((uint64_t)frame_len, sizeof(struct virtio_net_hdr), NET_BUFFER_SIZE) != 0) {
         return -EMSGSIZE;
     }
 
@@ -529,6 +538,15 @@ static int virtio_net_legacy_init(const struct pci_device *d) {
 
     for (int i = 0; i < 6; i++) {
         g_vnet.mac[i] = vnet_read8(&g_vnet, VIRTIO_PCI_CONFIG_BASE + i);
+    }
+    if (!vnet_mac_is_valid(g_vnet.mac)) {
+        g_vnet.mac[0] = 0x02;
+        g_vnet.mac[1] = 0x56;
+        g_vnet.mac[2] = 0x49;
+        g_vnet.mac[3] = 0x52;
+        g_vnet.mac[4] = 0x54;
+        g_vnet.mac[5] = (uint8_t)g_vnet.device_id;
+        printk(KERN_WARNING "virtio-net: invalid device MAC; using local fallback MAC\n");
     }
 
     if (g_vnet.irq_line < 16) {

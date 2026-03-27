@@ -15,6 +15,7 @@
 #include <mm/pmm.h>
 #include <net/net.h>
 #include <net/e1000.h>
+#include <obelisk/zig_net.h>
 
 #define E1000_VENDOR_ID 0x8086
 
@@ -122,6 +123,10 @@ static const struct net_device_ops g_e1000_ops = {
     .poll = e1000_poll,
 };
 
+static bool e1000_mac_is_valid(const uint8_t mac[6]) {
+    return zig_net_mac_is_valid(mac, 6) == 1;
+}
+
 static int e1000_map_mmio(struct e1000_state *s, uint64_t bar_phys) {
     uint64_t map_phys;
     uint64_t map_virt;
@@ -158,11 +163,29 @@ static inline void e1000_write32(struct e1000_state *s, uint32_t reg, uint32_t v
     *(volatile uint32_t *)(s->mmio + reg) = value;
 }
 
-static void e1000_wait_reset(struct e1000_state *s) {
+static bool e1000_wait_reset(struct e1000_state *s) {
     for (int i = 0; i < 100000; i++) {
         if ((e1000_read32(s, E1000_REG_CTRL) & E1000_CTRL_RST) == 0) {
-            return;
+            return true;
         }
+        __asm__ volatile("pause");
+    }
+    return false;
+}
+
+static bool e1000_device_id_supported(uint16_t id) {
+    switch (id) {
+        case 0x100E: /* 82540EM (QEMU default) */
+        case 0x100F:
+        case 0x1010:
+        case 0x1011:
+        case 0x1012:
+        case 0x1013:
+        case 0x1015:
+        case 0x107C:
+            return true;
+        default:
+            return false;
     }
 }
 
@@ -170,7 +193,7 @@ static bool e1000_pci_match(const struct pci_device *d) {
     if (!d) return false;
     if (d->vendor_id != E1000_VENDOR_ID) return false;
     if (d->class_code != 0x02) return false;
-    return true;
+    return e1000_device_id_supported(d->device_id);
 }
 
 static int e1000_alloc_buffers(struct e1000_state *s) {
@@ -215,6 +238,13 @@ static void e1000_program_mac(struct e1000_state *s) {
 }
 
 static int e1000_setup_rings(struct e1000_state *s) {
+    uint64_t ring_bytes = 0;
+    if (zig_net_ring_bytes_ok(E1000_RX_RING_SIZE, sizeof(struct e1000_rx_desc),
+                              16, PAGE_SIZE, &ring_bytes) != 0 ||
+        zig_net_ring_bytes_ok(E1000_TX_RING_SIZE, sizeof(struct e1000_tx_desc),
+                              16, PAGE_SIZE, &ring_bytes) != 0) {
+        return -EINVAL;
+    }
     s->rx_ring_phys = pmm_alloc_pages(1);
     s->tx_ring_phys = pmm_alloc_pages(1);
     if (!s->rx_ring_phys || !s->tx_ring_phys) {
@@ -257,7 +287,7 @@ static int e1000_tx(void *ctx, const void *frame, size_t len) {
     if (!s || !s->present || !frame || len == 0) {
         return -EINVAL;
     }
-    if (len > E1000_PKT_BUF_SIZE) {
+    if (zig_net_frame_len_ok((uint64_t)len, 1, E1000_PKT_BUF_SIZE) != 0) {
         return -EMSGSIZE;
     }
 
@@ -347,6 +377,7 @@ void e1000_init(void) {
     for (size_t i = 0; i < count; i++) {
         const struct pci_device *d = pci_get_device(i);
         uint32_t bar0;
+        uint64_t bar_phys;
         uint16_t cmd;
         int ret;
 
@@ -357,13 +388,22 @@ void e1000_init(void) {
         if (bar0 & 0x1U) {
             continue; /* IO BAR not supported in this path */
         }
+        bar_phys = (uint64_t)(bar0 & ~0xFU);
+        if ((bar0 & 0x6U) == 0x4U) {
+            bar_phys |= ((uint64_t)d->bar[1] << 32);
+        }
+        if (bar_phys == 0) {
+            printk(KERN_WARNING "e1000: skip %04x at %02x:%02x.%u: invalid BAR0\n",
+                   d->device_id, d->bus, d->slot, d->function);
+            continue;
+        }
 
         g_e1000.present = true;
         g_e1000.bus = d->bus;
         g_e1000.slot = d->slot;
         g_e1000.function = d->function;
         g_e1000.device_id = d->device_id;
-        ret = e1000_map_mmio(&g_e1000, (uint64_t)(bar0 & ~0xFU));
+        ret = e1000_map_mmio(&g_e1000, bar_phys);
         if (ret < 0) {
             g_e1000.present = false;
             continue;
@@ -374,7 +414,12 @@ void e1000_init(void) {
         pci_config_write16(d->bus, d->slot, d->function, 0x04, cmd);
 
         e1000_write32(&g_e1000, E1000_REG_CTRL, e1000_read32(&g_e1000, E1000_REG_CTRL) | E1000_CTRL_RST);
-        e1000_wait_reset(&g_e1000);
+        if (!e1000_wait_reset(&g_e1000)) {
+            printk(KERN_WARNING "e1000: reset timeout on %02x:%02x.%u\n",
+                   d->bus, d->slot, d->function);
+            g_e1000.present = false;
+            continue;
+        }
         e1000_write32(&g_e1000, E1000_REG_CTRL,
                       e1000_read32(&g_e1000, E1000_REG_CTRL) |
                           E1000_CTRL_FD | E1000_CTRL_SLU | E1000_CTRL_ASDE);
@@ -395,8 +440,7 @@ void e1000_init(void) {
         }
 
         e1000_read_mac(&g_e1000);
-        if (g_e1000.mac[0] == 0 && g_e1000.mac[1] == 0 && g_e1000.mac[2] == 0 &&
-            g_e1000.mac[3] == 0 && g_e1000.mac[4] == 0 && g_e1000.mac[5] == 0) {
+        if (!e1000_mac_is_valid(g_e1000.mac)) {
             /* Fallback deterministic local MAC if EEPROM/MAC read is unavailable. */
             g_e1000.mac[0] = 0x02;
             g_e1000.mac[1] = 0x4F;
@@ -404,6 +448,7 @@ void e1000_init(void) {
             g_e1000.mac[3] = 0x45;
             g_e1000.mac[4] = 0x10;
             g_e1000.mac[5] = 0x00;
+            printk(KERN_WARNING "e1000: invalid EEPROM MAC; using local fallback MAC\n");
         }
         e1000_program_mac(&g_e1000);
 
@@ -433,5 +478,5 @@ void e1000_init(void) {
         return;
     }
 
-    printk(KERN_INFO "e1000: no supported Intel NIC found\n");
+    printk(KERN_INFO "e1000: no supported Intel e1000-class NIC found\n");
 }

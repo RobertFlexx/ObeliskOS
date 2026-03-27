@@ -10,8 +10,9 @@ const MAX_NUL_SCAN: u64 = 0x7ffff000;
 pub export fn zig_kernel_exec_line_ok(s: ?[*]const u8, cap: u64) c_int {
     if (s == null) return 1;
     if (cap == 0) return 1;
+    if (cap > MAX_SCAN) return 1;
     const p = s.?;
-    const limit = @min(cap, MAX_SCAN);
+    const limit = cap;
     var i: usize = 0;
     while (i < limit) : (i += 1) {
         const c = p[i];
@@ -29,8 +30,9 @@ pub export fn zig_kernel_exec_line_ok(s: ?[*]const u8, cap: u64) c_int {
 pub export fn zig_cstring_first_nul_index(buf: ?[*]const u8, len: u64) i64 {
     if (buf == null) return -1;
     if (len == 0) return -1;
+    if (len > MAX_NUL_SCAN) return -1;
     const p = buf.?;
-    const lim = @min(len, MAX_NUL_SCAN);
+    const lim = len;
     var i: u64 = 0;
     while (i < lim) : (i += 1) {
         if (p[@as(usize, @intCast(i))] == 0) {

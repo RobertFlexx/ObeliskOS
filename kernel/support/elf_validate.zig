@@ -44,12 +44,14 @@ pub export fn zig_elf64_header_sanity(hdr: ?*const Elf64Hdr, file_size: u64) c_i
     if (h.e_ident[6] != ELF_VERSION_CURRENT) return 1;
     if (h.e_type != ET_EXEC and h.e_type != ET_DYN) return 1;
     if (h.e_machine != EM_X86_64) return 1;
+    if (h.e_version != 1) return 1;
 
     if (h.e_ehsize != @sizeOf(Elf64Hdr)) return 1;
     if (file_size < @sizeOf(Elf64Hdr)) return 1;
 
     if (h.e_phnum == 0) return 0;
     if (h.e_phentsize != 56) return 1;
+    if (h.e_phoff < @sizeOf(Elf64Hdr)) return 1;
 
     var ph_bytes: u64 = 0;
     if (!mulU64(@as(u64, h.e_phentsize), @as(u64, h.e_phnum), &ph_bytes)) return 1;

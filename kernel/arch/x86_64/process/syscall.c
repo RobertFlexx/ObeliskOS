@@ -21,6 +21,7 @@
 #include <obelisk/zig_path.h>
 #include <obelisk/zig_safe_arith.h>
 #include <obelisk/zig_exec_string.h>
+#include <obelisk/zig_bytes.h>
 #include <obelisk/power.h>
 #include <sysctl/sysctl.h>
 #include <net/net.h>
@@ -486,7 +487,7 @@ static uint64_t syscall_counts[NR_SYSCALLS];
  * Disabled by default to keep interactive and command execution responsive. */
 int loader_trace_enabled = 0;       /* 0=off, 1=on */
 int loader_trace_budget = 0;       /* max syscall trace lines */
-int loader_exec_debug_enabled = 1; /* extra exec/loader printk instrumentation */
+int loader_exec_debug_enabled = 0; /* extra exec/loader printk instrumentation */
 static int tty_kd_mode = KD_TEXT;
 static int tty_kb_mode = K_XLATE;
 
@@ -510,25 +511,35 @@ static int kernel_user_cstring_ok(const char *kstr, size_t cap) {
 }
 
 static int copy_user_cstring(const char *user_ptr, char *kernel_buf, size_t cap) {
-    int64_t nul_at;
-
     if (!user_ptr || !kernel_buf || cap == 0) {
         return -EFAULT;
     }
     /*
-     * One verified user->kernel copy (see vmm_copy_from_user), then find NUL.
-     * Replaces per-byte copy (syscall hot path for paths, argv, env).
+     * Copy in small chunks until we see NUL.
+     * Avoids touching unmapped bytes past the terminator (argv/path strings
+     * often live near stack-top guard pages).
      */
-    if (vmm_copy_from_user(kernel_buf, user_ptr, cap) < 0) {
-        return -EFAULT;
+    size_t off = 0;
+    while (off < cap) {
+        size_t chunk = cap - off;
+        if (chunk > 64) {
+            chunk = 64;
+        }
+        if (vmm_copy_from_user(kernel_buf + off, user_ptr + off, chunk) < 0) {
+            return -EFAULT;
+        }
+        {
+            int64_t nul_at = zig_first_zero_byte(kernel_buf + off, (uint64_t)chunk);
+            if (nul_at >= 0) {
+                return 0;
+            }
+        }
+        off += chunk;
     }
-    nul_at = zig_cstring_first_nul_index(kernel_buf, (uint64_t)cap);
-    if (nul_at < 0) {
-        kernel_buf[cap - 1] = '\0';
-        return -ENAMETOOLONG;
-    }
-    return 0;
+    kernel_buf[cap - 1] = '\0';
+    return -ENAMETOOLONG;
 }
+
 
 static void free_exec_string_vector(char **vec) {
     if (!vec) {
