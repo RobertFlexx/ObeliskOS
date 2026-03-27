@@ -79,7 +79,7 @@ This project values coherence and reliability over feature count.
 * **Packages**: native `opkg` and `.opk` repository flow
 
 > ***OBELISK OPKG IS NOT OPENWRT OPKG!***
-
+> **OPKG in-environment isn't stable, static local repository. web-repos in progress, contribs? please? lol**
 ---
 
 ## Languages Used
