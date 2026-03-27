@@ -1,10 +1,6 @@
 # XFCE Path Implementation Scaffold
 
-Use this file as the execution tracker for the phased plan in:
-
-- `docs/roadmap.md`
-- `docs/desktop-roadmap.md`
-- `docs/packaging-policy.md`
+# Our realistic roadmap milestones, together as an open source community.
 
 ## Phase Tracker
 
