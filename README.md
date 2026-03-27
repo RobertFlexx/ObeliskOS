@@ -1,6 +1,6 @@
-# Obelisk OS
+# Obelisk OS, the not so minimal, minimal UNIX-like kernel.
 
-**From Axioms, Order.**
+**From Axioms, Order.** <- (peak tagline)
 
 Obelisk is a standalone Unix-like OS focused on a practical minimal base system
 that is CLI-first and desktop-capable.
@@ -96,7 +96,7 @@ Clean:
 make clean
 ```
 
-## Roadmap and Policy Docs
+## Roadmap and Policy Docs (if u wanna see whats next in the future & what to expect)
 
 - Main phased plan: `docs/roadmap.md`
 - Desktop/XDM path: `docs/desktop-roadmap.md`
@@ -106,7 +106,7 @@ make clean
 
 ## Release Direction
 
-Obelisk is pre-1.0. "Release-ready" currently means:
+Obelisk is pre-1.0 (not stable!!!) . "Release-ready" currently means:
 
 - reproducible builds and installable artifacts
 - stable boot/session fallback behavior
@@ -115,3 +115,4 @@ Obelisk is pre-1.0. "Release-ready" currently means:
 
 
 bigguy118 is now tester
+Kokonico is now tester
