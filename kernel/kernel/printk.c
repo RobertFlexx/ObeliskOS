@@ -419,10 +419,10 @@ static void fb_putc(char c) {
         g_fb_cursor_next_blink_ns = get_time_ns() + FB_CURSOR_BLINK_NS;
         return;
     }
+    /*fixed some bullshit stupid bug when erasing the uh buffer when editing prompt with arrow left*/
     if (c == '\b') {
         if (g_fbcon.col > 0) {
             g_fbcon.col--;
-            fb_clear_cols(g_fbcon.row, g_fbcon.col, 1);
         }
         g_fb_cursor_next_blink_ns = get_time_ns() + FB_CURSOR_BLINK_NS;
         return;
@@ -471,6 +471,12 @@ static void vga_putc(char c) {
         vga_row++;
         if (vga_row >= VGA_HEIGHT) {
             vga_scroll();
+        }
+        return;
+    }
+    if (c == '\b') {
+        if (vga_col > 0) {
+            vga_col--;
         }
         return;
     }
