@@ -1,4 +1,4 @@
-# Obelisk Release Checklist
+# Obelisk Release Checklist (wrote this as a note to self, if youre a random, ignore this.
 
 Use this checklist before tagging a release candidate.
 
