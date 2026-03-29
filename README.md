@@ -47,6 +47,8 @@ that is CLI-first and desktop-capable. (in the future, desktop support in works)
 
 ## Official Target Profile
 
+> ObeliskOS does NOT have working xdm or xfce yet.
+
 Obelisk is converging on one clear daily-usable path:
 
 * minimal, stable Unix-like base system
