@@ -186,23 +186,20 @@ Obelisk is pre-1.0 (not stable!!!) . "Release-ready" currently means:
 
 ## Inspirations
 
-<div align="center">
-
-<a href="https://www.openbsd.org/">
-  <img src="https://www.openbsd.org/images/tshirt-23.gif" height="72" alt="OpenBSD" />
-</a>
-
-<a href="https://www.netbsd.org/">
-  <img src="https://www.netbsd.org/images/NetBSD-smaller.png" height="72" alt="NetBSD" />
-</a>
-
-<a href="https://www.kernel.org/">
-  <img src="https://cdn.simpleicons.org/linux" height="72" alt="Linux" />
-</a>
-
-<a href="https://en.wikipedia.org/wiki/Unix">
-  <img src="https://images.vexels.com/media/users/3/141382/isolated/preview/6a4d6c0d5b1c5d9b38787ec0ed6f2469-unix-logo.png" height="72" alt="UNIX" />
-</a>
+<p align="center">
+  <a href="https://www.openbsd.org/">
+    <img src="https://www.openbsd.org/images/tshirt-23.gif" height="72" alt="OpenBSD" />
+  </a>
+  <a href="https://www.netbsd.org/">
+    <img src="https://www.netbsd.org/images/NetBSD-smaller.png" height="72" alt="NetBSD" />
+  </a>
+  <a href="https://www.kernel.org/">
+    <img src="https://cdn.simpleicons.org/linux" height="72" alt="Linux" />
+  </a>
+  <a href="https://en.wikipedia.org/wiki/Unix">
+    <img src="https://upload.wikimedia.org/wikipedia/commons/6/6f/UNIX_conceptual_logo.svg" height="72" alt="UNIX" />
+  </a>
+</p>
 
 <br><br>
 
