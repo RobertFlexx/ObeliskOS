@@ -197,7 +197,7 @@ Obelisk is pre-1.0 (not stable!!!) . "Release-ready" currently means:
     <img src="https://cdn.simpleicons.org/linux" height="72" alt="Linux" />
   </a>
   <a href="https://en.wikipedia.org/wiki/Unix">
-    <img src="https://upload.wikimedia.org/wikipedia/commons/2/2f/Unix_logo.svg" height="72" alt="UNIX" />
+    <img src="https://commons.wikimedia.org/wiki/Special:FilePath/UNIX_logo.svg" height="72" alt="UNIX" />
   </a>
 </p>
 
