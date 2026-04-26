@@ -165,6 +165,7 @@ make clean
 
 ## Roadmap and Policy Docs (if u wanna see whats next in the future & what to expect)
 
+* Newcomer repo map / placement guide: `docs/repository-map.md`
 * Main phased plan: `docs/roadmap.md`
 * Desktop/XDM path: `docs/desktop-roadmap.md`
 * Packaging policy and package waves: `docs/packaging-policy.md`
