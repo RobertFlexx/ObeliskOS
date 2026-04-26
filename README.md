@@ -13,7 +13,7 @@
 
 <br>
 
-<a href="https://en.wikipedia.org/wiki/C_(programming_language)"><img src="https://cdn.simpleicons.org/c" height="42" /></a> <a href="https://isocpp.org"><img src="https://cdn.simpleicons.org/cplusplus" height="42" /></a> <a href="https://dlang.org"><img src="https://cdn.simpleicons.org/d" height="42" /></a> <a href="https://www.gnu.org/software/bash/"><img src="https://cdn.simpleicons.org/gnubash" height="42" /></a> <a href="https://www.gnu.org/software/make/"><img src="https://cdn.simpleicons.org/gnu" height="42" /></a> <a href="https://www.swi-prolog.org/"><img src="https://www.swi-prolog.org/download/logo/swipl-128.png" height="42" /></a> <a href="https://ziglang.org/"><img src="https://cdn.simpleicons.org/zig" height="42" /></a> <a href="https://en.wikipedia.org/wiki/Assembly_language"><img src="https://cdn.simpleicons.org/assemblyscript" height="42" /></a>
+<a href="https://www.c-language.org/"><img src="https://cdn.simpleicons.org/c" height="42" /></a> <a href="https://isocpp.org"><img src="https://cdn.simpleicons.org/cplusplus" height="42" /></a> <a href="https://dlang.org"><img src="https://cdn.simpleicons.org/d" height="42" /></a> <a href="https://www.gnu.org/software/bash/"><img src="https://cdn.simpleicons.org/gnubash" height="42" /></a> <a href="https://www.gnu.org/software/make/"><img src="https://cdn.simpleicons.org/gnu" height="42" /></a> <a href="https://www.swi-prolog.org/"><img src="https://www.swi-prolog.org/download/logo/swipl-128.png" height="42" /></a> <a href="https://ziglang.org/"><img src="https://cdn.simpleicons.org/zig" height="42" /></a> <a href="https://en.wikipedia.org/wiki/Assembly_language"><img src="https://cdn.simpleicons.org/assemblyscript" height="42" /></a>
 
 <br><br>
 
