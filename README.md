@@ -90,7 +90,7 @@ This project values coherence and reliability over feature count.
 
 <div align="center">
 
-<a href="[https://en.wikipedia.org/wiki/C_(programming_language)](https://www.c-language.org/)">C</a> • <a href="https://isocpp.org">C++</a> • <a href="https://dlang.org">D</a> • <a href="https://www.gnu.org/software/bash/">Shell</a> • <a href="https://www.gnu.org/software/make/">Makefile</a> • <a href="https://www.swi-prolog.org/">Prolog</a> • <a href="https://ziglang.org/">Zig</a> • <a href="https://en.wikipedia.org/wiki/Assembly_language">Assembly</a>
+<a href="https://www.c-language.org/">C</a> • <a href="https://isocpp.org">C++</a> • <a href="https://dlang.org">D</a> • <a href="https://www.gnu.org/software/bash/">Shell</a> • <a href="https://www.gnu.org/software/make/">Makefile</a> • <a href="https://www.swi-prolog.org/">Prolog</a> • <a href="https://ziglang.org/">Zig</a> • <a href="https://en.wikipedia.org/wiki/Assembly_language">Assembly</a>
 
 </div>
 
