@@ -18,7 +18,7 @@
 <br><br>
 
 **From Axioms, Order.**
-
+***Also, its called Obelisk-OS because it is MONOLITHic.***
 </div>
 
 ---
