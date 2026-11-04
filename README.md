@@ -2,6 +2,8 @@
 
 # Minimalist and educational in nature, born from nightmares.
 
+> # *NEW* version coming REAL soon. its a *HUGE* architectural change!
+
 <div align="center">
 
 ![License](https://img.shields.io/badge/license-BSD--3--Clause-0f172a?style=for-the-badge\&logo=opensourceinitiative\&logoColor=white)
